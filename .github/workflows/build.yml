@@ -1,4 +1,4 @@
-name: Build Nova alpha 9.3.1
+name: Build and Release Nova alpha 9.3.1
 
 on:
   workflow_dispatch:
@@ -11,12 +11,14 @@ on:
       - ".github/workflows/build.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   SOURCE_ZIP: releases/Nova-Tauri-V7.0.0-alpha.9.3.1-Compile-Fix.zip
   SOURCE_DIR: .build/Nova-Tauri-V7.0.0-alpha.9.3.1-Compile-Fix
   SOURCE_SHA256: 041efe09dfa7dd14732d84bffa02776bd1b5fb041139fa2cdf845f7bc343f028
+  RELEASE_TAG: v7.0.0-alpha.9.3.1
+  RELEASE_TITLE: Nova V7.0.0-alpha.9.3.1
 
 jobs:
   windows:
@@ -156,3 +158,56 @@ jobs:
           name: Nova-Android-Debug-APK-alpha-9.3.1
           path: ${{ env.SOURCE_DIR }}/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs:
+      - windows
+      - android
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Add source snapshot
+        shell: bash
+        run: |
+          cp "${SOURCE_ZIP}" release-assets/
+
+      - name: Show release assets
+        shell: bash
+        run: |
+          find release-assets -maxdepth 2 -type f -print
+
+      - name: Create or update prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t ASSETS < <(find release-assets -type f \( -name '*.exe' -o -name '*.apk' -o -name '*.zip' \) -print)
+          if [ "${#ASSETS[@]}" -lt 3 ]; then
+            echo "Expected Windows installer, Android APK, and source ZIP; found ${#ASSETS[@]} release assets." >&2
+            printf '%s\n' "${ASSETS[@]}"
+            exit 1
+          fi
+
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${ASSETS[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "${RELEASE_TAG}" "${ASSETS[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "${RELEASE_TITLE}" \
+              --notes "Nova V7.0.0-alpha.9.3.1. Built by GitHub Actions from the checked and SHA-256-verified source snapshot in this repository. Includes the Windows NSIS installer, Android debug APK, and exact source ZIP." \
+              --prerelease
+          fi
