@@ -194,10 +194,10 @@ pub async fn transformer_chat(
 }
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct Lesson{
-    mode:String,
-    text:String,
-    epochs:u32,
+pub(crate) struct Lesson{
+    pub(crate) mode:String,
+    pub(crate) text:String,
+    pub(crate) epochs:u32,
 }
 fn corpus_samples(corpus:&[u8],indices:std::ops::Range<usize>)
     ->Vec<(Vec<u8>,u8)>{
@@ -216,7 +216,7 @@ fn dialogue_samples(pairs:&[DialoguePair])->Result<Vec<(Vec<u8>,u8)>,String>{
     }
     Ok(all)
 }
-fn datasets(lesson:&Lesson)->Result<(Vec<(Vec<u8>,u8)>,Vec<(Vec<u8>,u8)>,usize),String>{
+pub(crate) fn datasets(lesson:&Lesson)->Result<(Vec<(Vec<u8>,u8)>,Vec<(Vec<u8>,u8)>,usize),String>{
     if !lesson.text.is_ascii(){return Err("The current 128-token vocabulary is ASCII only".into());}
     match lesson.mode.as_str() {
         "dialogue"=>{
