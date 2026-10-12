@@ -20,6 +20,7 @@ impl HybridBrain {
         let dense_adam=Adam::new(&dense,0.001).expect("valid learning rate");
         Self{transformer:Transformer::new(0x4e4f5641_0300),dense,dense_adam}
     }
+    pub fn dense_adam_steps(&self)->u32 {self.dense_adam.step}
     pub fn parameter_count(&self)->usize {
         self.transformer.parameter_count()+self.dense.parameter_count()
     }
