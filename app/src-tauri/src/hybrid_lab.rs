@@ -32,6 +32,7 @@ struct Session{
     train_lessons:usize,validation_lessons:usize,
     tokens_per_second:f32,stage:String,early_stopped:bool,
     history:Vec<ConversationTurn>,
+    retention_baseline:Option<f32>,retention_accuracy:Option<f32>,
 }
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
@@ -53,7 +54,8 @@ impl Default for HybridState{
                 heldout_loss:None,heldout_accuracy:None,train_loss:None,error:None,
                 best_heldout_loss:None,best_epoch:0,learning_rate:DEFAULT_LEARNING_RATE,
                 train_lessons:0,validation_lessons:0,tokens_per_second:0.0,
-                stage:"Idle".into(),early_stopped:false,history:Vec::new()
+                stage:"Idle".into(),early_stopped:false,history:Vec::new(),
+                retention_baseline:None,retention_accuracy:None
             }),
             training:AtomicBool::new(false),stop:AtomicBool::new(false),
             test_paused:AtomicBool::new(false),tests:Mutex::new(TestArchive::default())
@@ -139,6 +141,7 @@ pub struct HybridStatus{
     train_lessons:usize,validation_lessons:usize,
     tokens_per_second:f32,stage:String,early_stopped:bool,
     memory_turns:usize,tokenizer_words:usize,
+    retention_baseline:Option<f32>,retention_accuracy:Option<f32>,
 }
 fn status(state:&HybridState,s:&Session)->HybridStatus{
     HybridStatus{
@@ -154,7 +157,8 @@ fn status(state:&HybridState,s:&Session)->HybridStatus{
         learning_rate:s.learning_rate,
         train_lessons:s.train_lessons,validation_lessons:s.validation_lessons,
         tokens_per_second:s.tokens_per_second,stage:s.stage.clone(),early_stopped:s.early_stopped,
-        memory_turns:s.history.len().min(MEMORY_SLOTS),tokenizer_words:s.brain.tokenizer.words.len()
+        memory_turns:s.history.len().min(MEMORY_SLOTS),tokenizer_words:s.brain.tokenizer.words.len(),
+        retention_baseline:s.retention_baseline,retention_accuracy:s.retention_accuracy
     }
 }
 #[tauri::command]
@@ -515,6 +519,7 @@ pub struct TrainOptions {
     early_stopping:Option<bool>,
     learning_rate:Option<f32>,
     patience:Option<u32>,
+    retention_test_id:Option<String>,
 }
 fn resolved_switches(options:Option<&TrainOptions>)->(bool,bool){
     let legacy=options.and_then(|o|o.adaptive);
@@ -531,6 +536,14 @@ pub fn hybrid_train(
 )->Result<(),String>{
     if !(1..=60).contains(&lesson.epochs){return Err("Choose 1–60 epochs".into());}
     let plan=prepare(&lesson.mode,&lesson.text)?;
+    // Saved teacher evaluation bank is READ ONLY. It never enters train samples.
+    let retention=if let Some(id)=options.as_ref().and_then(|o|o.retention_test_id.as_ref())
+        .filter(|id|!id.is_empty()){
+        let archive=test_archive(&state)?;
+        archive.definitions.iter().find(|test|test.id==*id)
+            .ok_or("Selected previous-skill benchmark was not found")?
+            .cases.iter().take(4).cloned().collect::<Vec<_>>()
+    }else{Vec::new()};
     let (adaptive_learning_rate,early_stopping)=resolved_switches(options.as_ref());
     let starting_lr=options.as_ref().and_then(|o|o.learning_rate).unwrap_or(DEFAULT_LEARNING_RATE);
     let patience=options.as_ref().and_then(|o|o.patience).unwrap_or(6);
@@ -551,14 +564,14 @@ pub fn hybrid_train(
         s.best_heldout_loss=None;s.best_epoch=0;s.learning_rate=starting_lr;
         s.train_lessons=plan.train_lessons;s.validation_lessons=plan.validation_lessons;
         s.tokens_per_second=0.0;s.stage="Preparing held-out baseline".into();
-        s.early_stopped=false;
+        s.early_stopped=false;s.retention_baseline=None;s.retention_accuracy=None;
         Ok(())
     })();
     if let Err(error)=ready{state.inner.training.store(false,Ordering::Release);return Err(error);}
     state.inner.stop.store(false,Ordering::Release);
     tauri::async_runtime::spawn_blocking(move||{
         let result=train_inner(&app,&state,&plan,lesson.epochs,
-            adaptive_learning_rate,early_stopping,starting_lr,patience);
+            adaptive_learning_rate,early_stopping,starting_lr,patience,&retention);
         if let Err(ref e)=result{
             if let Ok(mut s)=lock(&state){s.error=Some(e.clone());s.stage="Training failed".into();}
             eprintln!("Neural Nova hybrid trainer error: {e}");
@@ -574,6 +587,22 @@ pub fn hybrid_train(
         }
     });
     Ok(())
+}
+/// Diagnostic only: complete greedy generation from exactly the same brain,
+/// with previous questions/answers excluded from its input and memory.
+fn retention_accuracy(brain:&HybridBrain,bank:&[TestCase])->Result<f32,String>{
+    if bank.is_empty(){return Err("No prior-skill examples to benchmark".into());}
+    let o=TestOptions{attempts:1,corrections:false,learning_rate:0.001,
+        max_chars:64,context_chars:128,deterministic:true,
+        seed:None,retention:false,generalization:false};
+    let stop=AtomicBool::new(false);
+    let mut correct=0usize;
+    for case in bank{
+        let response=test_inference(brain,&case.question,&o,0,&stop)?
+            .ok_or("Benchmark was interrupted")?;
+        if grade(&response,&case.expected)=="correct"{correct+=1;}
+    }
+    Ok(correct as f32/bank.len() as f32)
 }
 /// Curriculum, validation and optimizer scheduling ONLY. The hybrid brain
 /// still computes all cognition, predictions and shared gradients itself.
@@ -591,7 +620,7 @@ fn evaluate_memory(brain:&HybridBrain,valid:&[Example],memory:&[Vec<String>])->R
 fn train_inner(
     app:&AppHandle,state:&HybridState,lessons:&PreparedLessons,
     epochs:u32,adaptive_learning_rate:bool,early_stopping:bool,
-    starting_lr:f32,patience:u32,
+    starting_lr:f32,patience:u32,retention:&[TestCase],
 )->Result<(bool,bool,u32),String>{
     let train:&[Example]=&lessons.train;
     let valid:&[Example]=&lessons.validation;
@@ -606,6 +635,14 @@ fn train_inner(
         s.best_heldout_loss=Some(loss);
         (s.brain.clone(),loss,accuracy,s.trained)
     };
+    // Diagnostic baseline is measured after existing vocabulary expansion.
+    // The dedicated tokenizer-only A/B command measures the earlier stage.
+    if !retention.is_empty(){
+        let baseline=retention_accuracy(&lock(state)?.brain,retention)?;
+        let mut s=lock(state)?;
+        s.retention_baseline=Some(baseline);
+        s.retention_accuracy=Some(baseline);
+    }
     let mut best_epoch=0u32;
     let mut schedule=ScheduleState::new(starting_lr,ScheduleConfig{
         adaptive_learning_rate,early_stopping,patience,
@@ -673,6 +710,11 @@ fn train_inner(
             s.heldout_accuracy=Some(accuracy);
             (loss,accuracy,improved)
         };
+        let retention_score=if retention.is_empty(){None}else{
+            let snapshot=lock(state)?.brain.clone();
+            Some(retention_accuracy(&snapshot,retention)?)
+        };
+        if let Some(value)=retention_score{lock(state)?.retention_accuracy=Some(value);}
         let should_stop=schedule.observe_validation(improved);
         let _=app.emit("hybrid-epoch",serde_json::json!({
             "epoch":epoch,"epochs":epochs,
@@ -680,7 +722,8 @@ fn train_inner(
             "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
             "bestLoss":best_loss,"bestEpoch":best_epoch,"improved":improved,
             "learningRate":learning_rate,"tokensPerSecond":completed as f64/started.elapsed().as_secs_f64().max(0.001),
-            "trainLessons":lessons.train_lessons,"validationLessons":lessons.validation_lessons
+            "trainLessons":lessons.train_lessons,"validationLessons":lessons.validation_lessons,
+            "retentionAccuracy":retention_score,"retentionQuestions":retention.len()
         }));
         if cancelled{break;}
         if should_stop{
@@ -725,7 +768,8 @@ pub fn hybrid_reset(app:AppHandle,state:State<'_,HybridState>)->Result<HybridSta
         heldout_loss:None,heldout_accuracy:None,train_loss:None,error:None,
         best_heldout_loss:None,best_epoch:0,learning_rate:DEFAULT_LEARNING_RATE,
         train_lessons:0,validation_lessons:0,tokens_per_second:0.0,
-        stage:"Idle".into(),early_stopped:false,history:retained_history
+        stage:"Idle".into(),early_stopped:false,history:retained_history,
+        retention_baseline:None,retention_accuracy:None
     };
     let file=path(&app)?;
     if file.exists(){fs::remove_file(&file).map_err(|e|e.to_string())?;}
