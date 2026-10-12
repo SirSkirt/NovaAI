@@ -318,6 +318,37 @@ mod tests{
         assert_eq!(recovered.dense_adam.m.layers[0].weights,trained.dense_adam.m.layers[0].weights);
     }
     #[test]
+    fn neural_memory_changes_predictions_and_trains_shared_write_read_matrices(){
+        let mut brain=HybridBrain::new();
+        let context=b"U: What did I tell you?\nN: ".to_vec();
+        let memory=vec!["U: My favorite fruit is apple.\nN: Apple is a fruit.".to_string()];
+        let baseline=brain.predict_with_memory(&context,128,&memory).unwrap();
+        let without=brain.predict_with_memory(&context,128,&[]).unwrap();
+        assert_ne!(baseline,without,"Memory must actually condition model output");
+        let before=brain.transformer.weights.clone();
+        brain.train_memory_batch(&[(context,b'A',memory)],0.001).unwrap();
+        let after=&brain.transformer.weights;
+        // The appended word embeddings and both memory matrices precede the end
+        // of the vector; at least the final 2048 weights must receive gradients.
+        assert_ne!(&before[before.len()-2048..],&after[after.len()-2048..]);
+    }
+    #[test]
+    fn learned_words_and_optimizer_survive_joint_checkpoint_round_trip(){
+        let mut brain=HybridBrain::new();
+        brain.learn_token_units("Mira opens a box. Mira opens the box.");
+        assert!(brain.tokenizer.words.len()>=2);
+        let prompt=b"U: Mira opens a box.\nN: ";
+        brain.train_batch(&[(prompt.to_vec(),b'H')],0.001).unwrap();
+        let expected=brain.predict_with_memory(prompt,128,&[]).unwrap();
+        let path=std::env::temp_dir().join(format!("nova-word-memory-{}.nhyb",std::process::id()));
+        brain.save(&path).unwrap();
+        let restored=HybridBrain::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(restored.tokenizer,brain.tokenizer);
+        assert_eq!(restored.transformer.momentum,brain.transformer.momentum);
+        assert_eq!(restored.predict_with_memory(prompt,128,&[]).unwrap(),expected);
+    }
+    #[test]
     fn saves_and_restores_entire_joint_optimizer_state(){
         let mut brain=HybridBrain::new();
         brain.train_batch(&[(b"Hello".to_vec(),b'!')],0.002).unwrap();
