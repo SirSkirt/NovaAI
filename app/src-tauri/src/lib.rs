@@ -37,6 +37,7 @@ pub fn run() {
             hybrid_lab::hybrid_conversation,
             hybrid_lab::hybrid_new_chat,
             hybrid_lab::hybrid_inspect,
+            hybrid_lab::hybrid_tokenizer_probe,
             hybrid_lab::hybrid_reset,
             hybrid_lab::hybrid_test_archive,
             hybrid_lab::hybrid_test_save,
