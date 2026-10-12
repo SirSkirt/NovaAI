@@ -1,6 +1,12 @@
-# Neural Nova v0.3.1 — one jointly trainable hybrid brain
+# Neural Nova v0.3.2 — one jointly trainable hybrid brain
 
 **Experimental branch only:** `experimental/neural-nova`. Original Nova on `main` is untouched.
+
+## v0.3.2 — Independent learning schedule switches
+
+The **Teach** tab now has independent **Adaptive learning rate** and **Early stopping** checkboxes. Default: **Gentle 0.001 (fixed)** with early stopping enabled (six stalled validation epochs). Turning off adaptation prevents ANY learning-rate changes, without disabling validation-based stopping. Both settings are passed independently into the Rust teacher, saved locally in the UI, and locked during active training. Older clients' combined `adaptive` flag remains a compatibility fallback. Four new Rust tests verify independence.
+
+**Note:** The previous adaptive scheduler only reduced the learning rate; it never increased it. Changes in response quality may have other causes and should be evaluated with controlled experiments.
 
 ## v0.3.1 — Better teacher, same autonomous neural Nova
 
