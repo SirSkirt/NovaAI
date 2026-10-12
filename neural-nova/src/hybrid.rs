@@ -325,7 +325,7 @@ mod tests{
         brain.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.003).unwrap();
         assert_eq!(brain.dense_adam.learning_rate(),0.003);
         brain.train_memory_batch(&[(
-            b"U: hello\nN: ".to_vec(),b'H',vec!["U: hi\nN: Hey".to_string()])
+            b"U: hello\nN: ".to_vec(),b'H',vec!["U: hi\nN: Hey".to_string()]
         )],0.001).unwrap();
         assert_eq!(brain.dense_adam.learning_rate(),0.001);
     }
