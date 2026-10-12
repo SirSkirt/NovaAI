@@ -234,6 +234,40 @@ $("startTraining").addEventListener("click",()=>safe(async()=>{
     await poll();
   }catch(e){setRunning(false);throw e;}
 },"Training"));
+$("runTokenizerProbe").addEventListener("click",()=>safe(async()=>{
+  if(running||busy)throw Error("Finish training or generation before this investigation.");
+  const output=$("tokenizerProbeOutput");
+  output.textContent="Testing identical weights with and without new tokenizer units…";
+  const result=await invoke("hybrid_tokenizer_probe",{
+    mode:activeMode,lessonText:$("lessonData").value,
+    probes:$("tokenizerProbePrompts").value,maxChars:48,
+    contextChars:Number($("chatContext").value)
+  });
+  const rows=[
+    "EXPERIMENT A vs B — ZERO GRADIENT UPDATES",
+    "New word units: "+result.addedWordUnits,
+    "Weights identical: "+result.unchangedWeights,
+    ""
+  ];
+  for(let i=0;i<result.samples.length;i+=2){
+    const a=result.samples[i],b=result.samples[i+1];
+    const top=sample=>sample.topPredictions.slice(0,5)
+      .map(x=>(x.code===10?"NEWLINE":String.fromCharCode(x.code))+" "+(100*x.probability).toFixed(2)+"%").join(", ");
+    rows.push("PROMPT: "+a.prompt);
+    rows.push("A (checkpoint): step "+a.transformerStep+" / "+a.denseStep+
+      ", "+a.vocabulary+" learned words, tokens "+JSON.stringify(a.tokenIds));
+    rows.push("  Greedy: "+JSON.stringify(a.response)+" · top: "+top(a));
+    rows.push("B (vocab only): step "+b.transformerStep+" / "+b.denseStep+
+      ", "+b.vocabulary+" learned words, tokens "+JSON.stringify(b.tokenIds));
+    rows.push("  Greedy: "+JSON.stringify(b.response)+" · top: "+top(b));
+    rows.push("  Representation changed: "+(JSON.stringify(a.tokenIds)!==JSON.stringify(b.tokenIds))+
+      " · response changed: "+(a.response!==b.response));
+    rows.push("");
+  }
+  output.textContent=rows.join("\n");
+  report("INFO","Tokenizer probe","Non-mutating A/B finished: "+result.addedWordUnits+
+    " newly proposed units, "+result.samples.length/2+" prompts.");
+},"Tokenizer-only diagnosis"));
 $("stopTraining").addEventListener("click",()=>safe(async()=>{
   if(await invoke("hybrid_stop"))report("INFO","Training","Stop requested; the current epoch checkpoint will be saved.");
 },"Training"));
