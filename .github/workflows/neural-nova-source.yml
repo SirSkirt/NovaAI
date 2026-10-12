@@ -5,6 +5,7 @@ on:
       - experimental/neural-nova
     paths:
       - .github/workflows/neural-nova-source.yml
+      - "neural-nova/**"
   workflow_dispatch:
 
 permissions:
