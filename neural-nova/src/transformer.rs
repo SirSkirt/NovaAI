@@ -417,7 +417,7 @@ mod tests {
         let model=Transformer::new(7);
         let dense=vec![0.2;VOCAB];
         let a=model.predict_hybrid_window(b"U: hello\nN: ",&dense,128).unwrap();
-        let b=model.predict_hybrid_window(b"U: hello\\nN: ",&dense,256).unwrap();
+        let b=model.predict_hybrid_window(b"U: hello\nN: ",&dense,256).unwrap();
         assert_eq!(a,b);
         let long=vec![b'a';175];
         assert_eq!(model.attention_hybrid_window(&long,&dense,128).unwrap().len(),128);
@@ -450,8 +450,8 @@ mod tests {
         let mut migrated=Transformer::new(123);
         migrated.import_compatible_arrays(&old[0],&old[1],&old[2]).unwrap();
         let dense=vec![0.3;VOCAB];
-        assert_eq!(learned.predict_hybrid_window(b"U: hello\\nN: ",&dense,128).unwrap(),
-                   migrated.predict_hybrid_window(b"U: hello\\nN: ",&dense,128).unwrap());
+        assert_eq!(learned.predict_hybrid_window(b"U: hello\nN: ",&dense,128).unwrap(),
+                   migrated.predict_hybrid_window(b"U: hello\nN: ",&dense,128).unwrap());
         assert_eq!(&migrated.momentum[current.pos.end-D*128..current.pos.end],
                    &learned.momentum[current.pos.end-D*128..current.pos.end]);
         assert_eq!(&migrated.variance[current.bridge.clone()],&learned.variance[current.bridge]);
