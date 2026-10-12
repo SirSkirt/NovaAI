@@ -131,7 +131,10 @@ mod tests{
         assert!(eligible_checkpoint(None,None,0.10,None,None));
     }
     #[test]fn selection_is_bounded_and_deterministic(){
-        let plan=prepare("text",&"Hello there ".repeat(250)).unwrap();
+        let corpus=(0..300).map(|i|format!(
+            "Section {i} describes a distinct object and where it sits inside the classroom."
+        )).collect::<Vec<_>>().join("\n");
+        let plan=prepare("text",&corpus).unwrap();
         let ids=prior_validation_selection(&plan);
         assert!(ids.len()<=RETENTION_VALIDATION_LIMIT);
         assert!(ids.windows(2).all(|p|p[0]<p[1]));
