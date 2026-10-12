@@ -201,6 +201,54 @@ mod tests{
         assert_eq!(original,extended);
     }
     #[test]
+    fn old_v03_joint_checkpoint_migrates_without_changing_short_context_results(){
+        let mut trained=HybridBrain::new();
+        trained.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.001).unwrap();
+        let prompt=b"U: hello\nN: ";
+        let before=trained.predict_window(prompt,128).unwrap();
+        let old_count=trained.transformer.weights.len()-128*32;
+        let path=std::env::temp_dir().join(format!("nova-migrate-{}-{}.nhyb",
+            std::process::id(),trained.transformer.step));
+        let mut file=File::create(&path).unwrap();
+        file.write_all(MAGIC).unwrap();
+        write_u32(&mut file,old_count as u32).unwrap();
+        file.write_all(&trained.transformer.step.to_le_bytes()).unwrap();
+        for src in [&trained.transformer.weights,&trained.transformer.momentum,
+                    &trained.transformer.variance]{
+            // Legacy Transformer: embeddings [0..4096], position [4096..8192],
+            // the remaining matrices immediately follow. New positions
+            // occupy [4096..12288], with old 128 positions at the end.
+            let mut old=vec![0.0;old_count];
+            old[..4096].copy_from_slice(&src[..4096]);
+            old[4096..8192].copy_from_slice(&src[8192..12288]);
+            old[8192..].copy_from_slice(&src[12288..]);
+            write_floats(&mut file,&old).unwrap();
+        }
+        let dimensions=trained.dense.dimensions();
+        write_u32(&mut file,dimensions.len() as u32).unwrap();
+        for dim in dimensions{write_u32(&mut file,dim as u32).unwrap();}
+        write_u32(&mut file,trained.dense_adam.step).unwrap();
+        for layer in &trained.dense.layers{
+            write_floats(&mut file,&layer.weights).unwrap();
+            write_floats(&mut file,&layer.biases).unwrap();
+        }
+        for gradients in [&trained.dense_adam.m,&trained.dense_adam.v]{
+            for layer in &gradients.layers{
+                write_floats(&mut file,&layer.weights).unwrap();
+                write_floats(&mut file,&layer.biases).unwrap();
+            }
+        }
+        file.sync_all().unwrap();
+        drop(file);
+        let recovered=HybridBrain::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(recovered.predict_window(prompt,128).unwrap(),before);
+        assert_eq!(recovered.transformer.step,trained.transformer.step);
+        assert_eq!(recovered.dense_adam.step,trained.dense_adam.step);
+        assert_eq!(recovered.dense.layers[0].weights,trained.dense.layers[0].weights);
+        assert_eq!(recovered.dense_adam.m.layers[0].weights,trained.dense_adam.m.layers[0].weights);
+    }
+    #[test]
     fn saves_and_restores_entire_joint_optimizer_state(){
         let mut brain=HybridBrain::new();
         brain.train_batch(&[(b"Hello".to_vec(),b'!')],0.002).unwrap();
