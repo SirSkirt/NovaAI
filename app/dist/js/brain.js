@@ -14,6 +14,8 @@ const gridColumns = [16,16,16,8];
 let latestTrace=null;
 let latestStatus=null;
 let training=false;
+let activeTrainingMode="text";
+let lastDialogueQuestion="";
 let pendingInspect=0;
 let canvasMetrics=null;
 const canvas=$("brainCanvas");
@@ -96,6 +98,10 @@ function updateStatus(status){
   $("lossValue").textContent=Number.isFinite(status.lastLoss)?status.lastLoss.toFixed(4):"—";
   $("validationLoss").textContent=Number.isFinite(status.validationLoss)?status.validationLoss.toFixed(4):"—";
   $("validationAccuracy").textContent=Number.isFinite(status.validationAccuracy)?(status.validationAccuracy*100).toFixed(1)+"%":"—";
+  if(activeTrainingMode==="dialogue"){
+    $("dialogueValidationLoss").textContent=Number.isFinite(status.validationLoss)?status.validationLoss.toFixed(4):"—";
+    $("dialogueValidationAccuracy").textContent=Number.isFinite(status.validationAccuracy)?(status.validationAccuracy*100).toFixed(1)+"%":"—";
+  }
   if(!training) setState(status.trained?"Weights loaded":"Untrained");
 }
 function charLabel(code){
@@ -263,6 +269,10 @@ function setTraining(active){
   $("startTrain").disabled=active;
   $("stopTrain").disabled=!active;
   $("resetBtn").disabled=active;
+  $("trainDialogues").disabled=active;
+  $("sendDialogue").disabled=active;
+  $("dialogueStatus").textContent=active&&activeTrainingMode==="dialogue"?"Dialogue training in progress…":
+    active?"Text training in progress…":"No dialogue lesson running.";
   setState(active?"Training":latestStatus?.trained?"Weights loaded":"Untrained",active?"training":"ready");
 }
 function updateProgressFromStatus(status){
@@ -345,6 +355,7 @@ $("loadLesson").addEventListener("click",()=>{
 });
 $("trainingText").addEventListener("input",updateCorpusSize);
 $("startTrain").addEventListener("click",()=>safeRun(async()=>{
+  activeTrainingMode="text";
   clearError();
   const text=$("trainingText").value;
   const epochs=Number($("epochInput").value);
@@ -381,6 +392,110 @@ $("resetBtn").addEventListener("click",()=>safeRun(async()=>{
   appendLog("New random network initialized.");
   await inspect();
 }));
+
+// Training examples use tab-separated lines. We show each user prompt and
+// desired response before committing gradient updates; none are a lookup table.
+const originalDialogueLessons=$("dialogueData").value;
+function addCurriculumPair(user,assistant){
+  const question=(user||"").trim(), answer=(assistant||"").trim();
+  if(!question||!answer)throw new Error("Both the question and ideal response are required.");
+  if(!/^[\x20-\x7e]*$/.test(question)||!/^[\x20-\x7e]*$/.test(answer)){
+    throw new Error("Dialogue examples must contain only printable ASCII characters.");
+  }
+  if(question.length>180||answer.length>128){
+    throw new Error("Question limit 180 ASCII bytes; response limit 128.");
+  }
+  const row=question+"\t"+answer;
+  const current=$("dialogueData").value.trim();
+  if(current.split("\n").includes(row)){
+    logDiagnostic("WARN","Dialogue School","That exact lesson already exists.");
+    return;
+  }
+  $("dialogueData").value=(current?current+"\n":"")+row;
+  logDiagnostic("INFO","Dialogue School","Added one new supervised response example.");
+}
+$("addDialoguePair").addEventListener("click",()=>safeRun(()=>{
+  addCurriculumPair($("teacherQuestion").value,$("teacherAnswer").value);
+  $("teacherAnswer").value="";
+},"Add dialogue lesson"));
+$("restoreDialogueSample").addEventListener("click",()=>safeRun(()=>{
+  if(training)throw new Error("Wait until training stops before changing the lesson set.");
+  if(!confirm("Restore the initial dialogue lesson examples? Your current lesson text will be replaced."))return;
+  $("dialogueData").value=originalDialogueLessons;
+  logDiagnostic("INFO","Dialogue School","Restored the built-in example curriculum.");
+},"Restore dialogue lessons"));
+$("trainDialogues").addEventListener("click",()=>safeRun(async()=>{
+  if(training)throw new Error("Another training session is already running.");
+  const text=$("dialogueData").value;
+  const epochs=Number($("dialogueEpochs").value);
+  if(!Number.isInteger(epochs)||epochs<1||epochs>25)throw new Error("Use 1–25 training epochs.");
+  if(!text.trim())throw new Error("Add at least one dialogue example.");
+  if(/[^\x00-\x7F]/.test(text))throw new Error("Dialogue curriculum must be ASCII for v0.1.3.");
+  activeTrainingMode="dialogue";
+  setTraining(true);
+  $("progressFill").style.width="0%";
+  $("progressPercent").textContent="0%";
+  $("dialogueValidationLoss").textContent="—";
+  $("dialogueValidationAccuracy").textContent="—";
+  $("trainingLog").textContent="";
+  $("progressText").textContent="Starting response-supervised dialogue training…";
+  try{
+    await invoke("neural_train_dialogues",{request:{text,epochs}});
+    logDiagnostic("INFO","Dialogue School","Training request accepted by Rust: "+text.split("\n").length+" lesson lines, "+epochs+" epochs.");
+    await pollBrainStatus();
+  }catch(error){setTraining(false);throw error;}
+},"Train dialogues"));
+function addTranscriptLine(role,text){
+  const output=$("dialogueTranscript");
+  const placeholder=output.querySelector(".chat-placeholder");
+  if(placeholder)placeholder.remove();
+  const line=document.createElement("div");
+  line.className="dialogue-line "+(role==="user"?"from-user":"from-nova");
+  const title=document.createElement("strong");
+  title.textContent=role==="user"?"You":"Nova (neural)";
+  const content=document.createElement("div");
+  content.textContent=text||"(Nova generated an immediate end-of-reply character)";
+  line.append(title,content);
+  output.append(line);
+  output.scrollTop=output.scrollHeight;
+}
+$("sendDialogue").addEventListener("click",()=>safeRun(async()=>{
+  const message=$("dialogueMessage").value.trim();
+  if(!message)throw new Error("Enter a message before asking Nova.");
+  if(training)throw new Error("Finish training first.");
+  if(!/^[\x20-\x7E]+$/.test(message)||message.length>180){
+    throw new Error("Messages must be printable ASCII, 1–180 characters.");
+  }
+  $("sendDialogue").disabled=true;
+  lastDialogueQuestion=message;
+  $("teacherQuestion").value=message;
+  $("correctDialogue").disabled=false;
+  addTranscriptLine("user",message);
+  try{
+    const result=await invoke("neural_chat",{message,length:128,temperature:0.45});
+    addTranscriptLine("nova",result.text);
+    showTrace(result.trace);
+    updateStatus(result.status);
+    $("dialogueMessage").value="";
+  }finally{$("sendDialogue").disabled=training;}
+},"Talk to Nova"));
+$("dialogueMessage").addEventListener("keydown",event=>{
+  if(event.key==="Enter"){event.preventDefault();$("sendDialogue").click();}
+});
+$("correctDialogue").addEventListener("click",()=>safeRun(()=>{
+  if(!lastDialogueQuestion)throw new Error("Ask Nova a question first.");
+  $("teacherQuestion").value=lastDialogueQuestion;
+  $("teacherAnswer").focus();
+  $("teacherAnswer").scrollIntoView({block:"center",behavior:"smooth"});
+  logDiagnostic("INFO","Teacher","Type a corrected response and click Add lesson, then Train dialogue lessons.");
+},"Correct reply"));
+$("clearDialogue").addEventListener("click",()=>{
+  $("dialogueTranscript").replaceChildren();
+  lastDialogueQuestion="";
+  $("correctDialogue").disabled=true;
+  logDiagnostic("INFO","Chat","Cleared displayed chat history. Neural weights were not changed.");
+});
+
 async function registerTrainingEvents(){
   const events=eventAPI();
   if(!events?.listen){
@@ -394,12 +509,19 @@ async function registerTrainingEvents(){
     },"Training progress event"));
     await events.listen("neural-epoch",event=>safeRun(async()=>{
       const p=event.payload;
-      const message="Epoch "+p.epoch+"/"+p.epochs+" · training loss "+p.loss.toFixed(4)+
-        " · validation loss "+p.validationLoss.toFixed(4)+
-        " · validation accuracy "+(p.validationAccuracy*100).toFixed(1)+"%";
+      const dialogue=p.mode==="dialogue";
+      const vl=Number.isFinite(p.validationLoss)?p.validationLoss.toFixed(4):"N/A";
+      const va=Number.isFinite(p.validationAccuracy)?(p.validationAccuracy*100).toFixed(1)+"%":"N/A";
+      const message=(dialogue?"Dialogue ":"Text ")+"epoch "+p.epoch+"/"+p.epochs+
+        " · training loss "+p.loss.toFixed(4)+" · held-out loss "+vl+" · accuracy "+va;
       appendLog(message);
-      $("validationLoss").textContent=p.validationLoss.toFixed(4);
-      $("validationAccuracy").textContent=(p.validationAccuracy*100).toFixed(1)+"%";
+      if(dialogue){
+        $("dialogueValidationLoss").textContent=vl;
+        $("dialogueValidationAccuracy").textContent=va;
+      }else{
+        $("validationLoss").textContent=vl;
+        $("validationAccuracy").textContent=va;
+      }
       logDiagnostic("INFO","Training",message);
     },"Training epoch event"));
     await events.listen("neural-done",event=>safeRun(async()=>{
@@ -434,7 +556,7 @@ async function boot(){
     setError("Open Neural Nova as an installed Windows or Android app to use its native Rust network.","Startup");
     return;
   }
-  logDiagnostic("INFO","Startup","Neural Nova v0.1.2 diagnostics initialized. Extended context: 64 characters.");
+  logDiagnostic("INFO","Startup","Neural Nova v0.1.3 Dialogue School initialized. Experimental 64-character context.");
   // Start the status fallback independently of event permissions; stalled event delivery
   // must never prevent backend state updates or hide an error.
   setInterval(()=>{if(training||latestStatus?.training)void pollBrainStatus();},1000);
