@@ -50,6 +50,89 @@ pub fn dialogue_examples(pairs:&[DialoguePair])->Result<Vec<Example>,String>{
 fn corpus_examples(corpus:&[u8],indices:Range<usize>,lower_bound:usize)->Vec<Example>{
     indices.map(|i|(corpus[i.saturating_sub(RAW_WINDOW).max(lower_bound)..i].to_vec(),corpus[i])).collect()
 }
+/// Make *independent* text sections before splitting. Prefer paragraphs
+/// separated by a blank line. With fewer than five, fall back to complete
+/// sentences/individual lines (including single-line prose paragraphs).
+/// A window must never cross an independently held-out section boundary.
+fn text_sections(text:&str)->Vec<String>{
+    let mut paragraphs=Vec::new();
+    let mut paragraph=String::new();
+    for line in text.lines(){
+        if line.trim().is_empty(){
+            if !paragraph.trim().is_empty(){
+                paragraphs.push(paragraph.trim().to_string());paragraph.clear();
+            }
+        }else{
+            if !paragraph.is_empty(){paragraph.push('\n');}
+            paragraph.push_str(line.trim());
+        }
+    }
+    if !paragraph.trim().is_empty(){paragraphs.push(paragraph.trim().to_string());}
+    if paragraphs.len()>=5{return paragraphs;}
+    // A sentence ends on terminal punctuation followed by whitespace, or
+    // at a line ending. This splitter has no learned language assumptions.
+    let mut sentences=Vec::new();
+    let bytes=text.as_bytes();
+    let mut start=0usize;
+    for i in 0..bytes.len(){
+        let b=bytes[i];
+        let followed_by_space=i+1==bytes.len()||bytes[i+1].is_ascii_whitespace();
+        if b==b'\n'||((b==b'.'||b==b'!'||b==b'?')&&followed_by_space){
+            let stop=if b==b'\n'{i}else{i+1};
+            let section=text[start..stop].trim();
+            if section.len()>=2{sentences.push(section.to_string());}
+            start=i+1;
+        }
+    }
+    if start<text.len(){
+        let section=text[start..].trim();
+        if section.len()>=2{sentences.push(section.to_string());}
+    }
+    sentences
+}
+/// Split *whole* sections by stable hash, keeping case/whitespace variants
+/// and verbatim duplicates together. File order cannot decide membership.
+fn prepare_text_sections(text:&str)->Result<PreparedLessons,String>{
+    let sections=text_sections(text);
+    let mut groups:BTreeMap<String,Vec<String>>=BTreeMap::new();
+    for section in sections{
+        let canonical=section.split_ascii_whitespace()
+            .map(str::to_ascii_lowercase).collect::<Vec<_>>().join(" ");
+        groups.entry(canonical).or_default().push(section);
+    }
+    if groups.len()<5{
+        return Err("Text lessons need at least five distinct paragraphs (blank-line separated), sentences, or lines for a meaningful held-out split. Add varied sections instead of repeating one passage.".into());
+    }
+    let mut ordered=groups.into_iter().collect::<Vec<_>>();
+    ordered.sort_by(|a,b|stable_hash(&a.0).cmp(&stable_hash(&b.0)).then(a.0.cmp(&b.0)));
+    let held=(ordered.len()/5).max(1);
+    let boundary=ordered.len()-held;
+    let mut train_units=Vec::new();
+    let mut valid_units=Vec::new();
+    for (index,(_,variants)) in ordered.into_iter().enumerate(){
+        if index<boundary{train_units.extend(variants);}
+        else{valid_units.extend(variants);}
+    }
+    let examples=|units:&[String]|units.iter().flat_map(|unit|{
+        let bytes=unit.as_bytes();
+        corpus_examples(bytes,1..bytes.len(),0)
+    }).collect::<Vec<_>>();
+    let train=examples(&train_units);
+    let validation=examples(&valid_units);
+    if train.is_empty()||validation.is_empty(){
+        return Err("Text lesson needs longer distinct sentences or paragraphs in both training and held-out sets".into());
+    }
+    if train.len()>MAX_SAMPLES{
+        return Err(format!("Too many Text training targets (max {MAX_SAMPLES}); split into smaller lessons"));
+    }
+    Ok(PreparedLessons{
+        train,validation,train_lessons:train_units.len(),
+        validation_lessons:valid_units.len(),mode:"text".into(),
+        training_text:train_units.join("\n\n"),
+        memory_train:Vec::new(),memory_validation:Vec::new(),
+    })
+}
+
 fn conversation_sessions(text:&str)->Result<Vec<Vec<DialoguePair>>,String>{
     let mut sessions=Vec::new();
     let mut session=Vec::new();
@@ -134,19 +217,10 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
                 mode:mode.into(),training_text,memory_train:Vec::new(),memory_validation:Vec::new()})
         },
         "text"=>{
-            let corpus=text.as_bytes();
-            if corpus.len()<120||corpus.len()>MAX_CORPUS_BYTES{
+            if text.len()<120||text.len()>MAX_CORPUS_BYTES{
                 return Err(format!("Text lessons require 120–{MAX_CORPUS_BYTES} ASCII bytes per training run"));
             }
-            let split=(corpus.len()*9/10).max(2);
-            let train=corpus_examples(corpus,1..split,0);
-            // Separate the validation context at the boundary. It must not
-            // include any bytes from the training portion of this corpus.
-            let validation=corpus_examples(corpus,(split+1)..corpus.len(),split);
-            if validation.is_empty(){return Err("No held-out text tokens".into());}
-            Ok(PreparedLessons{train,validation,train_lessons:1,validation_lessons:1,
-                mode:mode.into(),training_text:text[..split].to_string(),
-                memory_train:Vec::new(),memory_validation:Vec::new()})
+            prepare_text_sections(text)
         },
         "conversation"=>{
             let mut sessions=conversation_sessions(text)?;
@@ -279,12 +353,59 @@ mod tests{
         assert!(!a.validation.is_empty());
     }
     #[test]
-    fn text_validation_cannot_see_training_context(){
-        let data="abcdefghij ".repeat(40);
-        let prepared=prepare("text",&data).unwrap();
-        assert!(prepared.validation[0].0.len()>0);
-        assert_eq!(prepared.validation[0].0,vec![data.as_bytes()[data.len()*9/10]]);
-        assert!(prepared.validation.iter().all(|(history,_)|!history.is_empty()));
+    fn text_validation_uses_whole_paragraphs_and_no_cross_split_context(){
+        let data=(0..12).map(|i|format!(
+            "Distinct section {i}: Mira opens the blue box and counts the candles.\nThe reader checks the order."
+        )).collect::<Vec<_>>().join("\n\n");
+        let p=prepare("text",&data).unwrap();
+        assert_eq!(p.train_lessons+p.validation_lessons,12);
+        assert!(p.train_lessons>=9 && p.validation_lessons>=2);
+        assert!(p.validation.iter().all(|(context,_)|!context.is_empty()));
+        assert!(p.validation.iter().all(|(context,_)|context.len()<RAW_WINDOW));
+        // Whole paragraph boundaries mean each target's context starts inside
+        // the same held-out paragraph. Nothing can extend from train sections.
+        let training=String::from_utf8(p.training_text.clone().into_bytes()).unwrap();
+        for i in 0..12{
+            let unique=format!("Distinct section {i}:");
+            let in_train=training.contains(&unique);
+            let in_valid=p.validation.iter().any(|(history,_)|
+                String::from_utf8_lossy(history).contains(&unique));
+            assert!(!(in_train && in_valid));
+        }
+    }
+    #[test]
+    fn text_section_split_is_stable_under_reordering(){
+        let lines=(0..14).map(|i|format!(
+            "Line {i} describes a different object and its place in the room."
+        )).collect::<Vec<_>>();
+        let a=prepare("text",&lines.join("\n")).unwrap();
+        let b=prepare("text",&lines.iter().rev().cloned().collect::<Vec<_>>().join("\n")).unwrap();
+        assert_eq!(a.train,a.train.clone());
+        let mut av=a.validation.clone();let mut bv=b.validation.clone();
+        av.sort();bv.sort();assert_eq!(av,bv);
+        let mut at=a.train.clone();let mut bt=b.train.clone();
+        at.sort();bt.sort();assert_eq!(at,bt);
+    }
+    #[test]
+    fn text_duplicate_sections_do_not_cross_holdout(){
+        let parts=(0..10).map(|i|format!(
+            "Repeated sentence {i} is different enough to remain independent."
+        )).collect::<Vec<_>>();
+        let mut all=parts.clone();
+        all.extend(parts.iter().map(|x|x.to_uppercase()));
+        let p=prepare("text",&all.join("\n")).unwrap();
+        let canonical_in_train=p.training_text.to_ascii_lowercase();
+        for row in &parts{
+            let prefix=row.to_ascii_lowercase();
+            if canonical_in_train.contains(&prefix){
+                assert!(!p.validation.iter().any(|(history,_)|
+                    String::from_utf8_lossy(history).to_ascii_lowercase().contains(&prefix)));
+            }
+        }
+    }
+    #[test]
+    fn text_rejects_single_repeated_block_instead_of_fake_validation(){
+        assert!(prepare("text",&"abcdefghij ".repeat(40)).is_err());
     }
     #[test]
     fn first_dialogue_epoch_is_short_to_long_later_epochs_are_shuffled(){
