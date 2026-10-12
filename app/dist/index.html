@@ -97,7 +97,11 @@
 Hi
 good morning
 hey there</textarea>
-            <button type="button" class="secondary" id="runTokenizerProbe">Compare A/B without training</button>
+            <div class="row wrap">
+              <button type="button" class="secondary" id="runTokenizerProbe">Compare A/B without training</button>
+              <button type="button" class="secondary" id="saveTokenizerBaseline">Save this A/B baseline</button>
+              <button type="button" class="secondary" id="compareTokenizerStageC">Compare trained checkpoint (C)</button>
+            </div>
             <pre id="tokenizerProbeOutput" class="epoch-history" style="max-height:320px;overflow:auto;white-space:pre-wrap">No tokenizer probe run.</pre>
           </details>
           <details class="teacher-extra">
