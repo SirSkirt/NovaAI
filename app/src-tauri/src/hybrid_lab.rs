@@ -1260,11 +1260,25 @@ fn test_emit(app:&AppHandle,report:&TestReport)->Result<(),String>{
 }
 fn test_runner(app:&AppHandle,state:&HybridState,test:&TestDefinition,
     o:&TestOptions,report:&mut TestReport)->Result<(),String>{
+    if diag::enabled(&app.state::<Diagnostics>()){
+        diag::record(&app.state::<Diagnostics>(),"test_started",serde_json::json!({
+            "testId":test.id,"runId":report.id,"name":test.name,
+            "questionCount":test.cases.len(),"unseenCount":test.unseen.len(),
+            "settings":o,"baselineFirst":true,"modelStep":report.start_step,
+        }));
+    }
     // Phase 1: ALL baseline questions must be answered before ANY correction.
     // Otherwise Q2's "initial score" would already have benefited from Q1.
     for index in 0..test.cases.len(){
         if !test_wait(state){report.status="stopped".into();return Ok(());}
         if let Some(answer)=test_attempt(state,&test.cases[index],o,index as u64)?{
+            if diag::enabled(&app.state::<Diagnostics>()){
+                diag::record(&app.state::<Diagnostics>(),"test_baseline",serde_json::json!({
+                    "index":index,"question":test.cases[index].question,
+                    "expected":test.cases[index].expected,"response":answer.response,
+                    "grade":answer.automatic,"modelStep":answer.model_step,
+                }));
+            }
             report.questions[index].attempts.push(answer);
             report.recalculate();
             test_record(app,state,report)?;
@@ -1297,12 +1311,36 @@ fn test_runner(app:&AppHandle,state:&HybridState,test:&TestDefinition,
                     }
                     report.training_updates+=steps;
                     report.end_step=lock(state)?.brain.transformer.step;
+                    if diag::enabled(&app.state::<Diagnostics>()){
+                        let s=lock(state)?;
+                        diag::record(&app.state::<Diagnostics>(),"test_correction",serde_json::json!({
+                            "index":index,"question":case.question,"expected":case.expected,
+                            "attempt":attempt_no,"correctionLoss":loss,"gradientSteps":steps,
+                            "modelStep":s.brain.transformer.step,
+                            "weightFingerprint":diag::weight_digest(&s.brain),
+                            "gradients":s.brain.last_batch_diagnostics.as_ref().map(|v|
+                                serde_json::json!({
+                                    "transformerNorm":v.transformer_norm,
+                                    "denseNorm":v.dense_norm,"bridgeNorm":v.bridge_norm,
+                                    "transformerClipped":v.transformer_clipped,
+                                    "denseClipped":v.dense_clipped,
+                                })),
+                        }));
+                    }
                     test_record(app,state,report)?;
                 }else{report.status="stopped".into();return Ok(());}
             }
             if !test_wait(state){report.status="stopped".into();return Ok(());}
             if let Some(attempt)=test_attempt(state,case,o,
                 100_000+(index as u64)*16+attempt_no as u64)?{
+                if diag::enabled(&app.state::<Diagnostics>()){
+                    diag::record(&app.state::<Diagnostics>(),"test_retry",serde_json::json!({
+                        "index":index,"attempt":attempt_no+1,
+                        "question":case.question,"response":attempt.response,
+                        "expected":case.expected,"grade":attempt.automatic,
+                        "modelStep":attempt.model_step,
+                    }));
+                }
                 report.questions[index].attempts.push(attempt);
                 report.recalculate();
                 test_record(app,state,report)?;
@@ -1336,6 +1374,16 @@ fn test_runner(app:&AppHandle,state:&HybridState,test:&TestDefinition,
     }
     report.recalculate();
     report.status="complete".into();
+    if diag::enabled(&app.state::<Diagnostics>()){
+        diag::record(&app.state::<Diagnostics>(),"test_complete",serde_json::json!({
+            "runId":report.id,"initialCorrect":report.initial_correct,
+            "finalCorrect":report.final_correct,"corrected":report.corrected,
+            "trainingUpdates":report.training_updates,
+            "startStep":report.start_step,"endStep":report.end_step,
+            "unseenBefore":report.baseline_unseen_correct,
+            "unseenAfter":report.final_unseen_correct,
+        }));
+    }
     Ok(())
 }
 #[tauri::command]
