@@ -1,5 +1,28 @@
 # Neural Nova v0.5.0 — three-tab hybrid brain lab
 
+## v0.6.1 — Opt-in forensic logs for trainer vs episodic memory
+
+**Purpose:** User wants to repeat the 399-step → 735-step dialogue/text learning experiment and determine whether later regression stems from tokenizer growth, optimizer/lesson updates, checkpoint selection, or saved conversational memory taking precedence. No architectural rebalancing or response rules have been introduced. Everything in this update is read-only instrumentation except writing logs to disk.
+
+### How to record
+1. Back up the working and regressed joint checkpoints (and keep them separate).
+2. Open **Debugger → Deep neural logging**, click **Start recording** before the first new lesson. This writes one timestamped **JSONL** file under Tauri's platform app-data folder, `neural-nova-diagnostics/`. The absolute file path is displayed; every recording starts a new file. It also runs a read-only initial fixed-prompt probe.
+3. Use **Inspect same weights** with `hello`, `Hi`, `good morning`, and `hey there`. With the checkbox OFF it uses zero prior turns; with the checkbox ON it applies saved conversation turns to the exact same learned weights and reports a zero-memory baseline in the same probe. The test does not add to or mutate chat history. The comparison uses 128- or 256-token context from the Chat setting.
+4. Rerun the original Dialogue/Text lessons with unchanged Gentle rate and original lesson order. The recorder automatically appends `lesson_before_vocabulary` and `lesson_after_vocabulary` (same weights before/after token-ID growth), `lesson_validation_baseline`, every `train_batch` (loss, real step, LR, Transformer/dense/bridge gradient norms, clipping, whether episodic memory is used), each `train_epoch` (loss, model fingerprint, fixed isolated greeting probes and checkpoint decision), and `training_selected_checkpoint` (best restored weights, not just the last epoch).
+5. If using **Tests & Corrections**, the log also captures `test_started`, all `test_baseline` answers, `test_correction` weight changes and `test_retry` responses. Turn corrections **OFF** if you want an observation-only assessment rather than additional training.
+6. For chat, `chat_inference` records actual generated output, context settings, first-token probabilities with and without remembered turns, token IDs, attention weights and neural bridge signal. The Visualize inspector also records read-only snapshots. No hard-coded answer selection.
+7. Click **Stop recording**, then **Save JSONL** or **Copy JSONL**. Android's WebView may not support direct browser downloads; the original remains at the displayed app-data path and Copy can be used as a fallback. Share logs only after reviewing them—questions and test answer keys may appear. Raw lesson corpora are fingerprinted (FNV-1a correlation ID, not a security hash), not copied into each entry.
+
+### Interpretation / invariants
+- Dialogue/Text **training** calls `train_batch`, whose Transformer gradient uses an **empty episodic memory list**. Multi-turn Conversation teaching uses `train_memory_batch`, and ordinary Chat / Visualize may read the persisted conversation history. Saved chat memory therefore cannot be *assumed* to have trained the wrong greetings; measure its contribution directly using the exact same checkpoint and prompt.
+- Recorded `memoryTotalVariation` compares next-character predictions **with and without saved episodic turns**, with no neural updates, which directly tests whether learned memory is changing current inference. A displayed "5/12 slots" is not proof those slots dominate: influence can be zero if the reader has not been trained.
+- The train loop still selects the best weights by held-out **next-character loss on the current lesson** (separate from the optional earlier-skill benchmark), so a later lesson can improve its own loss while altering earlier dialogue. Logs preserve both metrics and model fingerprints.
+- The bridge ablation is a diagnostic on the learned **joint** model, not a second chatbot. Attention weights are not a guaranteed explanation of decisions.
+- Logging is opt-in and observation-only. A log file error disables the recorder rather than altering model outputs/training, and every record is flushed to disk. It adds some CPU/disk overhead; disable it for performance measurements.
+- New code: `app/src-tauri/src/diagnostic_log.rs`, `hybrid_diagnostic_probe`, `app/dist/js/diagnostic-ui.js`; the UI is in the existing collapsible debugger, not a new giant tab. Core brain weights and checkpoint format remain compatible and unchanged.
+- Do not interpret a 399 vs 735 comparison as proof of any one pathway's fault until looking at matched no-memory logits before/after vocabulary growth and after each training epoch.
+
+
 ## v0.6.0 — Tests & Corrections: external teacher, one neural brain
 
 ### Test data and independent answer keys
