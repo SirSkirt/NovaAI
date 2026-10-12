@@ -74,3 +74,21 @@ label.checkbox-line{display:flex;align-items:center;gap:9px;color:#c8d8ee;font-s
 /* v0.3.2: independent schedule toggles, compact and readable. */
 .trainer-switches{display:flex;flex-direction:column;gap:13px}
 .trainer-explainer{font-size:11px;line-height:1.55;color:#a7b9d4;margin:9px 0 0}
+
+/* v0.4.0: compact generation controls and matched-seed diagnostic display. */
+.chat-settings{display:grid;grid-template-columns:130px minmax(155px,1fr) 160px 160px;gap:12px;align-items:end;margin-bottom:8px}
+.chat-settings>div{min-width:0}
+.chat-settings select{padding:9px 10px;font-size:12px}
+.chat-settings input[type=range]{appearance:auto;-webkit-appearance:auto;height:25px;border:none;padding:0;margin:4px 0 0;background:transparent;box-shadow:none;accent-color:#8aa7f4;cursor:pointer}
+.chat-settings label output{color:#9fdbff;font-variant-numeric:tabular-nums}
+.chat-experiment-note{margin:4px 0 14px!important}
+.context-report{font:12px/1.6 system-ui,sans-serif;color:#b3c9e4;padding:10px 12px;margin-top:10px;border-radius:9px;background:#111e2c;border:1px solid #35516a}
+.chat-comparison{padding:14px;border:1px solid #3f5674;border-radius:12px;margin-top:12px;background:#0f1827}
+.chat-comparison>strong{font-size:13px;display:block;margin-bottom:11px}
+.comparison-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.comparison-card{padding:11px;border-radius:10px;background:#182334;border:1px solid #3c4c66;min-width:0}
+.comparison-card>strong{font-size:12px}
+.comparison-card pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto;padding:11px;background:#0b1422;border-radius:7px;color:#c6eadf;font:13px/1.45 ui-monospace,Consolas,monospace}
+.comparison-card small{color:#94abc5;font-size:11px;line-height:1.5;display:block}
+@media(max-width:850px){.chat-settings{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.chat-settings{gap:8px}.comparison-grid{grid-template-columns:1fr}}
