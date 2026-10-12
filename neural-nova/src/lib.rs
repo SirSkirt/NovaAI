@@ -460,6 +460,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shared_loss_gradient_accumulation_matches_individual_gradients() {
+        let net=Network::new(NetworkConfig{dimensions:vec![3,5,2],seed:52}).unwrap();
+        let input=[0.25,-0.5,1.0];
+        let upstream=[0.3,-0.7];
+        let single=net.gradients_from_logits(&input,&upstream).unwrap();
+        let mut joint=Gradients::zeros(&net);
+        net.accumulate_logits_gradients(&input,&upstream,&mut joint).unwrap();
+        net.accumulate_logits_gradients(&input,&upstream,&mut joint).unwrap();
+        for (a,b) in joint.layers.iter().zip(&single.layers) {
+            for (x,y) in a.weights.iter().zip(&b.weights) {
+                assert!((x-2.0*y).abs()<1e-6);
+            }
+            for (x,y) in a.biases.iter().zip(&b.biases) {
+                assert!((x-2.0*y).abs()<1e-6);
+            }
+        }
+    }
+    #[test]
     fn requested_architecture_has_correct_parameter_count() {
         let net = Network::new(NetworkConfig::neural_nova_v1()).unwrap();
         assert_eq!(net.dimensions(), vec![1024, 512, 512, 128]);
