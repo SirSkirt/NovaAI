@@ -9,6 +9,6 @@ The full legacy Nova project was first unpacked into the branch. Its old Rust-au
 - [Windows/Android experimental build workflow](.github/workflows/neural-nova-app.yml)
 - [Original legacy source archive](releases/) (historical only; not built or executed)
 
-**Warning:** v0.1 is an eight-character ASCII next-character predictor, not a general conversational LLM. This is the first learning-system experiment before tackling embeddings and Transformers.
+**Warning:** v0.1.2 is a 64-character-context ASCII next-character predictor, not a general conversational LLM. This is the first learning-system experiment before tackling embeddings and Transformers.
 
 The original Nova package ID was `com.qtech.nova`. Neural Nova uses `com.qtech.neuralnova.experimental` and saves its checkpoints in its own app-data location. Builds here never publish or replace original Nova releases.

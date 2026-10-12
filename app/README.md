@@ -1,27 +1,22 @@
-# Neural Nova v0.1 — experimental-only replacement
+# Neural Nova v0.1.2 — experimental brain lab
 
-This is the **new** Neural Nova application for branch `experimental/neural-nova`. Its original rule-based cognition is not compiled or loaded; the only reasoning backend is the independent, from-scratch Rust neural network in `/neural-nova`.
+Only the `experimental/neural-nova` branch was changed. Original Nova's `main` remains untouched.
 
-## What works
-- 1,024 → 512 → 512 → 128 fully connected neural network; 853,120 learnable weights/biases
-- 8 ASCII characters × 128 one-hot features as input; 128-way next-character distribution
-- Text-corpus training (Adam, backpropagation, gradients, cross-entropy)
-- Real activations for **all 2,176 neurons**; inspect top weighted contributions
-- Brain visualizer in the input/hidden/hidden/output format, responsive to mobile/desktop
-- On-device asynchronous training, cancellation, progress and epoch losses
-- Local weights-only checkpoint in separate Neural Nova app data, automatic on epoch/stop
-- Next-character generation with sampling and temperature
-- Safe reset confined to experimental model data
+The **custom Rust feed-forward neural network** uses the same 1024 → 512 → 512 → 128 architecture (853,120 parameters). Neural Nova v0.1.2 expands input context from eight to **64 ASCII characters**, represented as 16 deterministic character features each (7 bipolar ASCII bits plus letter/case/digit/punctuation/sentence-boundary features). No ML frameworks.
 
-## Building
+## More capable training studio
+
+- Enter multiple varied, full sentences or load an ASCII text file, up to 250,000 bytes per run.
+- Shuffle training positions per epoch, and vary contextual history (8, 16, 32, 64 chars) to support both short and long prompts.
+- Hold out the last 10% of each corpus for **validation loss and next-character accuracy**. This is a useful basic check, but repeated texts can leak statistical patterns into validation; it is not a benchmark of general language understanding.
+- Display live progress, epoch losses, and validation statistics. Stop training without losing the last epoch's weights.
+- Inspect all 2,176 real neurons and sampled weighted links; generate continuations with temperature.
+- Experimental weights are saved as `neural-nova-v0.1.2.nnov` in the independent app-data directory. Existing v0.1 weights remain untouched but are **not compatible** with the new input encoding, so training starts fresh.
+
+## Run
 ```sh
 cd neural-nova && cargo test
 cd ../app && npm install && npm run tauri build
 ```
 
-Android debug APK can be built with Tauri Android SDK/NDK installed:
-`cd app && npm run android:init && npm run android:debug-apk`
-
-**Not a chat LLM:** this is an eight-character lookback feed-forward character predictor. The UI labels it accordingly. Model outputs are only meaningful after training. Large text corpora take a long time, especially on phones. Character vocabulary is currently ASCII only.
-
-Neural Nova's package identifier is `com.qtech.neuralnova.experimental`, distinct from original Nova. Original Nova remains on `main`. The original ZIP is preserved only as an archival source snapshot, not used at runtime.
+The output is still a distribution over 128 ASCII characters. **This is a fixed-window feed-forward character model, not a Transformer or conversational LLM.** Longer prompts only provide the final 64 characters of context. Better training does not imply factual reasoning or comprehension. CPU training on large corpora can be slow.

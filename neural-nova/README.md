@@ -1,29 +1,16 @@
-# Neural Nova — isolated experimental Rust brain
+# Neural Nova v0.1.2 — from-scratch Rust neural network
 
-**Branch only:** `experimental/neural-nova`. This crate is additive; it does not remove Nova's old brain or modify `main`.
+The custom engine uses **1024 → 512 → 512 → 128** dense layers, ReLU, softmax, cross-entropy, backpropagation, Adam, global gradient clipping, He initialization and binary checkpoints. No external machine-learning crate.
 
-Neural Nova v0.1 is a **from-scratch, feed-forward neural network**, built using only the Rust standard library. It includes row-major dense layers, He initialization, ReLU, softmax, cross-entropy loss, analytic backpropagation, mini-batch gradient averaging, global gradient clipping, Adam, and binary parameter checkpoints.
+Inputs now represent **64 recent ASCII characters × 16 features each**. The encoding is implemented in `encode_ascii_context`, shared by both the GUI and CLI trainer. Padded positions are all zero. A real space has its own nonzero encoded features.
 
-## Architecture
-
-`1024 → 512 → 512 → 128` (two hidden layers), with **853,120** trainable weights and biases.
-
-## Build and verify
-
+Run:
 ```sh
 cd neural-nova
 cargo test
 cargo run --release --bin train_ascii -- data/example.txt 2 checkpoint.nnov
 ```
 
-The proof-of-concept language trainer uses **8 ASCII characters × 128 one-hot values = 1024 inputs** to predict the next ASCII character (128 outputs). It is deliberately small-context and *not yet an LLM*. Its job is to test whether gradients, training, and persistence work.
+The GUI training loop additionally shuffles positions per epoch, trains on multiple contextual prefix lengths, and holds out 10% of each corpus for loss/accuracy validation. The 128 outputs are next-character probabilities. This is not yet a Transformer, long-context language model, or conversational assistant.
 
-The tests check configuration/parameter count, softmax probability normalization, analytic gradients against finite differences, loss reduction on a simple learning task, and exact checkpoint round-tripping.
-
-## Safety and isolation
-
-- All files are under `neural-nova/`; original source archive remains under `releases/`.
-- Do not merge to `main` or publish over the original Nova releases.
-- Nova's existing brain remains intact while this experimental core is validated.
-- The current app source is in a ZIP in this Git repository. Use the experimental-only unpack workflow to expose the source before replacing cognition components.
-- Future work: implement trainable embeddings, attention, residuals, layer norm, Transformer blocks, validation-split benchmarks, optimizer checkpointing, and teacher UI integration.
+**Branch isolation:** all changes are to `experimental/neural-nova`. Legacy Nova remains untouched on `main`, and the original project's source archive is preserved under `releases/`.
