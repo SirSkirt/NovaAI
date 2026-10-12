@@ -5,6 +5,7 @@ use neural_nova::transformer::VOCAB;
 use neural_nova::trainer::{prepare,training_order,Example,PreparedLessons,ScheduleConfig,ScheduleState};
 use crate::transformer_lab::Lesson;
 use crate::test_lab::{TestArchive,TestDefinition,TestReport,TestOptions,TestCase,QuestionResult,Attempt,parse_cases,grade,validate_options};
+use crate::diagnostic_log::{self as diag, Diagnostics};
 use serde::{Deserialize,Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -526,6 +527,117 @@ pub async fn hybrid_bridge_probe(
         })
     }).await.map_err(|e|e.to_string())?
 }
+
+fn first_character_summary(probabilities:&[f32])->serde_json::Value{
+    let mut ranked=(0..probabilities.len()).collect::<Vec<_>>();
+    ranked.sort_by(|&a,&b|probabilities[b].total_cmp(&probabilities[a]));
+    serde_json::json!({
+        "h":probabilities[b'H' as usize],
+        "y":probabilities[b'Y' as usize],
+        "newline":probabilities[b'\n' as usize],
+        "top":ranked.into_iter().take(8).map(|id|serde_json::json!({
+            "code":id,"probability":probabilities[id]
+        })).collect::<Vec<_>>()
+    })
+}
+fn probability_distance(a:&[f32],b:&[f32])->f32{
+    a.iter().zip(b.iter()).map(|(x,y)|(x-y).abs()).sum::<f32>()*0.5
+}
+/// Every variant uses the SAME current joint brain weights. Memory is never
+/// placed in the prompt; it uses the actual trainable episodic reader.
+fn diagnostic_prediction(brain:&HybridBrain,prompt:&str,window:usize,
+    memory:&[String],include_greedy:bool)->Result<serde_json::Value,String>{
+    let context=dialogue_prefix(prompt)?;
+    let tokens=brain.tokenizer.encode(std::str::from_utf8(&context).map_err(|e|e.to_string())?)?;
+    let without=brain.predict_with_memory(&context,window,&[])?;
+    let with=if memory.is_empty(){without.clone()}
+        else{brain.predict_with_memory(&context,window,memory)?};
+    let first=first_character_summary(&with);
+    let bridge=brain.bridge_measurement(&context,window)?;
+    let attention=brain.inspect_with_memory(&context,window,memory)?.1;
+    let mut output=Vec::new();
+    if include_greedy{
+        let mut rolling=context.clone();
+        for _ in 0..32{
+            let p=brain.predict_with_memory(&rolling,window,memory)?;
+            let next=greedy_sample(&p);
+            if next==b'\n'{break;}
+            output.push(next);
+            rolling.push(next);
+        }
+    }
+    Ok(serde_json::json!({
+        "prompt":prompt,"contextWindowTokens":window,"inputBytes":context.len(),
+        "tokenIds":tokens,"tokenLabels":tokens.iter().map(|&id|brain.tokenizer.token_label(id)).collect::<Vec<_>>(),
+        "memorySlots":memory.len(),"memoryTurnSizes":memory.iter().map(|m|m.len()).collect::<Vec<_>>(),
+        "firstWithMemory":first,
+        "firstWithoutMemory":first_character_summary(&without),
+        "memoryTotalVariation":probability_distance(&with,&without),
+        "attention":attention.iter().map(|a|serde_json::json!({
+            "tokenId":a.token_id,"position":a.index,"weight":a.probability
+        })).collect::<Vec<_>>(),
+        "bridge":{
+            "transformerNorm":bridge.transformer_norm,
+            "denseNorm":bridge.dense_norm,
+            "bridgeNorm":bridge.projected_bridge_norm,
+            "combinedNorm":bridge.combined_norm,
+            "bridgeRatio":bridge.bridge_to_transformer_ratio,
+            "bridgeAblationTotalVariation":bridge.next_character_total_variation,
+        },
+        "greedy32":String::from_utf8(output).map_err(|e|e.to_string())?,
+    }))
+}
+fn diagnostic_probes(brain:&HybridBrain,prompts:&[String],window:usize,
+    memory:&[String],full:bool)->Vec<serde_json::Value>{
+    prompts.iter().map(|p|match diagnostic_prediction(brain,p,window,memory,full){
+        Ok(v)=>v,Err(e)=>serde_json::json!({"prompt":p,"error":e})
+    }).collect()
+}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct DiagnosticProbeResult{
+    transformer_step:u64,dense_step:u32,vocabulary:usize,
+    with_conversation_memory:bool,probes:Vec<serde_json::Value>,
+    weights_fingerprint:String,
+}
+#[tauri::command]
+pub async fn hybrid_diagnostic_probe(
+    app:AppHandle,state:State<'_,HybridState>,prompts:String,context_chars:Option<usize>,
+    use_conversation_memory:Option<bool>,
+)->Result<DiagnosticProbeResult,String>{
+    let window=valid_window(context_chars)?;
+    let entries=prompts.lines().map(str::trim).filter(|s|!s.is_empty()).collect::<Vec<_>>();
+    if entries.is_empty()||entries.len()>8 ||
+        entries.iter().any(|p|p.len()>180||!p.is_ascii()||p.contains('\r')){
+        return Err("Supply 1–8 single-line ASCII prompts, up to 180 characters each".into());
+    }
+    let entries=entries.into_iter().map(str::to_owned).collect::<Vec<_>>();
+    let state=state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||{
+        if state.inner.training.load(Ordering::Acquire){
+            return Err("Pause model changes by finishing training before this independent probe".into());
+        }
+        let (model,memory)={
+            let s=lock(&state)?;
+            let remembered=if use_conversation_memory.unwrap_or(false){memory_turns(&s.history)}
+                else{Vec::new()};
+            (s.brain.clone(),remembered)
+        };
+        let probes=diagnostic_probes(&model,&entries,window,&memory,true);
+        let result=DiagnosticProbeResult{
+            transformer_step:model.transformer.step,dense_step:model.dense_adam_steps(),
+            vocabulary:model.tokenizer.words.len(),
+            with_conversation_memory:!memory.is_empty(),
+            probes,weights_fingerprint:diag::weight_digest(&model),
+        };
+        if diag::enabled(&app.state::<Diagnostics>()){
+            diag::record(&app.state::<Diagnostics>(),"independent_probe",serde_json::to_value(&result)
+                .map_err(|e|e.to_string())?);
+        }
+        Ok(result)
+    }).await.map_err(|e|e.to_string())?
+}
+
 #[derive(Clone,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct TrainOptions {
