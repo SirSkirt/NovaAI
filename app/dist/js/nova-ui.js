@@ -114,6 +114,11 @@ function status(s){
   $("trainingStage").textContent=s.stage||"Idle";
   $("lessonSplit").textContent=(s.trainLessons||0)+" training / "+(s.validationLessons||0)+" held-out lessons";
   $("trainingSpeed").textContent=s.tokensPerSecond>0?"Throughput: "+s.tokensPerSecond.toFixed(1)+" tokens/s":"Throughput: —";
+  $("retentionStatus").textContent=Number.isFinite(s.retentionAccuracy)
+    ?"Earlier-skill greedy accuracy: "+(100*s.retentionAccuracy).toFixed(1)+
+      "% (baseline after vocabulary expansion: "+(100*s.retentionBaseline).toFixed(1)+
+      "%). Diagnostic only; checkpoint selection is unchanged."
+    :"Optional prior-skill benchmark: select a saved test to monitor earlier answers after each epoch. No influence on training.";
   $("bestEpoch").textContent=(s.bestEpoch>0?"Best epoch: "+s.bestEpoch:"Best epoch: baseline")+
     (Number.isFinite(s.bestHeldoutLoss)?" · loss "+s.bestHeldoutLoss.toFixed(4):"");
 
@@ -226,7 +231,8 @@ $("startTraining").addEventListener("click",()=>safe(async()=>{
   try{
     await invoke("hybrid_train",{
       lesson:{mode:activeMode,text,epochs},
-      options:{adaptiveLearningRate,earlyStopping,learningRate,patience:6}
+      options:{adaptiveLearningRate,earlyStopping,learningRate,patience:6,
+        retentionTestId:$("retentionBenchmark").value||null}
     });
     report("INFO","Training","Joint training started: "+activeMode+" · max "+epochs+
       " epochs · "+(adaptiveLearningRate?"adaptive":"fixed")+" LR "+learningRate+
@@ -576,7 +582,8 @@ async function listen(){
     await events.listen("hybrid-epoch",({payload:p})=>{
       history("Epoch "+p.epoch+"/"+p.epochs+" | train "+p.trainLoss.toFixed(4)+
         " | held-out "+p.validationLoss.toFixed(4)+" | accuracy "+(100*p.validationAccuracy).toFixed(1)+
-        "% | "+(p.improved?"NEW BEST":"no improvement")+" | LR "+p.learningRate.toFixed(5));
+        "% | "+(p.improved?"NEW BEST":"no improvement")+" | LR "+p.learningRate.toFixed(5)+
+        (Number.isFinite(p.retentionAccuracy)?" | earlier skill "+(100*p.retentionAccuracy).toFixed(1)+"%":""));
       $("heldoutLoss").textContent=p.validationLoss.toFixed(4);
       $("heldoutAccuracy").textContent=(100*p.validationAccuracy).toFixed(1)+"%";
       $("bestEpoch").textContent="Best epoch: "+(p.bestEpoch||"baseline")+" · loss "+p.bestLoss.toFixed(4);
