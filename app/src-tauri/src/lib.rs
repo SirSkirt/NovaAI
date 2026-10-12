@@ -38,6 +38,14 @@ pub fn run() {
             hybrid_lab::hybrid_new_chat,
             hybrid_lab::hybrid_inspect,
             hybrid_lab::hybrid_reset,
+            hybrid_lab::hybrid_test_archive,
+            hybrid_lab::hybrid_test_save,
+            hybrid_lab::hybrid_test_delete,
+            hybrid_lab::hybrid_test_start,
+            hybrid_lab::hybrid_test_pause,
+            hybrid_lab::hybrid_test_resume,
+            hybrid_lab::hybrid_test_stop,
+            hybrid_lab::hybrid_test_review,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Neural Nova");
