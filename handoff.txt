@@ -1,0 +1,188 @@
+NEURAL NOVA — DEVELOPMENT HANDOFF
+Version: 0.2.0 (experimental)
+Updated: 2026-10-12
+Repository: https://github.com/SirSkirt/NovaAI
+Branch: experimental/neural-nova
+Verified pre-handoff branch HEAD: 45782c6757b6df697b843817268db634ce9cf150
+
+IMPORTANT: BRANCH ISOLATION
+===========================
+- Work ONLY on experimental/neural-nova unless the project owner explicitly requests otherwise.
+- Original Nova lives on main. Main was verified at:
+  9783e90ae9d5c7b7e99b974712b43919c46cabb2
+- DO NOT merge, reset, force-push, or overwrite main.
+- Original Nova is a different cognitive system; the experimental fork removed its
+  legacy Rust/JS reasoning components while retaining an archived source snapshot
+  under releases/. That archive is historical, not part of the runtime.
+- Experimental app package ID is com.qtech.neuralnova.experimental, with its own
+  saved model data; installing it should not replace original Nova.
+
+PROJECT GOAL / OWNER'S INTENT
+=============================
+Build a local AI called Neural Nova that genuinely learns from data and teaching.
+Write the neural-network mathematics and training code ourselves in Rust rather
+than using external machine-learning frameworks. The long-term aspiration is an
+AI that can learn language, converse, and eventually demonstrate useful reasoning.
+This is an experimental research project, NOT presently a reliable LLM.
+
+VERY IMPORTANT DESIGN RULE:
+- No hard-coded canned answers, hidden reasoning fallbacks, or heuristic "correct"
+  responses masquerading as learning. A generated answer must come from the
+  trainable model's outputs.
+- Normal software safeguards are still appropriate: validation of input shapes,
+  numerical safety, checkpoint compatibility, error reporting, and user-controlled
+  tool permissions. Those are not hard-coded behavioral answers.
+- Do not claim Nova "understands", "reasons", or "is conversational" solely from
+  lowered training loss or correctly repeated training prompts.
+- Preserve the on-screen debugger and activity/attention visualizations.
+- Preserve the legacy dense network as an independent comparison model unless
+  the owner explicitly requests its removal.
+
+CURRENT ARCHITECTURE (v0.2.0)
+=============================
+The app includes TWO independent experimental neural architectures:
+
+A) Transformer Language Engine — newer experiment
+   Core: neural-nova/src/transformer.rs
+   Native app integration: app/src-tauri/src/transformer_lab.rs
+   Interface: app/dist/js/transformer.js + app/dist/index.html
+   - From-scratch, CPU-reference, single-block causal character decoder.
+   - 128 ASCII token IDs (one character per token); context = 128 CHARACTERS,
+     not words or subword tokens.
+   - Trainable token and right-aligned positional embeddings.
+   - Model width 32; one causal self-attention head.
+   - Query/key/value/output projections, residual connections, 64-wide ReLU
+     feed-forward block, 128-way next-character softmax.
+   - Approx. 20,704 trainable parameters (see model.parameter_count()).
+   - Manual gradients/backpropagation, Adam, gradient clipping, and a checkpoint
+     that includes weights AND Adam optimizer moments/step count.
+   - Train modes:
+       * Text: next-character prediction on ASCII corpus; 120–14,000 bytes
+         per run; last 10% reserved for validation.
+       * Dialogue: TAB-separated question<TAB>ideal answer pairs; at least five
+         distinct pairs; train only response characters, conditioned on user
+         text; reserve final 20% of WHOLE pairs for validation.
+   - Reply inference always samples from Transformer model probabilities.
+     No call into the legacy model and no canned answers.
+   - Separate checkpoint: neural-nova-transformer-0.2.ntrf in experimental
+     app's local data folder. It stores optimizer state so training can resume.
+   - Attention heatmap displays actual last-query attention weights.
+   - Current chat is single-turn; there is no real retained model conversation
+     context across earlier turns yet.
+
+B) Legacy dense brain — for comparison only
+   Core: neural-nova/src/lib.rs
+   Native integration: app/src-tauri/src/neural.rs
+   Interface: app/dist/js/brain.js
+   - Dense architecture: 1024 -> 512 -> 512 -> 128, 853,120 trainable parameters.
+   - v0.1.2+ uses 64 ASCII chars x 16 features for input; 128-way output.
+   - ReLU/softmax, custom backpropagation/Adam, training, checkpoints and
+     all-2,176-neuron visualizer with sampled real weighted links.
+   - Legacy Training Studio: character prediction on text.
+   - Legacy Dialogue School: teacher provides question and ideal response;
+     model learns response targets; corrections can become more lessons.
+   - The owner demonstrated it can reproduce 'My name is Nova.' for the exact
+     trained prompt but struggled with capitalization/punctuation/paraphrases.
+   - The Transformer does not use the legacy network as a safety net.
+
+REPOSITORY GUIDE
+================
+README.md                           Experimental project overview
+app/README.md                       v0.2.0 setup, features and limitations
+app/dist/index.html                 Main responsive UI
+app/dist/styles.css                 Visual styling
+app/dist/js/brain.js                Dense network frontend, teacher/debugger
+app/dist/js/transformer.js          Transformer frontend, training/chat/attention
+app/src-tauri/src/lib.rs             Native Tauri command registration
+app/src-tauri/src/neural.rs          Legacy dense brain commands and training
+app/src-tauri/src/transformer_lab.rs New Transformer commands and training
+app/src-tauri/capabilities/main.json Native event-listening capability
+app/src-tauri/tauri.conf.json        App identifier/version/platform config
+neural-nova/src/transformer.rs       Transformer math, gradients, Adam, save/load
+neural-nova/src/dialogue.rs          Dialogue parse/supervision/evaluation helpers
+neural-nova/src/lib.rs               Dense math and shared ASCII feature encoder
+neural-nova/src/bin/train_ascii.rs   Dense character-training CLI
+.github/workflows/neural-nova-ci.yml   Rust core CI
+.github/workflows/neural-nova-app.yml  Windows/Android app builds
+
+BUILD AND TEST
+==============
+Rust neural-core tests:
+    cd neural-nova
+    cargo test --all-targets
+
+Desktop (requires Rust, Node/npm, and Tauri platform prerequisites):
+    cd app
+    npm install
+    npm run build -- --bundles nsis   [on Windows]
+
+Native application tests:
+    cd app/src-tauri
+    cargo test --lib
+
+Frontend syntax:
+    node --check app/dist/js/brain.js
+    node --check app/dist/js/transformer.js
+
+Android needs the Android SDK/NDK, Rust Android targets, and Tauri Android init.
+Use the workflow instead of guessing generated APK paths.
+
+LATEST VERIFIED CI (BEFORE THIS DOCUMENTATION-ONLY HANDOFF COMMIT):
+    Rust tests:
+    https://github.com/SirSkirt/NovaAI/actions/runs/38274873385
+    Windows NSIS installer + Android debug APK + JS/Rust checks:
+    https://github.com/SirSkirt/NovaAI/actions/runs/38274873439
+    Both runs completed successfully on the baseline branch commit listed above.
+    Artifacts are attached to the app workflow run (not GitHub Releases).
+    This handoff-only commit does not itself imply additional compilation/testing.
+
+KNOWN LIMITATIONS AND HONEST WARNINGS
+=====================================
+- This is a tiny single-head, single-block, character-level model. It is NOT
+  GPT-scale, a trained general chatbot, or a verified reasoning AI.
+- Context is 128 characters; very short for useful conversational history.
+- Tokenizer supports ASCII, not general Unicode text.
+- CPU-only naive Transformer training can be slow on real devices. Larger
+  corpora and more epochs are not a substitute for a better architecture.
+- The teacher starter corpus (about 30 pairs) is far too small for robust
+  language learning or paraphrase generalization.
+- Current held-out evaluations can still leak statistical patterns if the
+  text repeats; use fully separate unseen datasets and prompt paraphrases.
+- Word meaning, multi-turn memory, instruction following, mathematical
+  reasoning, and reliable tool use have NOT been established.
+- UI displays an in-app debugger at the bottom; preserve and improve this.
+  Earlier app versions trained successfully but did not receive progress
+  events because Tauri core:event:allow-listen permission was missing.
+- Checkpoint formats/encodings differ across dense versions; do not
+  accidentally load old weights into a differently encoded model.
+- Do not represent a successful GitHub build as a real-device runtime test.
+
+RECOMMENDED NEXT DEVELOPMENT STEPS
+==================================
+1. First, ask the owner for observed 0.2.0 Transformer training/chat results.
+   Fix practical training speed, errors, progress reporting and UI usability.
+2. Add an evaluation workspace: immutable unseen dialogue/questions and
+   paraphrases, baseline comparisons, training-vs-validation metrics.
+3. Add real multi-turn training/inference context and explicit context-budget
+   management. The model must produce each reply via learned generation.
+4. Implement a better tokenizer (byte-level UTF-8 or a trainable/subword
+   vocabulary) and test encoding/decoding round trips thoroughly.
+5. Once the single-block engine is solid, add several Transformer blocks,
+   multi-head attention, stable normalization, batching/performance work,
+   and carefully tested gradients. Keep this Rust implementation custom.
+6. Improve the teacher pipeline: lesson import/export, train/validation/test
+   separation by whole conversation, correction feedback and checkpoint
+   metadata, reproducible seeds, measured training throughput.
+7. Explore reasoning ONLY with verifiable tasks (arithmetic, instruction
+   following, multi-step benchmarks) after language training improves.
+8. Add tools, local retrieval and saved conversations as separate controlled
+   services later; tool results are external facts, not hardcoded responses.
+9. Preserve original Nova's main branch and separate experimental data at
+   every step. Avoid rewriting previous versions without owner approval.
+
+HANDOFF RULE
+============
+Before making another change: fetch the exact experimental branch HEAD,
+inspect existing code/tests, commit only to experimental/neural-nova, run the
+relevant tests and Windows/Android workflow, and report verified outcomes.
+If a build or runtime behaviour is not verified, state that clearly.
