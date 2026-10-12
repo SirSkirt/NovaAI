@@ -87,7 +87,7 @@ fn save_conversation(app:&AppHandle,history:&[ConversationTurn])->Result<(),Stri
     }
 }
 fn memory_turns(history:&[ConversationTurn])->Vec<String>{
-    history.iter().rev().take(MEMORY_SLOTS).rev().map(|t|
+    history.iter().skip(history.len().saturating_sub(MEMORY_SLOTS)).map(|t|
         format!("U: {}\nN: {}",t.user,t.assistant)).collect()
 }
 fn path(app:&AppHandle)->Result<PathBuf,String>{
