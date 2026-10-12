@@ -25,14 +25,15 @@
         <div>
           <p class="eyebrow">BUILT IN RUST • FROM SCRATCH</p>
           <h2>Watch Nova <em>learn.</em></h2>
-          <p>One neural network. Every neuron is real. Train with varied sentences using a 64-character context, inspect its activity, and test what it learns.</p>
+          <p>Train a causal Transformer from scratch, inspect its attention, and compare its language learning against the original dense neural experiment.</p>
         </div>
-        <div class="architecture">1024 <span>→</span> 512 <span>→</span> 512 <span>→</span> 128</div>
+        <div class="architecture">128 chars <span>→</span> Attention <span>→</span> Next char</div>
       </section>
 
-      <section class="stats" aria-label="Model statistics">
-        <div class="stat"><span>Neurons</span><strong id="neuronTotal">2,176</strong></div>
-        <div class="stat"><span>Trainable parameters</span><strong id="parameterTotal">853,120</strong></div>
+      <p class="eyebrow">LEGACY DENSE NETWORK — PRESERVED FOR COMPARISON</p>
+      <section class="stats" aria-label="Legacy dense model statistics">
+        <div class="stat"><span>Legacy dense neurons</span><strong id="neuronTotal">2,176</strong></div>
+        <div class="stat"><span>Legacy dense parameters</span><strong id="parameterTotal">853,120</strong></div>
         <div class="stat"><span>Training steps</span><strong id="stepCount">0</strong></div>
         <div class="stat"><span>Last batch loss</span><strong id="lossValue">—</strong></div>
       </section>
