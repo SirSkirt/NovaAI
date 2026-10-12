@@ -73,7 +73,33 @@
               <select id="retentionBenchmark"><option value="">No prior-skill benchmark</option></select>
             </div>
           </div>
-          <p class="muted" id="retentionStatus">Save a test in Tests &amp; Corrections to monitor up to four earlier questions after each training epoch. It does not affect learning or checkpoint selection.</p>
+          <p class="muted" id="retentionStatus">Saved teacher tests can protect exact greedy responses during checkpoint selection. Answers never enter neural inference.</p>
+          <details class="teacher-extra" id="rehearsalSettings">
+            <summary>Keep earlier lessons (rehearsal &amp; retention protection)</summary>
+            <p class="muted" id="rehearsalBankStatus">Loading previous lesson archive…</p>
+            <div class="row wrap">
+              <label class="checkbox-line" for="rehearsalEnabled"><input type="checkbox" id="rehearsalEnabled" checked> Replay past lessons alongside new ones (one old batch per three new)</label>
+              <label class="checkbox-line" for="retentionGuardEnabled"><input type="checkbox" id="retentionGuardEnabled" checked> Reject checkpoints that lose earlier skills</label>
+            </div>
+            <div class="field-row">
+              <div class="small-field"><label for="retentionTolerance">Maximum older held-out loss increase</label><select id="retentionTolerance">
+                <option value="0.05">Strict · 0.05</option>
+                <option value="0.10" selected>Moderate · 0.10</option>
+                <option value="0.20">Permissive · 0.20</option>
+              </select></div>
+            </div>
+            <p class="muted">The archive holds up to three previous lessons. Earlier validation questions are scored separately and are never replayed. The selected Test &amp; Corrections benchmark can additionally veto regressions.</p>
+            <details class="teacher-extra">
+              <summary>Import a previous lesson from an older checkpoint</summary>
+              <label for="priorLessonName">Name</label><input id="priorLessonName" placeholder="Dialogue Lesson 02" maxlength="80">
+              <label for="priorLessonMode">Lesson type</label>
+              <select id="priorLessonMode"><option value="dialogue">Dialogue / replies</option><option value="text">Text / language</option><option value="conversation">Multi-turn conversations</option></select>
+              <textarea id="priorLessonData" rows="4" spellcheck="false" placeholder="Paste the previously taught lesson here, or import its TXT file."></textarea>
+              <div class="row wrap"><label class="file-button" for="priorLessonFile">＋ Import prior .txt</label><input type="file" id="priorLessonFile" accept=".txt,text/plain">
+              <button type="button" id="archivePriorLesson" class="secondary">Archive for future rehearsal</button>
+              <button type="button" id="clearRehearsal" class="secondary">Clear rehearsal archive</button></div>
+            </details>
+          </details>
           <p class="trainer-explainer" id="trainingScheduleHelp">Gentle stays fixed at 0.001; early stopping independently watches validation loss.</p>
           <div class="row wrap actions"><button type="button" class="primary" id="startTraining">▶ Start training</button><button type="button" id="stopTraining" disabled>Stop</button></div>
           <div class="progress-head"><span id="trainingProgress">No active training</span><strong id="trainingPercent">0%</strong></div>
