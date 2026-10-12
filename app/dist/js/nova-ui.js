@@ -29,7 +29,20 @@ const textSample=[
 "A small neural network must encounter many examples to generalize.",
 "The scientist measured the result before planning the next experiment."
 ].join("\n");
-const datasets={dialogue:dialogueSample,text:textSample};
+const conversationSample=[
+"U: Hello, I am Mira.","N: Hello Mira.","U: What name did I tell you?","N: You told me Mira.",
+"",
+"U: My box is red.","N: The box is red.","U: What color is my box?","N: Your box is red.",
+"",
+"U: I like apples.","N: You like apples.","U: What fruit did I mention?","N: Apples.",
+"",
+"U: My dog is called Luna.","N: Luna is your dog.","U: What is my dog's name?","N: Luna.",
+"",
+"U: I am going home.","N: You are going home.","U: Where am I going?","N: Home.",
+"",
+"U: The tree is tall.","N: The tree is tall.","U: What did I say was tall?","N: The tree."
+].join("\n");
+const datasets={dialogue:dialogueSample,text:textSample,conversation:conversationSample};
 let activeMode="dialogue", initialized=false,running=false,busy=false,latestStatus=null,latestTrace=null;
 let lastQuestion="",lastReply="";
 const debugEntries=[];let errorCount=0;
@@ -94,6 +107,10 @@ function status(s){
   $("heldoutLoss").textContent=Number.isFinite(s.heldoutLoss)?s.heldoutLoss.toFixed(4):"—";
   $("heldoutAccuracy").textContent=Number.isFinite(s.heldoutAccuracy)?(s.heldoutAccuracy*100).toFixed(1)+"%":"—";
   $("checkpointText").textContent=s.trained?"Joint learned weights saved":"Fresh untrained weights";
+  $("memoryStatus").textContent=(s.memoryTurns||0)+"/12 memory slots · "+(s.tokenizerWords||0)+" learned word units";
+  $("brainMemoryInfo").textContent="Memory slots: "+(s.memoryTurns||0)+
+    " / 12 · learned word units: "+(s.tokenizerWords||0)+
+    ". The visualizer shows actual token attention and shared neural activations.";
   $("trainingStage").textContent=s.stage||"Idle";
   $("lessonSplit").textContent=(s.trainLessons||0)+" training / "+(s.validationLessons||0)+" held-out lessons";
   $("trainingSpeed").textContent=s.tokensPerSecond>0?"Throughput: "+s.tokensPerSecond.toFixed(1)+" tokens/s":"Throughput: —";
@@ -111,11 +128,13 @@ function status(s){
 }
 function rememberDataset(){datasets[activeMode]=$("lessonData").value;try{localStorage.setItem("nova-hybrid-"+activeMode,datasets[activeMode]);}catch(_){}}
 function modeChanged(mode){
-  if(!(mode in datasets))datasets[mode]=mode==="dialogue"?dialogueSample:textSample;
+  if(!(mode in datasets))datasets[mode]=mode==="dialogue"?dialogueSample:mode==="conversation"?conversationSample:textSample;
   activeMode=mode;
   $("lessonData").value=datasets[mode];
   $("lessonHint").textContent=mode==="dialogue"
     ?"Up to 1,024 dialogue pairs, 384 ASCII characters per reply; one TAB between question and answer. Validation holds out whole question groups."
+    :mode==="conversation"
+    ?"Multi-turn: write U: and N: lines, separate sessions with blank lines or ---. At least 5 independent sessions, each with 2+ turns. Held-out sessions test neural memory."
     :"120–50,000 ASCII bytes. The held-out text does not use training-text context; longer corpora are slower.";
   countData();
 }
@@ -123,7 +142,9 @@ function countData(){
   const input=$("lessonData").value;
   $("lessonCount").textContent=activeMode==="dialogue"
     ?input.split("\n").filter(line=>line.includes("\t")&&line.trim()).length+" lesson pairs"
-    :new TextEncoder().encode(input).length+" bytes";
+    :activeMode==="conversation"
+      ?input.split(/\n\s*\n|\n---\n/).filter(block=>block.trim()).length+" conversation sessions"
+      :new TextEncoder().encode(input).length+" bytes";
 }
 const TRAINER_SETTINGS_KEY="neural-nova-0.3.2-trainer-settings";
 function describeSchedule(){
@@ -169,7 +190,7 @@ $("lessonFile").addEventListener("change",()=>safe(async()=>{
   report("INFO","Lesson","Loaded "+file.name+".");
 },"File import"));
 $("sampleLesson").addEventListener("click",()=>{
-  $("lessonData").value=activeMode==="dialogue"?dialogueSample:textSample;
+  $("lessonData").value=activeMode==="dialogue"?dialogueSample:activeMode==="conversation"?conversationSample:textSample;
   rememberDataset();countData();
 });
 $("clearLesson").addEventListener("click",()=>{$("lessonData").value="";rememberDataset();countData();});
@@ -266,15 +287,16 @@ for(const id of ["chatLength","chatTemperature","chatContext","chatSampling"]){
 }
 function explainContext(r){
   if(!r)return "No prompt retention information.";
-  const info=r.promptBytesRetained+"/"+r.promptBytes+" original prompt characters retained";
-  const cutoff=r.firstPromptTruncationChar===null
-    ?"No original prompt characters were truncated during this response."
-    :r.firstPromptTruncationChar===0
-      ?"The original prompt was already truncated before generation."
-      :"Original prompt began truncating after generated character "+r.firstPromptTruncationChar+".";
-  return "Context "+r.window+" · "+r.generatedBytes+" generated · "+info+
-    " · "+(r.termination==="learned-end"?"model predicted end":"reached reply length limit")+
-    " · "+cutoff;
+  const kept=r.promptTokensRetained??0;
+  const total=r.promptTokens??0;
+  const note=kept===total?"All original prompt tokens retained.":
+    kept===0?"Original prompt tokens have left the attention window.":
+    "Original prompt partially truncated by attention window.";
+  return "Transformer "+r.window+" tokens · "+r.activeTokens+" active · "+
+    kept+"/"+total+" prompt tokens retained · "+r.memoryTurns+
+    "/12 previous turns encoded as neural memory · "+r.generatedBytes+
+    " characters generated · "+(r.termination==="learned-end"?"learned reply end":"length limit")+
+    " · "+note;
 }
 function comparePanel(a,b){
   const root=$("chatComparison");
@@ -302,7 +324,7 @@ function comparePanel(a,b){
   summary.textContent="Identical first "+matching+" characters. "+
     (first===second?"Both responses match exactly for this test. ":
      "Responses diverge at generated character "+(matching+1)+". ")+
-    "Changing context length alone cannot diagnose language learning without accounting for newly initialized positional weights.";
+    "Both trials use identical prior neural memory; newly learned token units and untrained 256-position embeddings still affect comparisons.";
   root.append(heading,grid,summary);
 }
 const transcript=$("chatTranscript");
@@ -346,8 +368,8 @@ $("compareContext").addEventListener("click",()=>safe(async()=>{
     // Both calls use an identical pseudorandom seed; greedy ignores temperature.
     // Do not train or alter Nova's weights during the comparison.
     const base={...settings,seed:42};
-    const old=await invoke("hybrid_chat",{message,...base,contextChars:128});
-    const extended=await invoke("hybrid_chat",{message,...base,contextChars:256});
+    const old=await invoke("hybrid_chat",{message,...base,contextChars:128,commit:false});
+    const extended=await invoke("hybrid_chat",{message,...base,contextChars:256,commit:false});
     comparePanel(old,extended);
     report("INFO","A/B context","Compared 128 and 256 character windows with fixed seed 42.");
   }finally{busy=false;setRunning(running);}
@@ -355,12 +377,19 @@ $("compareContext").addEventListener("click",()=>safe(async()=>{
 $("chatMessage").addEventListener("keydown",e=>{
   if(e.key==="Enter"){e.preventDefault();$("sendMessage").click();}
 });
-$("clearChat").addEventListener("click",()=>{
+$("clearChat").addEventListener("click",()=>safe(async()=>{
+  if(busy||running)return;
+  if(!confirm("Start a new conversation? This clears the previous chat and its neural memory slots, but does not reset learned weights."))return;
+  await invoke("hybrid_new_chat");
   transcript.replaceChildren();
   const placeholder=document.createElement("div");placeholder.className="chat-placeholder";
-  placeholder.textContent="Conversation display cleared. This version still uses a single-turn model context.";
-  transcript.append(placeholder);lastQuestion="";lastReply="";$("correctReply").disabled=true;
-});
+  placeholder.textContent="New conversation. Memory slots are empty; Nova's learned weights remain unchanged.";
+  transcript.append(placeholder);
+  lastQuestion="";lastReply="";$("correctReply").disabled=true;
+  $("chatComparison").hidden=true;
+  $("chatContextReport").textContent="New session: 0 / 12 neural memory slots.";
+  await poll();
+},"New conversation"));
 $("correctReply").addEventListener("click",()=>{
   if(!lastQuestion)return;
   tab("teach");
@@ -448,9 +477,9 @@ function showVisual(trace){
     path.style.strokeWidth=(1+3*intensity).toFixed(2);
   });
   $("visualizerDetail").textContent=
-    "Measured "+attention.length+" Transformer attention positions and sampled activations from "+
+    "Measured "+attention.length+" Transformer attention token positions and sampled activations from "+
     layers.reduce((sum,l)=>sum+l.length,0).toLocaleString()+
-    " dense neurons. The center fibers show learned bridge signal magnitudes (32 channels). This is a schematic, not a neurological map.";
+    " dense neurons. The center fibers show learned bridge signal magnitudes (32 channels). These are neural signals, not a literal brain scan.";
 }
 $("inspectBrain").addEventListener("click",()=>safe(async()=>{
   const message=$("inspectMessage").value.trim();
@@ -459,7 +488,7 @@ $("inspectBrain").addEventListener("click",()=>safe(async()=>{
 },"Brain inspection"));
 $("inspectMessage").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("inspectBrain").click();}});
 $("copyDiagnostics").addEventListener("click",()=>safe(async()=>{
-  const text="Neural Nova hybrid v0.4.0\n"+JSON.stringify(latestStatus)+"\n"+
+  const text="Neural Nova hybrid v0.5.0\n"+JSON.stringify(latestStatus)+"\n"+
     debugEntries.map(e=>"["+e.time+"] ["+e.level+"] ["+e.source+"] "+e.message).join("\n\n");
   await navigator.clipboard.writeText(text);
   report("INFO","Debugger","Copied diagnostic report.");
@@ -518,7 +547,9 @@ async function boot(){
   await listen();
   try{
     status(await invoke("hybrid_boot"));
-    report("INFO","Brain","Unified trainable Transformer + dense brain and neural bridge initialized.");
+    const turns=await invoke("hybrid_conversation");
+    for(const turn of turns){bubble("user",turn.user);bubble("nova",turn.assistant);}
+    report("INFO","Brain","Unified hybrid brain, trainable word units and persisted multi-turn neural memory loaded. "+turns.length+" stored turns.");
   }catch(e){setState("Startup error","error");report("ERROR","Startup",e);}
   setInterval(()=>{if(running)void poll();},1000);
 }
