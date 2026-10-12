@@ -251,11 +251,16 @@ pub struct ScheduleConfig {
 pub struct ScheduleState {
     pub learning_rate:f32,
     pub stale_epochs:u32,
+    adaptive_floor:f32,
     config:ScheduleConfig,
 }
 impl ScheduleState {
     pub fn new(learning_rate:f32,config:ScheduleConfig)->Self{
-        Self{learning_rate,stale_epochs:0,config}
+        // Older rates retain the historical 0.0003 floor. Lower starting
+        // rates must NEVER be pushed upward by the adaptive schedule.
+        let adaptive_floor=if learning_rate>0.0003{0.0003}
+            else{(learning_rate*0.1).max(0.00001)};
+        Self{learning_rate,stale_epochs:0,adaptive_floor,config}
     }
     /// Early stopping and rate adaptation are independent toggles.
     /// When enabled, the adaptive schedule may only REDUCE the learning rate.
@@ -265,7 +270,7 @@ impl ScheduleState {
             return true;
         }
         if self.config.adaptive_learning_rate && self.stale_epochs>0 && self.stale_epochs%2==0{
-            self.learning_rate=(self.learning_rate*0.5).max(0.0003);
+            self.learning_rate=(self.learning_rate*0.5).max(self.adaptive_floor);
         }
         false
     }
@@ -351,6 +356,23 @@ mod tests{
         assert!(!(train_text.iter().any(|x|x.ends_with(b"U: HELLO?\nN: ")) &&
                   valid_text.iter().any(|x|x.ends_with(b"U: hello\nN: "))));
         assert!(!a.validation.is_empty());
+    }
+    #[test]
+    fn low_learning_rate_adaptive_schedule_never_increases_it(){
+        for rate in [0.0001,0.0003,0.001,0.003]{
+            let mut schedule=ScheduleState::new(rate,ScheduleConfig{
+                adaptive_learning_rate:true,early_stopping:false,patience:6
+            });
+            let mut last=rate;
+            for _ in 0..20{
+                assert!(!schedule.observe_validation(false));
+                assert!(schedule.learning_rate<=last+1e-9,
+                    "adaptive rate increased from {last} to {}",schedule.learning_rate);
+                assert!(schedule.learning_rate>0.0);
+                last=schedule.learning_rate;
+            }
+            if rate==0.0001{assert!(last<rate);}
+        }
     }
     #[test]
     fn text_validation_uses_whole_paragraphs_and_no_cross_split_context(){
