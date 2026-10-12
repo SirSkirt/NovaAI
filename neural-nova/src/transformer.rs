@@ -132,7 +132,7 @@ impl Transformer {
         if !tokens.is_ascii() {return Err("Experimental tokenizer supports ASCII only".into());}
         let l=layout();
         let count=tokens.len();
-        // Right-aligned positions: the last token always occupies position 127.
+        // Right-aligned positions: the last token always occupies position CONTEXT-1.
         let inputs:Vec<Vec<f32>>=tokens.iter().enumerate().map(|(i,&token)|{
             let mut x=vec![0.0;D];
             let ti=l.tok.start+token as usize*D;
