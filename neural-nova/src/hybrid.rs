@@ -2,7 +2,7 @@
 //! Both pathways and the bridge receive gradients from the SAME next-token loss.
 //! No independent answer selection, no heuristic replies, no ML frameworks.
 use crate::{encode_ascii_context,Adam,Gradients,Network,NetworkConfig};
-use crate::transformer::{Transformer,Attention};
+use crate::transformer::{Transformer,Attention,BridgeMeasurement};
 use crate::tokenizer::Tokenizer;
 use std::fs::{self,File};
 use std::io::{Read,Write};
@@ -69,6 +69,12 @@ impl HybridBrain {
         let signal=self.transformer.bridge_signal(&dense)?;
         let probabilities=self.transformer.predict_tokenized(&tokens,&dense,window,&source)?;
         Ok((layers,attention,signal,probabilities))
+    }
+    pub fn bridge_measurement(&self,context:&[u8],window:usize)->Result<BridgeMeasurement,String>{
+        let (_,features)=self.dense_input(context)?;
+        let tokens=self.tokenizer.encode(
+            std::str::from_utf8(context).map_err(|e|e.to_string())?)?;
+        self.transformer.measure_bridge(&tokens,&features,window)
     }
     pub fn train_batch(&mut self,samples:&[(Vec<u8>,u8)],lr:f32)->Result<f32,String>{
         if samples.is_empty(){return Err("Cannot train an empty hybrid batch".into());}
