@@ -29,6 +29,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: node --check app/dist/js/nova-ui.js
       - run: node --check app/dist/js/test-ui.js
+      - run: node --check app/dist/js/diagnostic-ui.js
       - run: node --check app/dist/js/brain.js
       - run: node --check app/dist/js/transformer.js
       - run: cargo test --all-targets
