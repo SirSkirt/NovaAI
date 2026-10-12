@@ -781,7 +781,7 @@ pub fn hybrid_train(
         }
     }else{Vec::new()};
     let replay_batch_count=if rehearsal_enabled&&!previous.is_empty(){
-        (plan.train.len()+BATCH*3-1)/(BATCH*3)
+        ((plan.train.len()+BATCH-1)/BATCH)/3
     }else{0};
     let ready=(||->Result<(),String>{
         let mut s=lock(&state)?;
@@ -1080,7 +1080,7 @@ fn train_inner(
             }
             if completed%64<batch.len(){
                 let _=app.emit("hybrid-progress",serde_json::json!({
-                    "completed":completed,"total":(train.len()+if rehearsal_enabled&&!previous.is_empty(){(train.len()+BATCH*3-1)/(BATCH*3)*BATCH}else{0})*epochs as usize,
+                    "completed":completed,"total":(train.len()+if rehearsal_enabled&&!previous.is_empty(){((train.len()+BATCH-1)/BATCH)/3*BATCH}else{0})*epochs as usize,
                     "epoch":epoch,"epochs":epochs,"loss":loss,"step":step,
                     "stage":stage,"learningRate":learning_rate,
                     "tokensPerSecond":completed as f64/started.elapsed().as_secs_f64().max(0.001)
@@ -1088,14 +1088,24 @@ fn train_inner(
             }
         }
         if trained_count==0 {break;}
-        let (validation_loss,validation_accuracy,improved)={
+        let (validation_loss,validation_accuracy,prior_loss,retention_score,
+            eligible,improved)={
             let mut s=lock(state)?;
-            s.stage="Evaluating held-out lessons".into();
+            s.stage="Evaluating current and earlier held-out lessons".into();
             let (loss,accuracy)=if lessons.mode=="conversation"{
                 evaluate_memory(&s.brain,valid,&lessons.memory_validation)?
             }else{s.brain.evaluate(valid)?};
             if !loss.is_finite(){return Err("Non-finite validation loss".into());}
-            let improved=loss + MIN_IMPROVEMENT < best_loss;
+            let old_loss=if protect_previous{
+                previous_validation_loss(&s.brain,previous)?
+            }else{None};
+            let teacher=if retention.is_empty(){None}else{
+                Some(retention_accuracy(&s.brain,retention)?)
+            };
+            let eligible=!protect_previous ||
+                rehearsal::eligible_checkpoint(
+                    old_loss,prior_baseline,loss_tolerance,teacher,teacher_baseline);
+            let improved=eligible && loss + MIN_IMPROVEMENT < best_loss;
             if improved{
                 best_loss=loss;best_accuracy=accuracy;best_epoch=epoch;
                 best_brain=s.brain.clone();
@@ -1105,11 +1115,7 @@ fn train_inner(
             s.best_heldout_loss=Some(best_loss);
             s.heldout_loss=Some(loss);
             s.heldout_accuracy=Some(accuracy);
-            (loss,accuracy,improved)
-        };
-        let retention_score=if retention.is_empty(){None}else{
-            let snapshot=lock(state)?.brain.clone();
-            Some(retention_accuracy(&snapshot,retention)?)
+            (loss,accuracy,old_loss,teacher,eligible,improved)
         };
         if let Some(value)=retention_score{lock(state)?.retention_accuracy=Some(value);}
         let should_stop=schedule.observe_validation(improved);
@@ -1122,6 +1128,8 @@ fn train_inner(
                 "trainingLoss":epoch_loss/trained_count as f64,
                 "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
                 "bestValidationLoss":best_loss,"bestEpoch":best_epoch,"improved":improved,
+                "priorHeldoutLoss":prior_loss,"priorBaselineLoss":prior_baseline,
+                "retentionGuardAccepted":eligible,"rehearsalBatches":replay_batches,
                 "earlyStopNow":should_stop,"retentionAccuracy":retention_score,
                 "transformerGradientMean":transformer_grad_norm/batches.max(1) as f64,
                 "denseGradientMean":dense_grad_norm/batches.max(1) as f64,
@@ -1138,6 +1146,8 @@ fn train_inner(
             "trainLoss":epoch_loss/trained_count as f64,
             "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
             "bestLoss":best_loss,"bestEpoch":best_epoch,"improved":improved,
+            "previousHeldoutLoss":prior_loss,"previousBaselineLoss":prior_baseline,
+            "guardAccepted":eligible,"rehearsalBatches":replay_batches,
             "learningRate":learning_rate,"tokensPerSecond":completed as f64/started.elapsed().as_secs_f64().max(0.001),
             "trainLessons":lessons.train_lessons,"validationLessons":lessons.validation_lessons,
             "retentionAccuracy":retention_score,"retentionQuestions":retention.len(),
@@ -1165,7 +1175,11 @@ fn train_inner(
             "weightsFingerprint":diag::weight_digest(&best_brain),
             "selectedGreetingProbes":diagnostic_probes(&best_brain,&prompts,128,&[],true),
             "retentionAccuracy":restored_retention,
-            "selectionPolicy":"minimum current-lesson held-out teacher-forced loss",
+            "selectionPolicy":if protect_previous{
+                "minimum current-lesson heldout loss subject to prior loss and optional teacher accuracy guard"
+            }else{"minimum current-lesson heldout loss (guard disabled)"},
+            "rehearsalEnabled":rehearsal_enabled,"priorLessonCount":previous.len(),
+            "priorHeldoutBaseline":prior_baseline,"lossTolerance":loss_tolerance,
         }));
     }
     {
