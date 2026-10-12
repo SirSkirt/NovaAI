@@ -54,13 +54,9 @@ impl HybridBrain {
             let (input,logits)=self.dense_input(context)?;
             let (item_loss,transformer_gradient,upstream)=
                 self.transformer.gradient_with_dense(context,*target,Some(&logits))?;
-            let dense_gradient=self.dense.gradients_from_logits(&input,&upstream)?;
+            self.dense.accumulate_logits_gradients(&input,&upstream,&mut dense_grad)?;
             loss+=item_loss;
             for (a,b) in tf_grad.iter_mut().zip(transformer_gradient){*a+=b;}
-            for (a,b) in dense_grad.layers.iter_mut().zip(dense_gradient.layers) {
-                for (x,y) in a.weights.iter_mut().zip(b.weights){*x+=y;}
-                for (x,y) in a.biases.iter_mut().zip(b.biases){*x+=y;}
-            }
         }
         let inverse=1.0/samples.len() as f32;
         for value in &mut tf_grad{*value*=inverse;}
