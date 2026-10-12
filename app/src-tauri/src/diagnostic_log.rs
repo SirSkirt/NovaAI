@@ -101,7 +101,10 @@ fn status_unlocked(rec:&Recorder)->Result<LogStatus,String>{
 #[tauri::command]
 pub fn nova_log_stop(state:tauri::State<'_,Diagnostics>)->Result<LogStatus,String>{
     let mut rec=state.0.lock().map_err(|_|"Diagnostic log mutex poisoned")?;
-    if rec.active{record_unlocked(&mut rec,"session_stop",json!({"lines":rec.lines}))?;}
+    if rec.active{
+        let completed_lines=rec.lines;
+        record_unlocked(&mut rec,"session_stop",json!({"lines":completed_lines}))?;
+    }
     rec.active=false;status_unlocked(&rec)
 }
 /// Return only the most recent session; never silently read arbitrary paths.
