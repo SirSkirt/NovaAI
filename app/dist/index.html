@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b0e16">
-  <meta name="description" content="Neural Nova's experimental from-scratch neural network laboratory">
-  <title>Neural Nova — Experimental Brain Lab</title>
+  <meta name="description" content="Neural Nova v0.1.2 experimental sentence-pattern learning laboratory">
+  <title>Neural Nova v0.1.2 — Experimental Brain Lab</title>
   <link rel="stylesheet" href="./styles.css">
   <script src="./js/brain.js" defer></script>
 </head>
@@ -14,7 +14,7 @@
     <header class="topbar">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-        <div><h1>Neural Nova</h1><p>Experimental brain lab <span class="alpha">v0.1</span></p></div>
+        <div><h1>Neural Nova</h1><p>Experimental brain lab <span class="alpha">v0.1.2</span></p></div>
       </div>
       <div class="pill" id="brainState"><span class="status-dot"></span><span id="brainStateText">Starting</span></div>
     </header>
@@ -24,7 +24,7 @@
         <div>
           <p class="eyebrow">BUILT IN RUST • FROM SCRATCH</p>
           <h2>Watch Nova <em>learn.</em></h2>
-          <p>One neural network. Every neuron is real. Train on text, inspect how signals travel, and test what the weights have learned.</p>
+          <p>One neural network. Every neuron is real. Train with varied sentences using a 64-character context, inspect its activity, and test what it learns.</p>
         </div>
         <div class="architecture">1024 <span>→</span> 512 <span>→</span> 512 <span>→</span> 128</div>
       </section>
@@ -61,37 +61,47 @@
       <div class="workspace">
         <section class="panel">
           <div class="section-heading"><div><p class="eyebrow">01 / TEACH THE NETWORK</p><h2>Training studio</h2></div></div>
-          <p class="section-copy">Paste an ASCII text corpus or load a .txt file. Nova learns to predict each next character from the preceding eight characters. It starts with random weights.</p>
+          <p class="section-copy">Paste an ASCII text corpus or load a .txt file. Nova predicts each next character from up to 64 preceding characters. Feed it varied sentences, paragraphs, and punctuation—not just repeated phrases.</p>
           <label for="trainingText">Training data</label>
-          <textarea id="trainingText" rows="9" spellcheck="false" placeholder="hello nova. hello nova. learning starts here…">hello nova. hello nova. nova learns one letter at a time.
-this is an experiment in neural networks.
-hello nova. neural nova is learning to predict the next character.
-a small network can learn patterns from repetition.
-hello nova. this is a lesson for neural nova.</textarea>
+          <textarea id="trainingText" rows="9" spellcheck="false" placeholder="Enter several connected sentences to train on...">The curious fox followed a lantern through the dark forest.
+When the rain finally stopped, the children walked home together.
+Although the road was wet, the driver approached the corner carefully.
+If the machine detects an error, it records the event before continuing.
+Nova can learn recurring patterns by comparing predictions with text.
+The little cat watched the birds from the sunny kitchen window.
+After the thunder faded, the villagers returned to their houses.
+While the scientist examined the results, her assistant wrote notes.
+The teacher asked a difficult question, and the students discussed it.
+Because the library was quiet, Maya could finish her long novel.</textarea>
           <div class="toolbar">
             <label class="upload" for="corpusFile">＋ Load .txt file</label>
+            <button id="loadLesson" type="button" class="sample-lesson">Load example lesson</button>
             <input type="file" id="corpusFile" accept=".txt,text/plain">
             <span class="muted" id="corpusSize">— bytes</span>
           </div>
           <div class="settings-row">
             <div><label for="epochInput">Training epochs</label><input id="epochInput" type="number" min="1" max="25" value="3"></div>
-            <div class="hint">1–25 epochs · 9–100,000 ASCII bytes per training run. More text takes longer, especially on phones.</div>
+            <div class="hint">1–25 epochs · 40–250,000 ASCII bytes. Uses a 90/10 train/validation split; large corpora take longer.</div>
           </div>
           <div class="actions">
             <button class="primary" id="startTrain">▶ Start training</button>
             <button id="stopTrain" disabled>Stop</button>
           </div>
           <div class="progress-area">
+            <div class="validation-metrics" aria-label="Held-out evaluation metrics">
+              <div><span>Validation loss</span><strong id="validationLoss">—</strong></div>
+              <div><span>Validation next-char accuracy</span><strong id="validationAccuracy">—</strong></div>
+            </div>
             <div class="progress-text"><span id="progressText">No active training session.</span><span id="progressPercent">0%</span></div>
             <div class="progress-track"><div id="progressFill"></div></div>
             <div class="epoch-log" id="trainingLog" aria-live="polite"></div>
           </div>
-          <p class="note">Weights are saved automatically after each epoch and when you stop. Saving and resetting affect only Neural Nova's separate experimental app data. Optimizer momentum starts fresh when the app reopens.</p>
+          <p class="note">Weights are saved automatically each epoch and when stopped. v0.1.2 uses a new checkpoint because the 64-character encoder is incompatible with v0.1. Original v0.1 weights remain saved. Validation checks held-out characters, not genuine understanding.</p>
         </section>
 
         <section class="panel">
           <div class="section-heading"><div><p class="eyebrow">02 / PROBE THE BRAIN</p><h2>Test Nova</h2></div></div>
-          <p class="section-copy">Type a prompt to illuminate the input and hidden neurons. Generate text to test the model's next-character predictions, not its conversational understanding.</p>
+          <p class="section-copy">Type a short phrase or a longer sentence to light up the neurons. Nova considers at most the last 64 ASCII characters when predicting the next one.</p>
           <label for="probeInput">Input context</label>
           <textarea rows="3" id="probeInput" spellcheck="false" placeholder="Try: hello no">hello no</textarea>
           <div class="actions">
@@ -103,7 +113,7 @@ hello nova. this is a lesson for neural nova.</textarea>
             <div><label for="temperatureInput">Temperature</label><input id="temperatureInput" type="number" min="0.2" max="2" step="0.1" value="0.8"></div>
           </div>
           <div class="output" id="generatedOutput" aria-live="polite">Generated output will appear here.</div>
-          <p class="note">This first-stage model is a fixed eight-character-context feed-forward predictor. It is not a Transformer or a fully conversational LLM yet. Expect nonsense until it's trained—and potentially some afterward.</p>
+          <p class="note">This model sees up to 64 characters of context and predicts one of 128 ASCII characters. It is still a feed-forward character model—not a Transformer or conversational LLM. More varied sentences are learnable patterns, not proof of comprehension.</p>
         </section>
       </div>
 
@@ -125,7 +135,7 @@ hello nova. this is a lesson for neural nova.</textarea>
         </div>
       </details>
     </main>
-    <footer>Neural Nova v0.1 · Custom Rust neural network · Separate from original Nova</footer>
+    <footer>Neural Nova v0.1.2 · Custom Rust neural network · Separate from original Nova</footer>
   </div>
 </body>
 </html>
