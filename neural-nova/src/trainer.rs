@@ -1,7 +1,9 @@
 //! Training-only curriculum assembly and deterministic evaluation splits.
 //! This module never chooses words or affects inference. One joint hybrid loss trains Nova.
 use crate::dialogue::{dialogue_prefix,parse_dialogues,DialoguePair};
-use crate::transformer::CONTEXT;
+// Longer raw contexts permit the input tokenizer to compress multiple words
+// before the Transformer selects its final 256 token positions.
+const RAW_WINDOW:usize=512;
 use std::collections::BTreeMap;
 use std::ops::Range;
 
@@ -39,14 +41,14 @@ pub fn dialogue_examples(pairs:&[DialoguePair])->Result<Vec<Example>,String>{
     for pair in pairs{
         let mut history=dialogue_prefix(&pair.user)?;
         for target in pair.assistant.bytes().chain(std::iter::once(b'\n')){
-            result.push((history[history.len().saturating_sub(CONTEXT)..].to_vec(),target));
+            result.push((history[history.len().saturating_sub(RAW_WINDOW)..].to_vec(),target));
             history.push(target);
         }
     }
     Ok(result)
 }
 fn corpus_examples(corpus:&[u8],indices:Range<usize>,lower_bound:usize)->Vec<Example>{
-    indices.map(|i|(corpus[i.saturating_sub(CONTEXT).max(lower_bound)..i].to_vec(),corpus[i])).collect()
+    indices.map(|i|(corpus[i.saturating_sub(RAW_WINDOW).max(lower_bound)..i].to_vec(),corpus[i])).collect()
 }
 fn conversation_sessions(text:&str)->Result<Vec<Vec<DialoguePair>>,String>{
     let mut sessions=Vec::new();
