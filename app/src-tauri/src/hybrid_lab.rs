@@ -659,6 +659,12 @@ fn train_inner(
         let order=training_order(train,epoch,&lessons.mode);
         let mut epoch_loss=0.0f64;
         let mut trained_count=0usize;
+        let mut batches=0usize;
+        let mut transformer_grad_norm=0.0f64;
+        let mut dense_grad_norm=0.0f64;
+        let mut bridge_grad_norm=0.0f64;
+        let mut transformer_clip_batches=0usize;
+        let mut dense_clip_batches=0usize;
         {
             let mut s=lock(state)?;
             s.epoch=epoch;s.stage=stage.into();s.learning_rate=learning_rate;
@@ -666,7 +672,7 @@ fn train_inner(
         for ids in order.chunks(BATCH){
             if state.inner.stop.load(Ordering::Acquire){cancelled=true;break;}
             let batch:Vec<Example>=ids.iter().map(|&i|train[i].clone()).collect();
-            let (loss,step)={
+            let (loss,step,diag)={
                 let mut s=lock(state)?;
                 let loss=if lessons.mode=="conversation"{
                     let extended=ids.iter().map(|&i|(train[i].0.clone(),train[i].1,
@@ -676,9 +682,16 @@ fn train_inner(
                 if !loss.is_finite(){return Err("Training loss is non-finite".into());}
                 s.trained=true;s.completed=completed+batch.len();s.train_loss=Some(loss);
                 s.tokens_per_second=(s.completed as f64/started.elapsed().as_secs_f64().max(0.001)) as f32;
-                (loss,s.brain.transformer.step)
+                (loss,s.brain.transformer.step,
+                    s.brain.last_batch_diagnostics.clone().ok_or("Gradient diagnostics missing")?)
             };
             trained_count+=batch.len();
+            batches+=1;
+            transformer_grad_norm+=diag.transformer_norm as f64;
+            dense_grad_norm+=diag.dense_norm as f64;
+            bridge_grad_norm+=diag.bridge_norm as f64;
+            transformer_clip_batches+=usize::from(diag.transformer_clipped);
+            dense_clip_batches+=usize::from(diag.dense_clipped);
             completed+=batch.len();
             epoch_loss+=loss as f64*batch.len() as f64;
             if completed%64<batch.len(){
@@ -723,7 +736,12 @@ fn train_inner(
             "bestLoss":best_loss,"bestEpoch":best_epoch,"improved":improved,
             "learningRate":learning_rate,"tokensPerSecond":completed as f64/started.elapsed().as_secs_f64().max(0.001),
             "trainLessons":lessons.train_lessons,"validationLessons":lessons.validation_lessons,
-            "retentionAccuracy":retention_score,"retentionQuestions":retention.len()
+            "retentionAccuracy":retention_score,"retentionQuestions":retention.len(),
+            "transformerGradientNorm":transformer_grad_norm/batches.max(1) as f64,
+            "denseGradientNorm":dense_grad_norm/batches.max(1) as f64,
+            "bridgeGradientNorm":bridge_grad_norm/batches.max(1) as f64,
+            "transformerClipFraction":transformer_clip_batches as f64/batches.max(1) as f64,
+            "denseClipFraction":dense_clip_batches as f64/batches.max(1) as f64
         }));
         if cancelled{break;}
         if should_stop{
