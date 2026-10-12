@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::{Read,Write};
 use std::ops::Range;
 use std::path::Path;
+use crate::tokenizer::{BASE,MAX_WORDS,TOKEN_CAPACITY};
 
 pub const VOCAB:usize=128;
 pub const CONTEXT:usize=256;
@@ -19,7 +20,8 @@ struct Layout {
     tok:Range<usize>, pos:Range<usize>,
     q:Range<usize>, k:Range<usize>, v:Range<usize>, o:Range<usize>,
     f1:Range<usize>, b1:Range<usize>, f2:Range<usize>, b2:Range<usize>,
-    output:Range<usize>, bout:Range<usize>, bridge:Range<usize>, len:usize,
+    output:Range<usize>, bout:Range<usize>, bridge:Range<usize>,
+    words:Range<usize>,memory_write:Range<usize>,memory_read:Range<usize>,len:usize,
 }
 fn allocate(cursor:&mut usize,n:usize)->Range<usize> {
     let start=*cursor;*cursor+=n;start..*cursor
@@ -40,7 +42,10 @@ fn layout_for(window:usize)->Layout {
     let output=allocate(&mut n,VOCAB*D);
     let bout=allocate(&mut n,VOCAB);
     let bridge=allocate(&mut n,D*VOCAB);
-    Layout{tok,pos,q,k,v,o,f1,b1,f2,b2,output,bout,bridge,len:n}
+    let words=allocate(&mut n,MAX_WORDS*D);
+    let memory_write=allocate(&mut n,D*D);
+    let memory_read=allocate(&mut n,D*D);
+    Layout{tok,pos,q,k,v,o,f1,b1,f2,b2,output,bout,bridge,words,memory_write,memory_read,len:n}
 }
 fn random(seed:&mut u64)->f32 {
     *seed^=*seed>>12;*seed^=*seed<<25;*seed^=*seed>>27;
@@ -77,17 +82,20 @@ pub struct Transformer {
     pub step:u64,
 }
 struct Cache {
-    tokens:Vec<u8>, inputs:Vec<Vec<f32>>,
+    tokens:Vec<u16>, inputs:Vec<Vec<f32>>,
     query:Vec<f32>, keys:Vec<Vec<f32>>, values:Vec<Vec<f32>>,
     attention:Vec<f32>, context:Vec<f32>,
     mid:Vec<f32>, pre:Vec<f32>, act:Vec<f32>,
     hidden:Vec<f32>, probabilities:Vec<f32>,
+    memory_sources:Vec<Vec<u16>>, memory_means:Vec<Vec<f32>>,
+    memory_activations:Vec<Vec<f32>>, memory_context:Vec<f32>,
 }
 #[derive(Clone,Debug)]
 pub struct Attention {
     pub index:usize,
     pub code:u8,
     pub probability:f32,
+    pub token_id:u16,
 }
 impl Transformer {
     pub fn new(seed:u64)->Self {
@@ -101,7 +109,8 @@ impl Transformer {
         }
         for (r,input_size) in [
             (&l.q,D),(&l.k,D),(&l.v,D),(&l.o,D),
-            (&l.f1,D),(&l.f2,FF),(&l.output,D),(&l.bridge,VOCAB)
+            (&l.f1,D),(&l.f2,FF),(&l.output,D),(&l.bridge,VOCAB),
+            (&l.words,D),(&l.memory_write,D),(&l.memory_read,D)
         ] {
             let radius=(2.0/input_size as f32).sqrt()*0.5;
             for w in &mut weights[r.clone()] {
@@ -119,8 +128,11 @@ impl Transformer {
         self.forward_with_dense_window(context,dense,CONTEXT)
     }
     fn forward_with_dense_window(&self,context:&[u8],dense:Option<&[f32]>,window:usize)->Result<Cache,String> {
+        self.forward_tokens_with_memory(&context.iter().map(|&c|c as u16).collect::<Vec<_>>(),dense,window,&[])
+    }
+    fn forward_tokens_with_memory(&self,context:&[u16],dense:Option<&[f32]>,window:usize,memory:&[Vec<u16>])->Result<Cache,String> {
         if window!=ORIGINAL_CONTEXT && window!=CONTEXT {
-            return Err("Select a 128- or 256-character context window".into());
+            return Err("Select a 128- or 256-token context window".into());
         }
         if let Some(data)=dense {
             if data.len()!=VOCAB || data.iter().any(|v|!v.is_finite()) {
@@ -129,13 +141,14 @@ impl Transformer {
         }
         if context.is_empty() {return Err("Transformer needs at least one context byte".into());}
         let tokens=context[context.len().saturating_sub(window)..].to_vec();
-        if !tokens.is_ascii() {return Err("Experimental tokenizer supports ASCII only".into());}
+        if tokens.iter().any(|&t|t as usize>=TOKEN_CAPACITY){return Err("Unknown token ID".into());}
         let l=layout();
         let count=tokens.len();
         // Right-aligned positions: the last token always occupies position CONTEXT-1.
         let inputs:Vec<Vec<f32>>=tokens.iter().enumerate().map(|(i,&token)|{
             let mut x=vec![0.0;D];
-            let ti=l.tok.start+token as usize*D;
+            let ti=if token as usize<BASE{l.tok.start+token as usize*D}
+                else{l.words.start+(token as usize-BASE)*D};
             let pi=l.pos.start+(CONTEXT-count+i)*D;
             for j in 0..D {x[j]=self.weights[ti+j]+self.weights[pi+j];}
             x
@@ -160,10 +173,35 @@ impl Transformer {
             let projected=mv(&self.weights,&l.bridge,D,VOCAB,features);
             for j in 0..D {hidden[j]+=projected[j];}
         }
+        let mut memory_means=Vec::new();
+        let mut memory_activations=Vec::new();
+        let mut memory_context=vec![0.0;D];
+        for source in memory.iter().rev().take(12).rev(){
+            if source.is_empty() {continue;}
+            let mut mean=vec![0.0;D];
+            for &id in source {
+                if id as usize>=TOKEN_CAPACITY{return Err("Unknown memory token".into());}
+                let offset=if (id as usize)<BASE {l.tok.start+id as usize*D}
+                    else{l.words.start+(id as usize-BASE)*D};
+                for j in 0..D{mean[j]+=self.weights[offset+j]/source.len() as f32;}
+            }
+            let raw=mv(&self.weights,&l.memory_write,D,D,&mean);
+            let activation=raw.iter().map(|v|v.tanh()).collect::<Vec<_>>();
+            for j in 0..D{memory_context[j]+=activation[j];}
+            memory_means.push(mean);
+            memory_activations.push(activation);
+        }
+        if !memory_activations.is_empty(){
+            for v in &mut memory_context{*v/=memory_activations.len() as f32;}
+            let added=mv(&self.weights,&l.memory_read,D,D,&memory_context);
+            for j in 0..D{hidden[j]+=added[j];}
+        }
         let mut logits=mv(&self.weights,&l.output,VOCAB,D,&hidden);
         for j in 0..VOCAB {logits[j]+=self.weights[l.bout.start+j];}
         let probabilities=stable_softmax(&logits);
-        Ok(Cache{tokens,inputs,query,keys,values,attention,context,mid,pre,act,hidden,probabilities})
+        Ok(Cache{tokens,inputs,query,keys,values,attention,context,mid,pre,act,hidden,probabilities,
+            memory_sources:memory.iter().rev().take(12).rev().cloned().collect(),
+            memory_means,memory_activations,memory_context})
     }
     pub fn predict(&self,context:&[u8])->Result<Vec<f32>,String> {
         Ok(self.forward(context)?.probabilities)
@@ -171,7 +209,7 @@ impl Transformer {
     pub fn attention(&self,context:&[u8])->Result<Vec<Attention>,String> {
         let cache=self.forward(context)?;
         Ok(cache.tokens.iter().enumerate().map(|(i,&code)|Attention{
-            index:i,code,probability:cache.attention[i]
+            index:i,code:if code<BASE as u16{code as u8}else{b'?'},probability:cache.attention[i],token_id:code
         }).collect())
     }
     fn gradient(&self,history:&[u8],target:u8)->Result<(f32,Vec<f32>),String> {
@@ -179,8 +217,11 @@ impl Transformer {
         Ok((loss,grad))
     }
     pub(crate) fn gradient_with_dense(&self,history:&[u8],target:u8,dense:Option<&[f32]>)->Result<(f32,Vec<f32>,Vec<f32>),String> {
+        self.gradient_tokens_with_memory(&history.iter().map(|&c|c as u16).collect::<Vec<_>>(),target,dense,&[])
+    }
+    pub(crate) fn gradient_tokens_with_memory(&self,history:&[u16],target:u8,dense:Option<&[f32]>,memory:&[Vec<u16>])->Result<(f32,Vec<f32>,Vec<f32>),String> {
         if target as usize>=VOCAB {return Err("Target character must be ASCII".into());}
-        let c=self.forward_with_dense(history,dense)?;
+        let c=self.forward_tokens_with_memory(history,dense,CONTEXT,memory)?;
         let l=layout();
         let mut grad=vec![0.0;l.len];
         let loss=-(c.probabilities[target as usize].max(1e-30)).ln();
@@ -191,6 +232,20 @@ impl Transformer {
         let dense_gradient=if let Some(features)=dense {
             back_mv(&self.weights,&l.bridge,D,VOCAB,features,&dh,&mut grad)
         } else {vec![0.0;VOCAB]};
+        if !c.memory_activations.is_empty(){
+            let dmean=back_mv(&self.weights,&l.memory_read,D,D,&c.memory_context,&dh,&mut grad);
+            let count=c.memory_activations.len() as f32;
+            for ((ids,mean),activated) in c.memory_sources.iter().zip(&c.memory_means).zip(&c.memory_activations){
+                let da=(0..D).map(|i|dmean[i]*(1.0-activated[i]*activated[i])/count)
+                    .collect::<Vec<_>>();
+                let dsource=back_mv(&self.weights,&l.memory_write,D,D,mean,&da,&mut grad);
+                for &id in ids{
+                    let start=if (id as usize)<BASE {l.tok.start+id as usize*D}
+                        else{l.words.start+(id as usize-BASE)*D};
+                    for j in 0..D{grad[start+j]+=dsource[j]/ids.len() as f32;}
+                }
+            }
+        }
         let dact=back_mv(&self.weights,&l.f2,D,FF,&c.act,&dh,&mut grad);
         for j in 0..D {grad[l.b2.start+j]+=dh[j];}
         let mut dpre=dact;
@@ -225,7 +280,8 @@ impl Transformer {
         let dqinput=back_mv(&self.weights,&l.q,D,D,&c.inputs[last],&dq,&mut grad);
         for j in 0..D {dx[last][j]+=dqinput[j];}
         for (i,&token) in c.tokens.iter().enumerate() {
-            let ti=l.tok.start+token as usize*D;
+            let ti=if (token as usize)<BASE{l.tok.start+token as usize*D}
+                else{l.words.start+(token as usize-BASE)*D};
             let pi=l.pos.start+(CONTEXT-c.tokens.len()+i)*D;
             for j in 0..D {
                 grad[ti+j]+=dx[i][j];
@@ -233,6 +289,16 @@ impl Transformer {
             }
         }
         Ok((loss,grad,dense_gradient))
+    }
+    pub fn predict_tokenized(&self,tokens:&[u16],dense:&[f32],window:usize,memory:&[Vec<u16>])->Result<Vec<f32>,String>{
+        Ok(self.forward_tokens_with_memory(tokens,Some(dense),window,memory)?.probabilities)
+    }
+    pub fn attention_tokenized(&self,tokens:&[u16],dense:&[f32],window:usize,memory:&[Vec<u16>])->Result<Vec<Attention>,String>{
+        let c=self.forward_tokens_with_memory(tokens,Some(dense),window,memory)?;
+        Ok(c.tokens.iter().enumerate().map(|(i,&id)|Attention{
+            index:i,code:if (id as usize)<BASE{id as u8}else{b'?'},
+            token_id:id,probability:c.attention[i],
+        }).collect())
     }
     pub fn predict_hybrid(&self,context:&[u8],dense:&[f32])->Result<Vec<f32>,String> {
         self.predict_hybrid_window(context,dense,CONTEXT)
@@ -272,8 +338,16 @@ impl Transformer {
             self.variance.copy_from_slice(variance);
             return Ok(());
         }
+        // The previous 256-character model has no learned word or memory
+        // matrices. Append these without disturbing existing parameters.
+        if weights.len()==current.words.start{
+            self.weights[..weights.len()].copy_from_slice(weights);
+            self.momentum[..weights.len()].copy_from_slice(momentum);
+            self.variance[..weights.len()].copy_from_slice(variance);
+            return Ok(());
+        }
         let legacy=layout_for(ORIGINAL_CONTEXT);
-        if weights.len()!=legacy.len && weights.len()!=legacy.bridge.start {
+        if weights.len()!=legacy.words.start && weights.len()!=legacy.bridge.start {
             return Err("Unsupported Transformer checkpoint parameter count".into());
         }
         for (dst,src) in [(&mut self.weights,weights),
@@ -292,7 +366,7 @@ impl Transformer {
                 }else{new.start};
                 dst[start..start+old.len()].copy_from_slice(&src[old.clone()]);
             }
-            if src.len()==legacy.len {
+            if src.len()==legacy.words.start {
                 dst[current.bridge.clone()].copy_from_slice(&src[legacy.bridge.clone()]);
             }
         }
@@ -386,7 +460,7 @@ impl Transformer {
         // original parameters/moments are retained; the appended trainable
         // bridge receives fresh initialization and zero optimizer moments.
         let old=layout_for(ORIGINAL_CONTEXT);
-        if stored_count!=layout().len && stored_count!=old.len && stored_count!=old.bridge.start {
+        if stored_count!=layout().len && stored_count!=layout().words.start && stored_count!=old.words.start && stored_count!=old.bridge.start {
             return Err("Transformer checkpoint parameter count mismatch".into());
         }
         let mut step=[0u8;8];
