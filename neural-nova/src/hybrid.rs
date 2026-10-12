@@ -3,6 +3,7 @@
 //! No independent answer selection, no heuristic replies, no ML frameworks.
 use crate::{encode_ascii_context,Adam,Gradients,Network,NetworkConfig};
 use crate::transformer::{Transformer,Attention};
+use crate::tokenizer::Tokenizer;
 use std::fs::{self,File};
 use std::io::{Read,Write};
 use std::path::Path;
@@ -14,14 +15,22 @@ pub struct HybridBrain {
     pub transformer:Transformer,
     pub dense:Network,
     pub dense_adam:Adam,
+    pub tokenizer:Tokenizer,
 }
 impl HybridBrain {
     pub fn new()->Self {
         let dense=Network::new(NetworkConfig::neural_nova_v1()).expect("valid hybrid dimensions");
         let dense_adam=Adam::new(&dense,0.001).expect("valid learning rate");
-        Self{transformer:Transformer::new(0x4e4f5641_0300),dense,dense_adam}
+        Self{transformer:Transformer::new(0x4e4f5641_0300),dense,dense_adam,tokenizer:Tokenizer::new()}
     }
     pub fn dense_adam_steps(&self)->u32 {self.dense_adam.step}
+    /// Grow the lossless input vocabulary; existing token IDs never change.
+    pub fn learn_token_units(&mut self,lesson_text:&str)->usize{
+        self.tokenizer.grow_from_corpus(lesson_text)
+    }
+    pub fn token_count(&self,history:&str)->Result<usize,String>{
+        Ok(self.tokenizer.encode(history)?.len())
+    }
     pub fn parameter_count(&self)->usize {
         self.transformer.parameter_count()+self.dense.parameter_count()
     }
@@ -34,18 +43,31 @@ impl HybridBrain {
         self.predict_window(context,crate::transformer::CONTEXT)
     }
     pub fn predict_window(&self,context:&[u8],window:usize)->Result<Vec<f32>,String>{
+        self.predict_with_memory(context,window,&[])
+    }
+    pub fn predict_with_memory(&self,context:&[u8],window:usize,memory:&[String])->Result<Vec<f32>,String>{
         let (_,dense)=self.dense_input(context)?;
-        self.transformer.predict_hybrid_window(context,&dense,window)
+        let text=std::str::from_utf8(context).map_err(|e|e.to_string())?;
+        let tokens=self.tokenizer.encode(text)?;
+        let memory_tokens=memory.iter().map(|s|self.tokenizer.encode(s))
+            .collect::<Result<Vec<_>,_>>()?;
+        self.transformer.predict_tokenized(&tokens,&dense,window,&memory_tokens)
     }
     pub fn inspect(&self,context:&[u8])->Result<(Vec<Vec<f32>>,Vec<Attention>,Vec<f32>,Vec<f32>),String>{
         self.inspect_window(context,crate::transformer::CONTEXT)
     }
     pub fn inspect_window(&self,context:&[u8],window:usize)->Result<(Vec<Vec<f32>>,Vec<Attention>,Vec<f32>,Vec<f32>),String>{
+        self.inspect_with_memory(context,window,&[])
+    }
+    pub fn inspect_with_memory(&self,context:&[u8],window:usize,memory:&[String])->Result<(Vec<Vec<f32>>,Vec<Attention>,Vec<f32>,Vec<f32>),String>{
         let (features,dense)=self.dense_input(context)?;
         let layers=self.dense.activations(&features)?;
-        let attention=self.transformer.attention_hybrid_window(context,&dense,window)?;
+        let text=std::str::from_utf8(context).map_err(|e|e.to_string())?;
+        let tokens=self.tokenizer.encode(text)?;
+        let source=memory.iter().map(|t|self.tokenizer.encode(t)).collect::<Result<Vec<_>,_>>()?;
+        let attention=self.transformer.attention_tokenized(&tokens,&dense,window,&source)?;
         let signal=self.transformer.bridge_signal(&dense)?;
-        let probabilities=self.transformer.predict_hybrid_window(context,&dense,window)?;
+        let probabilities=self.transformer.predict_tokenized(&tokens,&dense,window,&source)?;
         Ok((layers,attention,signal,probabilities))
     }
     pub fn train_batch(&mut self,samples:&[(Vec<u8>,u8)],lr:f32)->Result<f32,String>{
@@ -58,8 +80,9 @@ impl HybridBrain {
         let mut loss=0.0;
         for (context,target) in samples {
             let (input,logits)=self.dense_input(context)?;
+            let tokens=self.tokenizer.encode(std::str::from_utf8(context).map_err(|e|e.to_string())?)?;
             let (item_loss,transformer_gradient,upstream)=
-                self.transformer.gradient_with_dense(context,*target,Some(&logits))?;
+                self.transformer.gradient_tokens_with_memory(&tokens,*target,Some(&logits),&[])?;
             self.dense.accumulate_logits_gradients(&input,&upstream,&mut dense_grad)?;
             loss+=item_loss;
             for (a,b) in tf_grad.iter_mut().zip(transformer_gradient){*a+=b;}
@@ -71,6 +94,32 @@ impl HybridBrain {
         self.transformer.apply_gradients(&mut tf_grad,lr)?;
         self.dense_adam.apply(&mut self.dense,&dense_grad)?;
         Ok(loss*inverse)
+    }
+    /// Multi-turn supervised teacher examples. Prior turns are compressed into
+    /// bounded neural memory slots; gradients update both memory matrices and
+    /// the existing dense/Transformer learning pathways together.
+    pub fn train_memory_batch(&mut self,samples:&[(Vec<u8>,u8,Vec<String>)],lr:f32)->Result<f32,String>{
+        if samples.is_empty(){return Err("Empty memory training batch".into());}
+        let mut tf_grad=vec![0f32;self.transformer.parameter_count()];
+        let mut dense_grad=Gradients::zeros(&self.dense);
+        let mut loss=0.0;
+        for (history,target,prior_turns) in samples{
+            let (input,logits)=self.dense_input(history)?;
+            let tokens=self.tokenizer.encode(std::str::from_utf8(history).map_err(|e|e.to_string())?)?;
+            let memory=prior_turns.iter().map(|t|self.tokenizer.encode(t))
+                .collect::<Result<Vec<_>,_>>()?;
+            let (value,g,upstream)=self.transformer.gradient_tokens_with_memory(
+                &tokens,*target,Some(&logits),&memory)?;
+            loss+=value;
+            self.dense.accumulate_logits_gradients(&input,&upstream,&mut dense_grad)?;
+            for (a,b) in tf_grad.iter_mut().zip(g){*a+=b;}
+        }
+        let inv=1.0/samples.len() as f32;
+        for x in &mut tf_grad{*x*=inv;}
+        dense_grad.scale(inv);dense_grad.clip_global_norm(1.0);
+        self.transformer.apply_gradients(&mut tf_grad,lr)?;
+        self.dense_adam.apply(&mut self.dense,&dense_grad)?;
+        Ok(loss*inv)
     }
     pub fn evaluate(&self,samples:&[(Vec<u8>,u8)])->Result<(f32,f32),String>{
         if samples.is_empty(){return Err("Empty validation set".into());}
@@ -108,6 +157,13 @@ impl HybridBrain {
                 write_floats(&mut file,&layer.biases)?;
             }
         }
+        // v0.5 trailer: word IDs belong with the weights they condition.
+        file.write_all(b"WORDUNIT").map_err(|e|e.to_string())?;
+        write_u32(&mut file,self.tokenizer.words.len() as u32)?;
+        for word in &self.tokenizer.words {
+            write_u32(&mut file,word.len() as u32)?;
+            file.write_all(word.as_bytes()).map_err(|e|e.to_string())?;
+        }
         file.sync_all().map_err(|e|e.to_string())?;
         drop(file);
         let backup=path.with_extension("bak");
@@ -126,7 +182,7 @@ impl HybridBrain {
         let old_count=read_u32(&mut file)? as usize;
         // v0.3 checkpoints had 128 positional embeddings; new checkpoints have
         // 256. Remap weights AND Adam moments without clearing learned state.
-        if old_count!=brain.transformer.weights.len() && old_count!=24800{
+        if old_count!=brain.transformer.weights.len() && old_count!=24800 && old_count!=28896{
             return Err("Hybrid Transformer parameter count mismatch".into());
         }
         let mut step=[0u8;8];file.read_exact(&mut step).map_err(|e|e.to_string())?;
@@ -150,9 +206,22 @@ impl HybridBrain {
                 read_floats(&mut file,&mut layer.biases)?;
             }
         }
-        let mut tail=[0u8;1];
-        if file.read(&mut tail).map_err(|e|e.to_string())?!=0{
-            return Err("Unexpected data in hybrid checkpoint".into());
+        let mut tail=[0u8;8];
+        let bytes=file.read(&mut tail).map_err(|e|e.to_string())?;
+        if bytes>0{
+            if bytes!=8||&tail!=b"WORDUNIT"{return Err("Unknown hybrid checkpoint trailer".into());}
+            let count=read_u32(&mut file)? as usize;
+            if count>crate::tokenizer::MAX_WORDS{return Err("Excessive tokenizer vocabulary".into());}
+            for _ in 0..count{
+                let size=read_u32(&mut file)? as usize;
+                if !(3..=24).contains(&size){return Err("Bad word token length".into());}
+                let mut data=vec![0u8;size];file.read_exact(&mut data).map_err(|e|e.to_string())?;
+                brain.tokenizer.words.push(String::from_utf8(data).map_err(|e|e.to_string())?);
+            }
+            brain.tokenizer.validate()?;
+            if file.read(&mut tail).map_err(|e|e.to_string())?!=0{
+                return Err("Unexpected bytes after tokenizer".into());
+            }
         }
         Ok(brain)
     }
