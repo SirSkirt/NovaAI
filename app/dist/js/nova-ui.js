@@ -77,7 +77,7 @@ function setRunning(value){
   $("inspectBrain").disabled=running||!initialized||busy;
   $("compareContext").disabled=running||!initialized||busy;
   for(const id of ["chatLength","chatTemperature","chatContext","chatSampling"]){
-    $(id).disabled=running||busy;
+    $(id).disabled=running||busy||(id==="chatTemperature"&&$("chatSampling").value==="greedy");
   }
   for(const id of ["adaptiveTraining","earlyStopping","trainingRate","trainingEpochs"]){
     $(id).disabled=running;
