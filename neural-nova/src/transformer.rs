@@ -503,7 +503,7 @@ mod tests {
         let mut learned=Transformer::new(89);
         let previous=layout_for(ORIGINAL_CONTEXT);
         let current=layout();
-        let mut old=[vec![0.0;previous.len],vec![0.0;previous.len],vec![0.0;previous.len]];
+        let mut old=[vec![0.0;previous.words.start],vec![0.0;previous.words.start],vec![0.0;previous.words.start]];
         learned.momentum.fill(0.017);
         learned.variance.fill(0.021);
         for (dest,source) in old.iter_mut().zip([&learned.weights,&learned.momentum,&learned.variance]){
