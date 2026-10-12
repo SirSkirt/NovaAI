@@ -1,6 +1,19 @@
-# Neural Nova v0.3.0 — one jointly trainable hybrid brain
+# Neural Nova v0.3.1 — one jointly trainable hybrid brain
 
 **Experimental branch only:** `experimental/neural-nova`. Original Nova on `main` is untouched.
+
+## v0.3.1 — Better teacher, same autonomous neural Nova
+
+This update changes **how the joint network is trained**, not its inference model or its answer generation.
+
+- A new teacher-only Rust curriculum module gives a deterministic, whole-question grouped train/validation split (including differently cased/punctuated variants) and removes text-context leakage at the evaluation boundary.
+- Up to 1,024 distinct dialogue pairs, 384-character replies, 50,000 characters/tokens per CPU session, and 60 epochs.
+- The first dialogue epoch warms up on shorter contexts; following epochs deterministically shuffle all examples. Training data is never used as a scripted response table.
+- Adaptive learning rate, early stopping, and **best held-out joint checkpoint** selection. Both pathways and the learned bridge are still trained from one shared objective.
+- A batch-wide gradient accumulator reduces large per-character Rust allocations without changing the gradient math.
+- The Teach tab shows learning-rate options, progress phase, held-out lesson counts, throughput, best epoch and history.
+
+**Caution:** The old 1,386-step screenshot and fragmented replies are baseline outputs from the **previous** lessons. No new curriculum results are available yet, so do not claim the update improved answer quality. Validation metrics are sensitive to dataset/split changes, and this tiny ASCII model is not yet a competent general conversational AI.
 
 Neural Nova combines its from-scratch Rust Transformer and existing dense neural network into **one model with one output distribution**. This is not two separately generated answers, an answer selector, or a hard-coded ensemble.
 
