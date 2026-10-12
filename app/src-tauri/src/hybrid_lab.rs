@@ -73,7 +73,7 @@ fn save_conversation(app:&AppHandle,history:&[ConversationTurn])->Result<(),Stri
 }
 fn memory_turns(history:&[ConversationTurn])->Vec<String>{
     history.iter().rev().take(MEMORY_SLOTS).rev().map(|t|
-        format!("U: {}\\nN: {}",t.user,t.assistant)).collect()
+        format!("U: {}\nN: {}",t.user,t.assistant)).collect()
 }
 fn path(app:&AppHandle)->Result<PathBuf,String>{
     let dir=app.path().app_data_dir().map_err(|e|e.to_string())?;
