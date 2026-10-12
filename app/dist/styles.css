@@ -88,3 +88,11 @@ footer{padding:32px 0 35px;color:#697991;text-align:center;font-size:12px}
 .diagnostics-toolbar button{padding:6px 10px;font-size:11px}
 #diagnosticLog{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;border:1px solid #35445c;background:#0d1420;color:#c6d8ed;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;border-radius:10px;padding:12px;margin:0}
 .has-errors #diagnosticLog{border-color:#8f5061;color:#ffd3dc}
+
+/* Neural Nova 0.1.2 — held-out evaluation and varied lesson picker */
+.validation-metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px}
+.validation-metrics>div{padding:12px;border:1px solid #354159;background:#101827;border-radius:11px}
+.validation-metrics span{display:block;color:var(--muted);font-size:11px;margin-bottom:7px}
+.validation-metrics strong{font-size:20px;color:#c7eedf;font-variant-numeric:tabular-nums}
+.sample-lesson{font-size:12px;padding:8px 12px;border:1px solid #3c4a69;border-radius:10px;background:#222a3d;color:#cddaf5}
+@media(max-width:600px){.validation-metrics strong{font-size:18px}.toolbar{flex-wrap:wrap}}
