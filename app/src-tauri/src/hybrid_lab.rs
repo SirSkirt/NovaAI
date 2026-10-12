@@ -6,6 +6,7 @@ use neural_nova::trainer::{prepare,training_order,Example,PreparedLessons,Schedu
 use crate::transformer_lab::Lesson;
 use crate::test_lab::{TestArchive,TestDefinition,TestReport,TestOptions,TestCase,QuestionResult,Attempt,parse_cases,grade,validate_options};
 use crate::diagnostic_log::{self as diag, Diagnostics};
+use crate::rehearsal::{self,LessonRecord,RehearsalBank};
 use serde::{Deserialize,Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -92,6 +93,53 @@ fn persist_archive(app:&AppHandle,data:&TestArchive)->Result<(),String>{
             Err(e.to_string())
         }
     }
+}
+fn rehearsal_path(app:&AppHandle)->Result<PathBuf,String>{
+    Ok(path(app)?.with_file_name("neural-nova-rehearsal-v0.7.json"))
+}
+fn rehearsal_for_current(app:&AppHandle,brain:&HybridBrain)->Result<RehearsalBank,String>{
+    Ok(rehearsal::matched(rehearsal::read(&rehearsal_path(app)?)?,
+        &diag::weight_digest(brain)))
+}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct RehearsalInfo{names:Vec<String>,modes:Vec<String>,matched:bool}
+#[tauri::command]
+pub fn hybrid_rehearsal_info(app:AppHandle,state:State<'_,HybridState>)->Result<RehearsalInfo,String>{
+    let s=lock(&state)?;
+    let file=rehearsal::read(&rehearsal_path(&app)?)?;
+    let matched=file.model_fingerprint==diag::weight_digest(&s.brain);
+    let bank=rehearsal::matched(file,&diag::weight_digest(&s.brain));
+    Ok(RehearsalInfo{names:bank.lessons.iter().map(|l|l.name.clone()).collect(),
+        modes:bank.lessons.iter().map(|l|l.mode.clone()).collect(),matched})
+}
+#[tauri::command]
+pub fn hybrid_rehearsal_add(app:AppHandle,state:State<'_,HybridState>,
+    mode:String,text:String,name:String)->Result<RehearsalInfo,String>{
+    if state.inner.training.load(Ordering::Acquire){
+        return Err("Cannot edit rehearsal lessons during training or testing".into());
+    }
+    if name.trim().is_empty()||name.len()>80{return Err("Lesson name must be 1–80 characters".into());}
+    let mut s=lock(&state)?;
+    if !s.trained{return Err("Teach Nova before archiving a previous lesson".into());}
+    let mut bank=rehearsal_for_current(&app,&s.brain)?;
+    rehearsal::append(&mut bank,LessonRecord{mode,text,name},
+        diag::weight_digest(&s.brain))?;
+    rehearsal::write(&rehearsal_path(&app)?,&bank)?;
+    diag::record(&app.state::<Diagnostics>(),"rehearsal_manual_archive",serde_json::json!({
+        "lessonCount":bank.lessons.len(),"step":s.brain.transformer.step,
+        "note":"Previous lesson archived for actual neural rehearsal, no update performed"
+    }));
+    Ok(RehearsalInfo{names:bank.lessons.iter().map(|l|l.name.clone()).collect(),
+        modes:bank.lessons.iter().map(|l|l.mode.clone()).collect(),matched:true})
+}
+#[tauri::command]
+pub fn hybrid_rehearsal_clear(app:AppHandle,state:State<'_,HybridState>)->Result<(),String>{
+    if state.inner.training.load(Ordering::Acquire){return Err("Cannot clear bank during training".into());}
+    let _s=lock(&state)?;
+    let target=rehearsal_path(&app)?;
+    if target.exists(){fs::remove_file(target).map_err(|e|e.to_string())?;}
+    Ok(())
 }
 fn conversation_path(app:&AppHandle)->Result<PathBuf,String>{
     Ok(path(app)?.with_file_name(CHAT_FILE))
@@ -672,6 +720,9 @@ pub struct TrainOptions {
     learning_rate:Option<f32>,
     patience:Option<u32>,
     retention_test_id:Option<String>,
+    rehearsal:Option<bool>,
+    protect_previous:Option<bool>,
+    retention_loss_tolerance:Option<f32>,
 }
 fn resolved_switches(options:Option<&TrainOptions>)->(bool,bool){
     let legacy=options.and_then(|o|o.adaptive);
@@ -697,6 +748,12 @@ pub fn hybrid_train(
             .cases.iter().take(4).cloned().collect::<Vec<_>>()
     }else{Vec::new()};
     let (adaptive_learning_rate,early_stopping)=resolved_switches(options.as_ref());
+    let rehearsal_enabled=options.as_ref().and_then(|x|x.rehearsal).unwrap_or(true);
+    let guard_enabled=options.as_ref().and_then(|x|x.protect_previous).unwrap_or(true);
+    let tolerance=options.as_ref().and_then(|x|x.retention_loss_tolerance).unwrap_or(0.10);
+    if !tolerance.is_finite() || !(0.0..=0.5).contains(&tolerance){
+        return Err("Previous-lesson loss tolerance must be between 0 and 0.5".into());
+    }
     let starting_lr=options.as_ref().and_then(|o|o.learning_rate).unwrap_or(DEFAULT_LEARNING_RATE);
     let patience=options.as_ref().and_then(|o|o.patience).unwrap_or(6);
     if !starting_lr.is_finite() || !(0.0003..=0.006).contains(&starting_lr){
@@ -707,6 +764,25 @@ pub fn hybrid_train(
         return Err("Nova is already training".into());
     }
     let state=state.inner().clone();
+    // Only curricula associated with EXACTLY these joint weights are eligible;
+    // restoring an unrelated checkpoint cannot inject another run's lessons.
+    let starting_bank=match lock(&state){
+        Ok(s)=>rehearsal_for_current(&app,&s.brain),
+        Err(e)=>Err(e),
+    };
+    let starting_bank=match starting_bank{
+        Ok(bank)=>bank,
+        Err(e)=>{state.inner.training.store(false,Ordering::Release);return Err(e);}
+    };
+    let previous=if rehearsal_enabled || guard_enabled{
+        match rehearsal::previous_plans(&starting_bank){
+            Ok(v)=>v,
+            Err(e)=>{state.inner.training.store(false,Ordering::Release);return Err(e);}
+        }
+    }else{Vec::new()};
+    let replay_batch_count=if rehearsal_enabled&&!previous.is_empty(){
+        (plan.train.len()+BATCH*3-1)/(BATCH*3)
+    }else{0};
     let ready=(||->Result<(),String>{
         let mut s=lock(&state)?;
         if s.trained{snapshot_active_checkpoint(&app,&s.brain,"before-lesson")?;}
@@ -740,7 +816,7 @@ pub fn hybrid_train(
             }));
         }
         s.epoch=0;s.epochs=lesson.epochs;s.completed=0;
-        s.total=plan.train.len()*lesson.epochs as usize;
+        s.total=(plan.train.len()+replay_batch_count*BATCH)*lesson.epochs as usize;
         s.heldout_loss=None;s.heldout_accuracy=None;s.train_loss=None;s.error=None;
         s.best_heldout_loss=None;s.best_epoch=0;s.learning_rate=starting_lr;
         s.train_lessons=plan.train_lessons;s.validation_lessons=plan.validation_lessons;
@@ -752,7 +828,8 @@ pub fn hybrid_train(
     state.inner.stop.store(false,Ordering::Release);
     tauri::async_runtime::spawn_blocking(move||{
         let result=train_inner(&app,&state,&plan,lesson.epochs,
-            adaptive_learning_rate,early_stopping,starting_lr,patience,&retention);
+            adaptive_learning_rate,early_stopping,starting_lr,patience,&retention,
+            &previous,rehearsal_enabled,guard_enabled,tolerance);
         if let Err(ref e)=result{
             if let Ok(mut s)=lock(&state){s.error=Some(e.clone());s.stage="Training failed".into();}
             eprintln!("Neural Nova hybrid trainer error: {e}");
@@ -760,6 +837,25 @@ pub fn hybrid_train(
         state.inner.training.store(false,Ordering::Release);
         match result{
             Ok((cancelled,early_stopped,best_epoch))=>{
+                if best_epoch>0 && !cancelled {
+                    // Advance the teacher archive only after the selected joint
+                    // neural checkpoint is saved. No held-out examples enter replay.
+                    let saved=(||->Result<(),String>{
+                        let end=diag::weight_digest(&lock(&state)?.brain);
+                        let mut bank=starting_bank;
+                        rehearsal::append(&mut bank,LessonRecord{
+                            mode:lesson.mode.clone(),text:lesson.text.clone(),
+                            name:format!("{} lesson · step {}",lesson.mode,lock(&state)?.brain.transformer.step)
+                        },end)?;
+                        rehearsal::write(&rehearsal_path(&app)?,&bank)
+                    })();
+                    if let Err(e)=saved{
+                        diag::record(&app.state::<Diagnostics>(),"rehearsal_archive_error",
+                            serde_json::json!({"message":e}));
+                        let _=app.emit("hybrid-error",
+                            format!("Neural checkpoint saved, but teacher rehearsal archive failed: {e}"));
+                    }
+                }
                 let _=app.emit("hybrid-done",serde_json::json!({
                     "cancelled":cancelled,"earlyStopped":early_stopped,"bestEpoch":best_epoch
                 }));
