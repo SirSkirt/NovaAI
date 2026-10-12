@@ -78,6 +78,27 @@ pub fn prior_validation_selection(plan:&PreparedLessons)->Vec<usize>{
     (0..RETENTION_VALIDATION_LIMIT)
         .map(|i|i*n/RETENTION_VALIDATION_LIMIT).collect()
 }
+/// Guard the new lesson against measurable deterioration on independently
+/// held-out examples from earlier lessons. It cannot introduce canned answers.
+pub fn eligible_checkpoint(
+    previous_loss:Option<f32>,baseline_loss:Option<f32>,max_loss_increase:f32,
+    teacher_accuracy:Option<f32>,teacher_baseline:Option<f32>,
+)->bool{
+    let prior_ok=match (previous_loss,baseline_loss){
+        (Some(now),Some(before))=>now.is_finite() && before.is_finite() &&
+            now<=before+max_loss_increase,
+        (None,None)=>true,
+        _=>false,
+    };
+    // A saved user-selected set of completed answers must not regress at all
+    // in exact greedy accuracy. The teacher still controls this benchmark.
+    let teacher_ok=match (teacher_accuracy,teacher_baseline){
+        (Some(now),Some(before))=>now+0.000001>=before,
+        (None,None)=>true,
+        _=>false,
+    };
+    prior_ok&&teacher_ok
+}
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -102,6 +123,12 @@ mod tests{
             if pair.0.ends_with(b"\nN: "){assert!(!contexts.contains(&pair.0));}
         }
         assert!(!p.validation.is_empty());
+    }
+    #[test]fn protection_rejects_forgetting_even_if_current_lesson_improves(){
+        assert!(eligible_checkpoint(Some(1.08),Some(1.0),0.10,Some(1.0),Some(1.0)));
+        assert!(!eligible_checkpoint(Some(1.3),Some(1.0),0.10,None,None));
+        assert!(!eligible_checkpoint(Some(0.9),Some(1.0),0.10,Some(0.5),Some(1.0)));
+        assert!(eligible_checkpoint(None,None,0.10,None,None));
     }
     #[test]fn selection_is_bounded_and_deterministic(){
         let plan=prepare("text",&"Hello there ".repeat(250)).unwrap();
