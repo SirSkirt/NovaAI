@@ -17,7 +17,7 @@ tauri-build = { version = "2.0.0", features = [] }
 tauri = { version = "2.0.0", features = [] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-neural-nova = { path = "../../../neural-nova" }
+neural-nova = { path = "../../neural-nova" }
 
 [features]
 default = []
