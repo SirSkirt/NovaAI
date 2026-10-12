@@ -256,9 +256,9 @@ impl Transformer {
         delta[target as usize]-=1.0;
         for (j,d) in delta.iter().enumerate() {grad[l.bout.start+j]+=*d;}
         let mut dh=back_mv(&self.weights,&l.output,VOCAB,D,&c.hidden,&delta,&mut grad);
-        let dense_gradient=if let Some(features)=dense {
-            back_mv(&self.weights,&l.bridge,D,VOCAB,features,&dh,&mut grad)
-        } else {vec![0.0;VOCAB]};
+        // Memory attention uses the post-bridge hidden state as its query.
+        // Include the memory-query derivative in dh BEFORE backpropagating
+        // through the dense bridge; otherwise the dense pathway misses it.
         if !c.memory_activations.is_empty(){
             let dcontext=back_mv(&self.weights,&l.memory_read,D,D,&c.memory_context,&dh,&mut grad);
             let scores=c.memory_activations.iter().map(|slot|dot(&dcontext,slot))
@@ -284,6 +284,9 @@ impl Transformer {
             }
             for j in 0..D{dh[j]+=dquery[j];}
         }
+        let dense_gradient=if let Some(features)=dense {
+            back_mv(&self.weights,&l.bridge,D,VOCAB,features,&dh,&mut grad)
+        }else{vec![0.0;VOCAB]};
         let dact=back_mv(&self.weights,&l.f2,D,FF,&c.act,&dh,&mut grad);
         for j in 0..D {grad[l.b2.start+j]+=dh[j];}
         let mut dpre=dact;
