@@ -92,3 +92,28 @@ label.checkbox-line{display:flex;align-items:center;gap:9px;color:#c8d8ee;font-s
 .comparison-card small{color:#94abc5;font-size:11px;line-height:1.5;display:block}
 @media(max-width:850px){.chat-settings{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.chat-settings{gap:8px}.comparison-grid{grid-template-columns:1fr}}
+
+/* v0.6 experimental teacher / test workspace, collapsed by default */
+.test-lab{margin-top:14px}
+.test-lab>summary{cursor:pointer;font-size:17px;font-weight:750;display:flex;gap:14px;align-items:center;justify-content:space-between;list-style-position:inside}
+.test-lab-body{margin-top:16px;border-top:1px solid var(--border);padding-top:12px}
+.test-bar,.test-import-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}
+.test-options{display:grid;grid-template-columns:repeat(5,minmax(115px,1fr));gap:10px;margin-top:18px;margin-bottom:12px}
+.test-options select,.test-options input{padding:9px}
+.test-import-grid textarea{width:100%;min-height:104px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.test-import-grid .file-button{display:inline-block;margin-top:8px}
+.test-checks{gap:12px 24px;margin:12px 0}
+.test-checks .checkbox-line{display:flex}
+.test-overview{margin-top:15px}
+.test-overview-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}
+.test-overview-stats>div{border:1px solid var(--border);border-radius:9px;padding:10px;background:#121e30}
+.test-overview-stats span{display:block;color:var(--muted);font-size:11px}
+.test-overview-stats strong{font-size:16px;display:block;margin-top:5px}
+.test-question{padding:11px;margin:7px 0;border:1px solid #344761;border-radius:10px}
+.test-question summary{cursor:pointer;font-size:13px;font-weight:650;overflow-wrap:anywhere}
+.test-question-body{margin-top:12px;color:#c6d6ee;font-size:12px}
+.test-attempt{background:#101828;border:1px solid #34415a;border-radius:9px;padding:10px;margin:8px 0}
+.test-attempt pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.5}
+.test-attempt select{width:auto;min-width:150px}
+@media(max-width:960px){.test-options{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:640px){.test-bar,.test-import-grid{grid-template-columns:1fr}.test-options{grid-template-columns:repeat(2,minmax(0,1fr))}.test-overview-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
