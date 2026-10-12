@@ -38,6 +38,7 @@ pub fn encode_ascii_context(history: &[u8]) -> Result<Vec<f32>, String> {
 
 pub mod dialogue;
 pub mod transformer;
+pub mod hybrid;
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -84,13 +85,13 @@ pub struct Gradients {
 
 #[derive(Clone, Debug)]
 pub struct Adam {
-    step: u32,
+    pub(crate) step: u32,
     learning_rate: f32,
     beta1: f32,
     beta2: f32,
     epsilon: f32,
-    m: Gradients,
-    v: Gradients,
+    pub(crate) m: Gradients,
+    pub(crate) v: Gradients,
 }
 
 struct Rng(u64);
@@ -163,6 +164,43 @@ impl Network {
     /// Returns probabilities whose sum is approximately 1.
     pub fn predict(&self, input: &[f32]) -> Result<Vec<f32>, String> {
         Ok(self.forward(input)?.0.pop().expect("forward has outputs"))
+    }
+
+    /// Pre-softmax activity passed through the learned cross-hemisphere bridge.
+    pub fn logits(&self, input: &[f32]) -> Result<Vec<f32>, String> {
+        Ok(self.forward(input)?.1.last().ok_or("No dense output")?.clone())
+    }
+
+    /// Gradient supplied by the single hybrid loss, not a separate dense target.
+    pub(crate) fn gradients_from_logits(&self,input:&[f32],output_derivative:&[f32])->Result<Gradients,String>{
+        if output_derivative.len()!=self.layers.last().unwrap().outputs || output_derivative.iter().any(|x|!x.is_finite()) {
+            return Err("Dense upstream derivative shape/value mismatch".into());
+        }
+        let (activations,preactivations)=self.forward(input)?;
+        let mut gradients=Gradients::zeros(self);
+        let mut delta=output_derivative.to_vec();
+        for layer_idx in (0..self.layers.len()).rev() {
+            let layer=&self.layers[layer_idx];
+            let previous=&activations[layer_idx];
+            let grad=&mut gradients.layers[layer_idx];
+            for out in 0..layer.outputs {
+                grad.biases[out]+=delta[out];
+                let offset=out*layer.inputs;
+                for i in 0..layer.inputs {grad.weights[offset+i]+=delta[out]*previous[i];}
+            }
+            if layer_idx>0 {
+                let mut upstream=vec![0.0;layer.inputs];
+                for out in 0..layer.outputs {
+                    let offset=out*layer.inputs;
+                    for i in 0..layer.inputs {upstream[i]+=layer.weights[offset+i]*delta[out];}
+                }
+                for (i,value) in upstream.iter_mut().enumerate(){
+                    if preactivations[layer_idx-1][i]<=0.0 {*value=0.0;}
+                }
+                delta=upstream;
+            }
+        }
+        Ok(gradients)
     }
 
     /// Returns a cross-entropy loss and gradients for a single example.
@@ -325,7 +363,7 @@ fn read_u32(r: &mut impl Read) -> Result<u32, String> {
 }
 
 impl Gradients {
-    fn zeros(network: &Network) -> Self {
+    pub(crate) fn zeros(network: &Network) -> Self {
         Self {
             layers: network.layers.iter().map(|l| LayerGrad {
                 weights: vec![0.0; l.weights.len()],
@@ -333,14 +371,14 @@ impl Gradients {
             }).collect()
         }
     }
-    fn scale(&mut self, factor: f32) {
+    pub(crate) fn scale(&mut self, factor: f32) {
         for layer in &mut self.layers {
             for g in layer.weights.iter_mut().chain(layer.biases.iter_mut()) {
                 *g *= factor;
             }
         }
     }
-    fn clip_global_norm(&mut self, max_norm: f32) {
+    pub(crate) fn clip_global_norm(&mut self, max_norm: f32) {
         let sq: f64 = self.layers.iter()
             .flat_map(|l| l.weights.iter().chain(l.biases.iter()))
             .map(|&g| (g as f64) * (g as f64)).sum();
@@ -360,7 +398,7 @@ impl Adam {
         })
     }
 
-    fn apply(&mut self, network: &mut Network, gradient: &Gradients) -> Result<(), String> {
+    pub(crate) fn apply(&mut self, network: &mut Network, gradient: &Gradients) -> Result<(), String> {
         if self.m.layers.len() != network.layers.len() ||
             self.m.layers.iter().zip(&network.layers).any(|(m, l)|
                 m.weights.len() != l.weights.len() || m.biases.len() != l.biases.len()
