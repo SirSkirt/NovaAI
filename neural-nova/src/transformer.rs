@@ -322,7 +322,11 @@ impl Transformer {
         if &magic!=MAGIC {return Err("Incompatible Transformer checkpoint".into());}
         let mut count=[0u8;4];
         file.read_exact(&mut count).map_err(|e|e.to_string())?;
-        if u32::from_le_bytes(count) as usize!=layout().len {
+        let stored_count=u32::from_le_bytes(count) as usize;
+        // Backward-compatible load for the independent v0.2 Transformer: its
+        // original parameters/moments are retained; the appended trainable
+        // bridge receives fresh initialization and zero optimizer moments.
+        if stored_count!=layout().len && stored_count!=layout().bridge.start {
             return Err("Transformer checkpoint parameter count mismatch".into());
         }
         let mut step=[0u8;8];
@@ -330,7 +334,7 @@ impl Transformer {
         let mut out=Self::new(1);
         out.step=u64::from_le_bytes(step);
         for array in [&mut out.weights,&mut out.momentum,&mut out.variance] {
-            for value in array {
+            for value in &mut array[..stored_count] {
                 let mut bytes=[0u8;4];
                 file.read_exact(&mut bytes).map_err(|e|e.to_string())?;
                 *value=f32::from_le_bytes(bytes);
