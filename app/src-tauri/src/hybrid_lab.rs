@@ -12,8 +12,12 @@ use std::sync::{Arc,Mutex};
 use std::time::{Instant,SystemTime,UNIX_EPOCH};
 use tauri::{AppHandle,Emitter,Manager,State};
 
-const CHECKPOINT:&str="neural-nova-hybrid-0.4.nhyb";
-const OLD_CHECKPOINT:&str="neural-nova-hybrid-0.3.nhyb";
+const CHECKPOINT:&str="neural-nova-hybrid-0.5.nhyb";
+const OLD_CHECKPOINT:&str="neural-nova-hybrid-0.4.nhyb";
+const FIRST_CHECKPOINT:&str="neural-nova-hybrid-0.3.nhyb";
+const CHAT_FILE:&str="neural-nova-conversation-v0.5.json";
+const MEMORY_SLOTS:usize=12;
+const HISTORY_LIMIT:usize=64;
 const BATCH:usize=8;
 const DEFAULT_LEARNING_RATE:f32=0.001;
 const MIN_IMPROVEMENT:f32=0.0005;
@@ -26,7 +30,11 @@ struct Session{
     best_heldout_loss:Option<f32>,best_epoch:u32,learning_rate:f32,
     train_lessons:usize,validation_lessons:usize,
     tokens_per_second:f32,stage:String,early_stopped:bool,
+    history:Vec<ConversationTurn>,
 }
+#[derive(Clone,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct ConversationTurn{user:String,assistant:String}
 struct Shared{
     session:Mutex<Session>,
     training:AtomicBool,
@@ -42,7 +50,7 @@ impl Default for HybridState{
                 heldout_loss:None,heldout_accuracy:None,train_loss:None,error:None,
                 best_heldout_loss:None,best_epoch:0,learning_rate:DEFAULT_LEARNING_RATE,
                 train_lessons:0,validation_lessons:0,tokens_per_second:0.0,
-                stage:"Idle".into(),early_stopped:false
+                stage:"Idle".into(),early_stopped:false,history:Vec::new()
             }),
             training:AtomicBool::new(false),stop:AtomicBool::new(false)
         })}
@@ -50,6 +58,22 @@ impl Default for HybridState{
 }
 fn lock(state:&HybridState)->Result<std::sync::MutexGuard<'_,Session>,String>{
     state.inner.session.lock().map_err(|_|"Hybrid model lock poisoned".into())
+}
+fn conversation_path(app:&AppHandle)->Result<PathBuf,String>{
+    Ok(path(app)?.with_file_name(CHAT_FILE))
+}
+fn save_conversation(app:&AppHandle,history:&[ConversationTurn])->Result<(),String>{
+    let target=conversation_path(app)?;
+    let tmp=target.with_extension("tmp");
+    let contents=serde_json::to_vec(history).map_err(|e|e.to_string())?;
+    fs::write(&tmp,contents).map_err(|e|e.to_string())?;
+    // Windows rename can't overwrite an existing destination.
+    if target.exists(){fs::remove_file(&target).map_err(|e|e.to_string())?;}
+    fs::rename(tmp,target).map_err(|e|e.to_string())
+}
+fn memory_turns(history:&[ConversationTurn])->Vec<String>{
+    history.iter().rev().take(MEMORY_SLOTS).rev().map(|t|
+        format!("U: {}\\nN: {}",t.user,t.assistant)).collect()
 }
 fn path(app:&AppHandle)->Result<PathBuf,String>{
     let dir=app.path().app_data_dir().map_err(|e|e.to_string())?;
@@ -68,6 +92,7 @@ pub struct HybridStatus{
     best_heldout_loss:Option<f32>,best_epoch:u32,learning_rate:f32,
     train_lessons:usize,validation_lessons:usize,
     tokens_per_second:f32,stage:String,early_stopped:bool,
+    memory_turns:usize,tokenizer_words:usize,
 }
 fn status(state:&HybridState,s:&Session)->HybridStatus{
     HybridStatus{
@@ -82,7 +107,8 @@ fn status(state:&HybridState,s:&Session)->HybridStatus{
         best_heldout_loss:s.best_heldout_loss,best_epoch:s.best_epoch,
         learning_rate:s.learning_rate,
         train_lessons:s.train_lessons,validation_lessons:s.validation_lessons,
-        tokens_per_second:s.tokens_per_second,stage:s.stage.clone(),early_stopped:s.early_stopped
+        tokens_per_second:s.tokens_per_second,stage:s.stage.clone(),early_stopped:s.early_stopped,
+        memory_turns:s.history.len().min(MEMORY_SLOTS),tokenizer_words:s.brain.tokenizer.words.len()
     }
 }
 #[tauri::command]
@@ -91,22 +117,44 @@ pub fn hybrid_boot(app:AppHandle,state:State<'_,HybridState>)->Result<HybridStat
     let mut s=lock(&state)?;
     let file=path(&app)?;
     if file.exists(){
-        s.brain=HybridBrain::load(file)?;
+        s.brain=HybridBrain::load(&file)?;
         s.trained=true;
-    }else{
-        // Migrate once, do not overwrite/remove the v0.3 checkpoint.
-        // An explicit reset writes a sentinel so old weights do not silently
-        // return after the next launch.
-        let sentinel=file.with_extension("no-import");
-        let legacy=file.with_file_name(OLD_CHECKPOINT);
-        if !sentinel.exists() && legacy.exists(){
-            let migrated=HybridBrain::load(legacy)?;
-            migrated.save(&file)?;
-            s.brain=migrated;
-            s.trained=true;
+    }else if !file.with_extension("no-import").exists(){
+        // Try newest compatible checkpoint first, preserving both originals.
+        for legacy in [OLD_CHECKPOINT,FIRST_CHECKPOINT]{
+            let candidate=file.with_file_name(legacy);
+            if candidate.exists(){
+                let migrated=HybridBrain::load(&candidate)?;
+                migrated.save(&file)?;
+                s.brain=migrated;
+                s.trained=true;
+                break;
+            }
         }
     }
+    let conversation=conversation_path(&app)?;
+    if conversation.exists(){
+        let contents=fs::read(&conversation).map_err(|e|e.to_string())?;
+        let turns:Vec<ConversationTurn>=serde_json::from_slice(&contents).map_err(|e|e.to_string())?;
+        if turns.len()>HISTORY_LIMIT || turns.iter().any(|t|
+            t.user.len()>180||t.assistant.len()>256 || !t.user.is_ascii()||!t.assistant.is_ascii()){
+            return Err("Invalid persisted conversation data".into());
+        }
+        s.history=turns;
+    }
     Ok(status(&state,&s))
+}
+#[tauri::command]
+pub fn hybrid_conversation(state:State<'_,HybridState>)->Result<Vec<ConversationTurn>,String>{
+    Ok(lock(&state)?.history.clone())
+}
+#[tauri::command]
+pub fn hybrid_new_chat(app:AppHandle,state:State<'_,HybridState>)->Result<(),String>{
+    if state.inner.training.load(Ordering::Acquire){return Err("Training in progress".into());}
+    let mut s=lock(&state)?;
+    save_conversation(&app,&[])?;
+    s.history.clear();
+    Ok(())
 }
 #[tauri::command]
 pub fn hybrid_status(state:State<'_,HybridState>)->Result<HybridStatus,String>{
@@ -125,15 +173,15 @@ pub struct HybridTrace{
 }
 #[derive(Serialize)]
 struct TokenProbability{code:usize,probability:f32}
-fn trace(brain:&HybridBrain,history:&[u8],window:usize)->Result<HybridTrace,String>{
-    let (layers,attention,bridge,p)=brain.inspect_window(history,window)?;
+fn trace(brain:&HybridBrain,history:&[u8],window:usize,memory:&[String])->Result<HybridTrace,String>{
+    let (layers,attention,bridge,p)=brain.inspect_with_memory(history,window,memory)?;
     let mut sorted=(0..p.len()).collect::<Vec<usize>>();
     sorted.sort_by(|&a,&b|p[b].total_cmp(&p[a]));
     Ok(HybridTrace{
         dense_layers:layers,bridge_signal:bridge,
         attention:attention.into_iter().map(|a|AttentionValue{
             index:a.index,weight:a.probability,
-            character:match a.code{b' '=>"␠".into(),b'\n'=>"↵".into(),32..=126=>char::from(a.code).to_string(),other=>format!("{other}")}
+            character:brain.tokenizer.token_label(a.token_id)
         }).collect(),
         top_predictions:sorted.into_iter().take(8).map(|code|TokenProbability{code,probability:p[code]}).collect(),
     })
@@ -151,7 +199,8 @@ pub async fn hybrid_inspect(
         if state.inner.training.load(Ordering::Acquire){return Err("Wait for training to finish".into());}
         let s=lock(&state)?;
         let context=dialogue_prefix(&message)?;
-        trace(&s.brain,&context,window)
+        let memory=memory_turns(&s.history);
+        trace(&s.brain,&context,window,&memory)
     }).await.map_err(|e|e.to_string())?
 }
 fn valid_window(input:Option<usize>)->Result<usize,String>{
@@ -197,6 +246,10 @@ pub struct ContextReport {
     deterministic:bool,
     temperature:f32,
     seed_used:Option<u64>,
+    prompt_tokens:usize,
+    prompt_tokens_retained:usize,
+    active_tokens:usize,
+    memory_turns:usize,
 }
 fn context_report(window:usize,prompt_bytes:usize,generated_bytes:usize,
     termination:&'static str,deterministic:bool,temperature:f32,seed_used:Option<u64>
@@ -211,7 +264,9 @@ fn context_report(window:usize,prompt_bytes:usize,generated_bytes:usize,
             if generated_bytes>=threshold{Some(threshold)}else{None}
         };
     ContextReport{window,prompt_bytes,generated_bytes,prompt_bytes_retained,
-        first_prompt_truncation_char,termination,deterministic,temperature,seed_used}
+        first_prompt_truncation_char,termination,deterministic,temperature,seed_used,
+        prompt_tokens:prompt_bytes,prompt_tokens_retained,memory_turns:0,
+        active_tokens:(prompt_bytes+generated_bytes).min(window)}
 }
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
@@ -220,7 +275,7 @@ pub struct HybridReply{
 }
 #[tauri::command]
 pub async fn hybrid_chat(
-    state:State<'_,HybridState>,message:String,max_chars:usize,temperature:f32,
+    app:AppHandle,state:State<'_,HybridState>,message:String,max_chars:usize,temperature:f32,
     context_chars:Option<usize>,deterministic:Option<bool>,seed:Option<u64>,
 )->Result<HybridReply,String>{
     if message.is_empty() || message.len()>180 || !message.is_ascii() || message.contains('\n') || message.contains('\r') {
@@ -234,26 +289,42 @@ pub async fn hybrid_chat(
     let state=state.inner().clone();
     tauri::async_runtime::spawn_blocking(move||{
         if state.inner.training.load(Ordering::Acquire){return Err("Wait for training to finish".into());}
-        let s=lock(&state)?;
+        let mut s=lock(&state)?;
+        let memory=memory_turns(&s.history);
         let mut history=dialogue_prefix(&message)?;
         let prompt_bytes=history.len();
+        let prompt_tokens=s.brain.token_count(std::str::from_utf8(&history).map_err(|e|e.to_string())?)?;
         let mut result=Vec::<u8>::new();
         let seed_used=if deterministic{None}else{seed};
         let mut rng=seed.unwrap_or_else(||SystemTime::now().duration_since(UNIX_EPOCH)
             .map(|v|v.as_nanos() as u64).unwrap_or(41)).max(1);
         let mut termination="length-limit";
         for _ in 0..max_chars{
-            let p=s.brain.predict_window(&history,window)?;
+            let p=s.brain.predict_with_memory(&history,window,&memory)?;
             let token=if deterministic{greedy_sample(&p)}else{sampled(&p,temperature,random(&mut rng))};
             if token==b'\n'{termination="learned-end";break;}
             history.push(token);
             result.push(token);
         }
-        let report=context_report(window,prompt_bytes,result.len(),termination,
+        let response=String::from_utf8(result).map_err(|e|e.to_string())?;
+        let full_token_count=s.brain.token_count(
+            std::str::from_utf8(&history).map_err(|e|e.to_string())?)?;
+        let mut report=context_report(window,prompt_bytes,response.len(),termination,
             deterministic,temperature,seed_used);
+        let dropped=full_token_count.saturating_sub(window);
+        report.prompt_tokens=prompt_tokens;
+        report.prompt_tokens_retained=prompt_tokens.saturating_sub(dropped);
+        report.active_tokens=full_token_count.min(window);
+        report.memory_turns=memory.len();
+        let next=ConversationTurn{user:message,assistant:response.clone()};
+        let mut future=s.history.clone();
+        future.push(next);
+        if future.len()>HISTORY_LIMIT{future.remove(0);}
+        let neural_trace=trace(&s.brain,&history,window,&memory)?;
+        save_conversation(&app,&future)?;
+        s.history=future;
         Ok(HybridReply{
-            response:String::from_utf8(result).map_err(|e|e.to_string())?,
-            trace:trace(&s.brain,&history,window)?,status:status(&state,&s),
+            response,trace:neural_trace,status:status(&state,&s),
             context_report:report,
         })
     }).await.map_err(|e|e.to_string())?
@@ -296,6 +367,7 @@ pub fn hybrid_train(
     let state=state.inner().clone();
     let ready=(||->Result<(),String>{
         let mut s=lock(&state)?;
+        s.brain.learn_token_units(&plan.training_text);
         s.epoch=0;s.epochs=lesson.epochs;s.completed=0;
         s.total=plan.train.len()*lesson.epochs as usize;
         s.heldout_loss=None;s.heldout_accuracy=None;s.train_loss=None;s.error=None;
@@ -328,6 +400,17 @@ pub fn hybrid_train(
 }
 /// Curriculum, validation and optimizer scheduling ONLY. The hybrid brain
 /// still computes all cognition, predictions and shared gradients itself.
+fn evaluate_memory(brain:&HybridBrain,valid:&[Example],memory:&[Vec<String>])->Result<(f32,f32),String>{
+    if valid.is_empty()||valid.len()!=memory.len(){return Err("Misaligned memory validation".into());}
+    let mut loss=0.0f64;let mut correct=0usize;
+    for ((history,target),prior) in valid.iter().zip(memory){
+        let p=brain.predict_with_memory(history,256,prior)?;
+        loss-=(p[*target as usize].max(1e-30) as f64).ln();
+        let top=p.iter().enumerate().max_by(|a,b|a.1.total_cmp(b.1)).unwrap().0;
+        if top==*target as usize{correct+=1;}
+    }
+    Ok(((loss/valid.len() as f64) as f32,correct as f32/valid.len() as f32))
+}
 fn train_inner(
     app:&AppHandle,state:&HybridState,lessons:&PreparedLessons,
     epochs:u32,adaptive_learning_rate:bool,early_stopping:bool,
@@ -338,7 +421,9 @@ fn train_inner(
     let started=Instant::now();
     let (mut best_brain,mut best_loss,mut best_accuracy,initially_trained)={
         let mut s=lock(state)?;
-        let (loss,accuracy)=s.brain.evaluate(valid)?;
+        let (loss,accuracy)=if lessons.mode=="conversation"{
+            evaluate_memory(&s.brain,valid,&lessons.memory_validation)?
+        }else{s.brain.evaluate(valid)?};
         if !loss.is_finite(){return Err("Non-finite baseline validation loss".into());}
         s.heldout_loss=Some(loss);s.heldout_accuracy=Some(accuracy);
         s.best_heldout_loss=Some(loss);
@@ -369,7 +454,11 @@ fn train_inner(
             let batch:Vec<Example>=ids.iter().map(|&i|train[i].clone()).collect();
             let (loss,step)={
                 let mut s=lock(state)?;
-                let loss=s.brain.train_batch(&batch,learning_rate)?;
+                let loss=if lessons.mode=="conversation"{
+                    let extended=ids.iter().map(|&i|(train[i].0.clone(),train[i].1,
+                        lessons.memory_train[i].clone())).collect::<Vec<_>>();
+                    s.brain.train_memory_batch(&extended,learning_rate)?
+                }else{s.brain.train_batch(&batch,learning_rate)?};
                 if !loss.is_finite(){return Err("Training loss is non-finite".into());}
                 s.trained=true;s.completed=completed+batch.len();s.train_loss=Some(loss);
                 s.tokens_per_second=(s.completed as f64/started.elapsed().as_secs_f64().max(0.001)) as f32;
@@ -391,7 +480,9 @@ fn train_inner(
         let (validation_loss,validation_accuracy,improved)={
             let mut s=lock(state)?;
             s.stage="Evaluating held-out lessons".into();
-            let (loss,accuracy)=s.brain.evaluate(valid)?;
+            let (loss,accuracy)=if lessons.mode=="conversation"{
+                evaluate_memory(&s.brain,valid,&lessons.memory_validation)?
+            }else{s.brain.evaluate(valid)?};
             if !loss.is_finite(){return Err("Non-finite validation loss".into());}
             let improved=loss + MIN_IMPROVEMENT < best_loss;
             if improved{
@@ -456,13 +547,13 @@ pub fn hybrid_reset(app:AppHandle,state:State<'_,HybridState>)->Result<HybridSta
         heldout_loss:None,heldout_accuracy:None,train_loss:None,error:None,
         best_heldout_loss:None,best_epoch:0,learning_rate:DEFAULT_LEARNING_RATE,
         train_lessons:0,validation_lessons:0,tokens_per_second:0.0,
-        stage:"Idle".into(),early_stopped:false
+        stage:"Idle".into(),early_stopped:false,history:s.history.clone()
     };
     let file=path(&app)?;
     if file.exists(){fs::remove_file(&file).map_err(|e|e.to_string())?;}
     // Preserve the old checkpoint, but prevent reset weights from
     // automatically re-importing them on subsequent launches.
-    fs::write(file.with_extension("no-import"),b"explicit reset; do not auto-import v0.3") 
+    fs::write(file.with_extension("no-import"),b"explicit reset; do not auto-import older weights") 
         .map_err(|e|e.to_string())?;
     Ok(status(&state,&s))
 }
