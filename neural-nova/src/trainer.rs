@@ -16,6 +16,9 @@ pub struct PreparedLessons{
     pub train_lessons:usize,
     pub validation_lessons:usize,
     pub mode:String,
+    pub training_text:String,
+    pub memory_train:Vec<Vec<String>>,
+    pub memory_validation:Vec<Vec<String>>,
 }
 
 /// Canonicalize prompt *only to avoid train/validation contamination*.
@@ -44,6 +47,55 @@ pub fn dialogue_examples(pairs:&[DialoguePair])->Result<Vec<Example>,String>{
 }
 fn corpus_examples(corpus:&[u8],indices:Range<usize>,lower_bound:usize)->Vec<Example>{
     indices.map(|i|(corpus[i.saturating_sub(CONTEXT).max(lower_bound)..i].to_vec(),corpus[i])).collect()
+}
+fn conversation_sessions(text:&str)->Result<Vec<Vec<DialoguePair>>,String>{
+    let mut sessions=Vec::new();
+    let mut session=Vec::new();
+    let mut pending:Option<String>=None;
+    for (line_no,line) in text.lines().enumerate(){
+        let line=line.trim_end_matches('\r').trim();
+        if line.is_empty() || line=="---" {
+            if pending.is_some(){return Err(format!("Missing N: answer before line {}",line_no+1));}
+            if !session.is_empty(){
+                if session.len()<2{return Err("Each conversation lesson needs at least two complete turns".into());}
+                sessions.push(std::mem::take(&mut session));
+            }
+            continue;
+        }
+        if let Some(value)=line.strip_prefix("U: "){
+            if pending.is_some(){return Err(format!("Missing N: response before line {}",line_no+1));}
+            pending=Some(value.to_string());
+        }else if let Some(value)=line.strip_prefix("N: "){
+            let user=pending.take().ok_or_else(||format!("N: without U: on line {}",line_no+1))?;
+            let pair=DialoguePair{user,assistant:value.to_string()};
+            crate::dialogue::validate_pair(&pair)?;
+            session.push(pair);
+        }else{return Err(format!("Expected U: or N: on line {}",line_no+1));}
+    }
+    if pending.is_some(){return Err("Last U: has no N: reply".into());}
+    if !session.is_empty(){
+        if session.len()<2{return Err("Each conversation lesson needs at least two complete turns".into());}
+        sessions.push(session);
+    }
+    if sessions.len()<5{return Err("Use at least five independent multi-turn sessions for held-out evaluation".into());}
+    Ok(sessions)
+}
+fn memory_samples(sessions:&[Vec<DialoguePair>])->Result<(Vec<Example>,Vec<Vec<String>>),String>{
+    let mut data=Vec::new();let mut histories=Vec::new();
+    for session in sessions{
+        let mut prior=Vec::<String>::new();
+        for turn in session{
+            let mut history=dialogue_prefix(&turn.user)?;
+            for target in turn.assistant.bytes().chain(std::iter::once(b'\n')){
+                data.push((history[history.len().saturating_sub(CONTEXT)..].to_vec(),target));
+                histories.push(prior.iter().rev().take(12).rev().cloned().collect());
+                history.push(target);
+            }
+            prior.push(format!("U: {}\nN: {}",turn.user,turn.assistant));
+            if prior.len()>12{prior.remove(0);}
+        }
+    }
+    Ok((data,histories))
 }
 pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
     if !text.is_ascii(){return Err("Current tokenizer supports ASCII only".into());}
@@ -74,7 +126,10 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
             if train.len()>MAX_SAMPLES{
                 return Err(format!("Too many dialogue reply characters for one CPU run (max {MAX_SAMPLES} training tokens). Split the lesson set into sessions."));
             }
-            Ok(PreparedLessons{train,validation,train_lessons:train_pairs.len(),validation_lessons:valid_pairs.len(),mode:mode.into()})
+            let training_text=train_pairs.iter()
+                .map(|p|format!("{} {}\n",p.user,p.assistant)).collect::<String>();
+            Ok(PreparedLessons{train,validation,train_lessons:train_pairs.len(),validation_lessons:valid_pairs.len(),
+                mode:mode.into(),training_text,memory_train:Vec::new(),memory_validation:Vec::new()})
         },
         "text"=>{
             let corpus=text.as_bytes();
@@ -87,9 +142,26 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
             // include any bytes from the training portion of this corpus.
             let validation=corpus_examples(corpus,(split+1)..corpus.len(),split);
             if validation.is_empty(){return Err("No held-out text tokens".into());}
-            Ok(PreparedLessons{train,validation,train_lessons:1,validation_lessons:1,mode:mode.into()})
+            Ok(PreparedLessons{train,validation,train_lessons:1,validation_lessons:1,
+                mode:mode.into(),training_text:text[..split].to_string(),
+                memory_train:Vec::new(),memory_validation:Vec::new()})
         },
-        _=>Err("Select dialogue or text lessons".into())
+        "conversation"=>{
+            let mut sessions=conversation_sessions(text)?;
+            // Whole conversations, not individual turns, are the validation unit.
+            sessions.sort_by_key(|s|stable_hash(&s.iter().map(|p|p.user.as_str()).collect::<String>()));
+            let n=(sessions.len()/5).max(1);
+            let held=sessions.split_off(sessions.len()-n);
+            let training_text=sessions.iter().flat_map(|session|session.iter())
+                .map(|p|format!("{} {}\n",p.user,p.assistant)).collect::<String>();
+            let (train,memory_train)=memory_samples(&sessions)?;
+            let (validation,memory_validation)=memory_samples(&held)?;
+            if train.len()>MAX_SAMPLES{return Err("Too many conversation training characters".into());}
+            Ok(PreparedLessons{train,validation,
+                train_lessons:sessions.len(),validation_lessons:held.len(),mode:mode.into(),
+                training_text,memory_train,memory_validation})
+        },
+        _=>Err("Select dialogue, text, or conversation lessons".into())
     }
 }
 /// Training schedule; does not choose any response or change neural inference.
@@ -140,6 +212,19 @@ pub fn training_order(samples:&[Example],epoch:u32,mode:&str)->Vec<usize>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn conversation_memory_targets_are_aligned_and_split_by_session(){
+        let mut text=String::new();
+        for i in 0..6{
+            text.push_str(&format!("U: hello {i}\nN: Hi.\nU: What did I say?\nN: You said hello {i}.\n\n"));
+        }
+        let p=prepare("conversation",&text).unwrap();
+        assert_eq!(p.memory_train.len(),p.train.len());
+        assert_eq!(p.memory_validation.len(),p.validation.len());
+        assert!(p.memory_train.iter().any(|turns|!turns.is_empty()));
+        assert!(p.memory_validation.iter().any(|turns|!turns.is_empty()));
+        assert_eq!(p.train_lessons+p.validation_lessons,6);
+    }
     #[test]
     fn early_stop_is_independent_of_adaptive_rate(){
         let mut state=ScheduleState::new(0.001,ScheduleConfig{adaptive_learning_rate:false,early_stopping:true,patience:3});
