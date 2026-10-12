@@ -36,7 +36,7 @@
         <div class="card">
           <div class="field-row">
             <div class="wide-field"><label for="lessonMode">Lesson type</label><select id="lessonMode"><option value="dialogue">Dialogue / replies</option><option value="text">Text / language patterns</option></select></div>
-            <div class="small-field"><label for="trainingEpochs">Epochs</label><input id="trainingEpochs" type="number" min="1" max="20" value="3"></div>
+            <div class="small-field"><label for="trainingEpochs">Max epochs</label><input id="trainingEpochs" type="number" min="1" max="60" value="12"></div>
           </div>
           <div class="section-line"><label for="lessonData">Training data</label><span id="lessonCount" class="subtle"></span></div>
           <textarea id="lessonData" spellcheck="false" rows="9" aria-describedby="lessonHint"></textarea>
@@ -50,25 +50,31 @@
             <summary>＋ Add a question and ideal response</summary>
             <div class="correction-fields">
               <div><label for="teacherQuestion">Question</label><input id="teacherQuestion" maxlength="180" placeholder="What is your name?"></div>
-              <div><label for="teacherAnswer">Ideal response</label><input id="teacherAnswer" maxlength="160" placeholder="My name is Nova."></div>
+              <div><label for="teacherAnswer">Ideal response</label><input id="teacherAnswer" maxlength="384" placeholder="My name is Nova."></div>
             </div>
             <button type="button" id="addLesson" class="secondary">Add to training data</button>
           </details>
         </div>
         <div class="card training-card">
           <div class="section-line"><h3>Training</h3><span id="checkpointText" class="subtle">Fresh weights</span></div>
-          <p class="muted">One generated output. The association network passes learned signals through a trainable bridge into the Transformer. Both pathways and the bridge are updated together.</p>
+          <p class="muted">The teacher optimizes one shared loss for both pathways. Nova still generates her own responses — no scripted language corrections.</p>
+          <div class="schedule-settings">
+            <label class="checkbox-line" for="adaptiveTraining"><input id="adaptiveTraining" type="checkbox" checked><span>Adaptive learning rate and early stopping</span></label>
+            <div><label for="trainingRate">Initial learning rate</label><select id="trainingRate"><option value="0.001">Gentle · 0.001</option><option value="0.003" selected>Balanced · 0.003</option><option value="0.005">Faster · 0.005</option></select></div>
+          </div>
           <div class="row wrap actions"><button type="button" class="primary" id="startTraining">▶ Start training</button><button type="button" id="stopTraining" disabled>Stop</button></div>
           <div class="progress-head"><span id="trainingProgress">No active training</span><strong id="trainingPercent">0%</strong></div>
+          <p class="trainer-stage" id="trainingStage">Waiting for lessons.</p>
           <div class="progress-track"><div id="trainingFill"></div></div>
           <div class="metric-grid">
             <div><span>Held-out loss</span><strong id="heldoutLoss">—</strong></div>
             <div><span>Held-out accuracy</span><strong id="heldoutAccuracy">—</strong></div>
           </div>
+          <div class="trainer-details"><span id="lessonSplit">Validation split: —</span><span id="trainingSpeed">Throughput: —</span><span id="bestEpoch">Best epoch: —</span></div>
           <details class="teacher-extra">
             <summary>Epoch history and advanced controls</summary>
             <pre id="epochHistory" class="epoch-history">No completed epochs yet.</pre>
-            <p class="muted">Validation is on withheld examples, not proof of generalization. A new hybrid checkpoint is saved after each epoch; earlier independent checkpoints remain untouched.</p>
+            <p class="muted">Validation uses held-out question groups; the trainer keeps the best joint checkpoint and may stop if validation stalls. Earlier independent checkpoints remain untouched. Validation is not proof of understanding.</p>
             <button type="button" id="resetBrain" class="danger">Reset unified brain</button>
           </details>
         </div>
