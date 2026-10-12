@@ -1,6 +1,24 @@
-# Neural Nova v0.4.0 — one jointly trainable hybrid brain
+# Neural Nova v0.5.0 — one jointly trainable hybrid brain
 
 **Experimental branch only:** `experimental/neural-nova`. Original Nova on `main` is untouched.
+
+## v0.5.0 — Learned word units and multi-turn neural memory
+
+This experimental upgrade keeps Neural Nova as **ONE trainable brain** (Transformer + dense network + shared-loss bridge). There is no second chatbot, canned-answer search, arbitrary response selection, or hard-coded semantic lookup.
+
+**Input tokenizer:** `neural-nova/src/tokenizer.rs` provides stable, lossless word-unit tokens with ASCII character fallback for unseen words. Word units are learned from the training split only; words repeated at least twice (3–24 ASCII characters) may enter a 256-slot vocabulary. Token embeddings are part of the Transformer weights and are trained by the existing neural loss. Word-unit IDs never reorder. New words must be trained: they do not arrive with preloaded meaning. **Replies are still decoded/generated character by character**, so this is an input-side tokenizer improvement, not yet a full generative word/subword head. Only ASCII is supported.
+
+**Neural multi-turn memory:** Separate from the 128/256-token attention window, Nova stores the last 64 conversation turns for display and persistence; the last **12 completed turns** are fed to a bounded *neural episodic memory* pathway, one compressed 32-dimensional vector per turn. Learned word/character embeddings are pooled and passed through a trainable tanh write matrix; the bounded memory slots are averaged and projected into the Transformer's hidden state using a trainable read matrix. Shared-loss conversation training backpropagates through both memory matrices and past-turn input embeddings, as well as the existing dense pathway and Transformer. Saved turns are *data*, not scripted answers. The teacher does not decide which answer Nova generates. This is an experimental compressed latent memory **not** a proven semantic memory or learned selective-retrieval system; older turns beyond 12 no longer influence neural generation.
+
+**Multi-turn lessons:** Teach → "Multi-turn conversations". Use complete alternated `U: ...` and `N: ...` lines, with blank lines/`---` separating at least five independent sessions of at least two turns each. Validation withholds **whole sessions**. A supervised next-character loss on each Nova reply trains the neural writer/reader only when prior turns exist. Existing text and single-turn dialogue modes remain available. The trainer still only teaches; Nova generates from its own combined weights.
+
+**Persistent chat:** `neural-nova-conversation-v0.5.json` (separate from weights) stores up to 64 completed turns; after app restart, the saved chat is restored. "New conversation" clears conversation records and memory but **does not reset neural weights**. Saving uses a temporary file, sync and backup restoration on rename failures. The 12 most recent turns are passed through trained neural memory embeddings, **not appended to a growing character buffer**.
+
+**Checkpoint migration:** New separate checkpoint `neural-nova-hybrid-0.5.nhyb` stores the expanded Transformer weights (word embeddings and trainable memory matrices), dense weights, both Adam states and stable vocabulary mapping in a `WORDUNIT` trailer. On first launch existing `neural-nova-hybrid-0.4.nhyb` or `neural-nova-hybrid-0.3.nhyb` is migrated **without overwriting the older file**. New word and memory parameters are randomly initialized and need training. Original `main` remains untouched. Reset opt-out marker prevents reimporting prior weights.
+
+**Diagnostics:** The dual-hemisphere visualizer displays actual attention token labels (including learned words), activations and shared bridge. Chat reports original prompt token retention and number of past turns used. The 128 vs 256 comparison uses `commit:false` so neither run modifies conversation history, ensuring comparable memory input. Context still offers 128 or 256 *tokens*, but only tokens learned in the vocabulary are compressed; unseen words fall back to ASCII characters. The dense network retains its 64-character encoder.
+
+**Verification needed:** Code was committed on `experimental/neural-nova`; frontend syntax/API wiring can be checked statically. Native Rust build and on-device Windows/Android training **not yet verified**; do not claim otherwise. Training memory efficacy should be evaluated on unseen multi-turn sessions, not just whether the chat history survives restart.
 
 ## v0.4.0 — Context and generation diagnostics
 
