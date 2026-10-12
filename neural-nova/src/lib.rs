@@ -395,6 +395,10 @@ impl Gradients {
             }
         }
     }
+    pub(crate) fn global_norm(&self)->f32{
+        (self.layers.iter().flat_map(|l|l.weights.iter().chain(l.biases.iter()))
+            .map(|&v|(v as f64)*(v as f64)).sum::<f64>()).sqrt() as f32
+    }
     pub(crate) fn clip_global_norm(&mut self, max_norm: f32) {
         let sq: f64 = self.layers.iter()
             .flat_map(|l| l.weights.iter().chain(l.biases.iter()))
