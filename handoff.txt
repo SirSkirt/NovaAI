@@ -1,3 +1,76 @@
+NEURAL NOVA REGRESSION INVESTIGATION — 2026-10-12
+=================================================
+Scope: diagnostic-first investigation prompted by user's 399-step greetings checkpoint losing
+"hello" -> "Hello!" after Lesson 02 text / Lesson 03 descriptions. No replacement brain, no
+hard-coded response overrides, and NO change to checkpoint selection or tokenizer behavior.
+
+SOURCE-CONFIRMED / EVIDENCE:
+1. Train controller expands tokenizer BEFORE computing baseline held-out loss:
+   app/src-tauri/src/hybrid_lab.rs -> hybrid_train -> learn_token_units(&plan.training_text).
+   Word-unit insertion can change segmentation/positional layout without a weight update.
+   Native no-mutation A/B and neural-nova regression test added. A controlled model's
+   probability distribution changes without optimizer updates; user's exact 399-step
+   checkpoint has NOT been provided or reproduced yet.
+2. Checkpoint choice uses only current lesson's held-out teacher-forced next-char loss.
+   No previous-skill retention or complete-reply scoring in best-epoch policy.
+   Early stopping cannot guarantee past skills or greedy reply quality.
+3. Dialogue and text both use teacher-forced next-character examples; they optimize
+   different distributions, so loss and complete autoregressive generation can diverge.
+4. Memory-query backprop occurred after dense bridge backprop; moved the calculation
+   after memory-query derivatives so both networks receive the correct shared gradient
+   when trained episodic memory is used. This is a *different* confirmed issue; do NOT
+   claim it caused the user's original memory-free dialogue regressions.
+5. Gradient clipping does exist (norm 1) for both pathways. V0.6's existing Gentle
+   fix synchronizes dense Adam LR with Transformer; do not regress that fix.
+
+ADDED NONINVASIVE EXPERIMENTS — Teach -> advanced:
+- "Tokenizer-only A/B investigation": stage A original checkpoint, B cloned brain
+  whose vocabulary grows from *new lesson training split only*, no neural updates.
+  Shows token IDs, first-next-character probabilities, greedy responses, vocab and
+  shared optimizer steps. Neither experiment touches live brain/checkpoint.
+- Save A/B in Tauri webview localStorage, then run "Compare trained checkpoint C"
+  after normal lesson training with identical text, prompts, mode and 128/256 window.
+  C is current checkpoint, allowing separation of representation shift vs new gradients.
+- Bridge diagnostic measures hidden norm before bridge, dense-feature norm,
+  projected-bridge norm, combined norm and distribution change when bridge signal
+  is ablated temporarily for *evaluation only*. No weights are edited.
+- "Earlier-skill benchmark" optional selector of previously saved Tests & Corrections
+  definitions. Up to 4 questions are given independent complete greedy generation
+  after each epoch (and at restored best checkpoint). Benchmark answer keys are
+  evaluation-only, never passed into inference or training. Reports are independent
+  from current lesson's held-out metric and DO NOT alter checkpoint selection.
+  Baseline for this score occurs *after* vocabulary growth; tokenizer-only A/B handles
+  the pre-growth comparison.
+- Added per-batch gradient norms before clipping for Transformer, dense pathway and
+  bridge, aggregated per epoch with clipping fractions and learning rate.
+- Numerical finite-difference tests for memory, bridge, dense-input gradients;
+  check GitHub CI results for latest commit before claiming passing.
+
+RECOMMENDED USER TEST PLAN:
+1. Back up the 399-step WORKING checkpoint externally before further lessons.
+2. Load it; select the upcoming Lesson 03 or Text Lesson 02 as training data.
+   Run tokenizer-only A/B and SAVE baseline, with prompts hello / Hi /
+   good morning / hey there, 128-token greedy, no chat memory.
+3. If B differs from A (especially same input after zero steps), this supports
+   tokenizer-induced representation shift. Note that same ID count does not
+   guarantee same input encoding.
+4. Train normally, then compare C to saved A/B; examine step counts, token IDs,
+   full greedy reply, original score, new lesson held-out loss and optional
+   retained-skill benchmark. Log gradient norms and clipping fractions.
+5. Don't modify tokenizer, bridge scaling, or curriculum simultaneously.
+   Once cause is measured, consider a *separate* controlled intervention:
+   initialize new words from their constituent trained character embeddings,
+   delay word-token activation until pretrained, or test rehearsal from a cloned
+   initial checkpoint. These are future hypotheses, NOT implemented changes.
+6. Previous checkpoints should be protected outside the active mutable checkpoint
+   path. The active trainer still overwrites its own best-checkpoint file.
+7. The user's actual Lesson 02/03 TXT content and original 399-step checkpoint
+   were not available in this GitHub investigation; numerical reproductions
+   are controlled models, not evidence of exact real-user rollback behavior.
+
+
+--- PRIOR HANDOFF ---
+
 NEURAL NOVA V0.6.0 HANDOFF — 2026-10-12
 =========================================
 THE USER'S TESTING SPECIFICATION IS AUTHORITATIVE: the trainer teaches,
