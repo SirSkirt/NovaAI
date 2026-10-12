@@ -1,4 +1,83 @@
 NEURAL NOVA — DEVELOPMENT HANDOFF
+Version: 0.3.0 (experimental unified-brain update)
+Updated: 2026-10-12
+Repository: https://github.com/SirSkirt/NovaAI
+Branch: experimental/neural-nova
+
+LATEST OWNER REQUIREMENT — AUTHORITATIVE
+========================================
+Neural Nova is ONE trainable brain with two cooperating hemispheric pathways,
+not two independently answering models and not a learned or hard-coded
+response-picker. BOTH the Transformer and the dense pathway must receive
+learning gradients from the SAME training objective. The user specifically
+asked for a compact UI with precisely three tabs: Teach, Chat and Visualize.
+Keep the debugger available across all tabs.
+
+CURRENT v0.3.0 IMPLEMENTATION (SUPERSEDES HISTORICAL v0.2.0 NOTES BELOW)
+========================================================================
+Core joint model: neural-nova/src/hybrid.rs
+Transformer with trainable bridge/backprop: neural-nova/src/transformer.rs
+Dense with pre-softmax logits and upstream gradient: neural-nova/src/lib.rs
+Joint Tauri API: app/src-tauri/src/hybrid_lab.rs
+Tauri registration: app/src-tauri/src/lib.rs
+Three-tab UI: app/dist/index.html, app/dist/styles.css,
+              app/dist/js/nova-ui.js
+
+Data flow:
+    input → 64-character dense feature encoding → dense network logits (128)
+          → TRAINABLE 32x128 projection ──┐
+    input → 128-character Transformer ────┼→ fused hidden state
+                                          └→ ONE softmax → ONE generated reply
+    One cross-entropy loss is backpropagated through BOTH pathways and the
+    32x128 bridge. No separate dense vs Transformer generated messages, no
+    voting, no fixed neural association signals, no scripted response fallback.
+
+The dense network retains its existing 1024 → 512 → 512 → 128 topology,
+but participates directly in shared-loss training. The Transformer
+is still a tiny one-block, one-head ASCII decoder. The bridge is a true
+trainable parameter matrix; gradients flow from the shared loss into
+both sets of weights. Shared training remains custom Rust/CPU/Adam.
+
+Separate joint checkpoint: neural-nova-hybrid-0.3.nhyb.
+It stores Transformer weights + optimizer, dense weights + optimizer, and
+the bridge weights (included in Transformer parameter vector). Older
+standalone checkpoints are not overwritten or auto-imported. The
+standalone v0.2 Transformer loader supports older parameter counts.
+
+UI:
+- Teach: editable corpus, dialogue pairs, file import, manual correction,
+  epochs, unified training controls, loss/accuracy and progress.
+- Chat: ONE Nova reply from the fused network. Correction action moves a
+  question to Teach for supervised training, never inserts a canned answer.
+- Visualize: stylized left/right brain, genuine last-token attention,
+  deterministic subsamples of real dense neuron activations, and actual
+  projected bridge signal magnitudes. No invented firing data.
+- Debugger: persistent on all tabs, collapsible, auto-opens on errors.
+
+NOTE ON TESTS: CI runs are initiated automatically on experimental-branch
+pushes via .github/workflows/neural-nova-ci.yml and
+.github/workflows/neural-nova-app.yml. As of this handoff edit, their
+successful completion and on-device runtime behavior have NOT been verified
+from this session. Do not claim success without checking workflow jobs.
+Critical next verification:
+  cargo test --all-targets                  (neural-nova/)
+  cargo test --lib                          (app/src-tauri/)
+  node --check app/dist/js/nova-ui.js
+  Windows installer / Android APK workflows
+  Real-device: training, pause/restart, checkpoint restore, generated
+  text, error debugger, attention/dense/bridge telemetry.
+
+Current honest limitations: ASCII only; Transformer context 128 characters,
+dense window 64 characters; single-turn conversation; naive CPU training,
+tiny model, and no verified reasoning or language generalization.
+Keep experimental/neural-nova isolated. Original Nova on main stays
+untouched. Retained older standalone APIs are developer compatibility
+code, NOT the user-facing dual-brain design.
+
+================================================================================
+HISTORICAL HANDOFF (v0.2.0; superseded above where inconsistent)
+================================================================================
+NEURAL NOVA — DEVELOPMENT HANDOFF
 Version: 0.2.0 (experimental)
 Updated: 2026-10-12
 Repository: https://github.com/SirSkirt/NovaAI
