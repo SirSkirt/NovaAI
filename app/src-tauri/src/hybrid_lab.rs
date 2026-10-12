@@ -834,7 +834,7 @@ pub fn hybrid_train(
             if let Ok(mut s)=lock(&state){s.error=Some(e.clone());s.stage="Training failed".into();}
             eprintln!("Neural Nova hybrid trainer error: {e}");
         }
-        state.inner.training.store(false,Ordering::Release);
+        // Keep training exclusive until teacher archive has been saved.
         match result{
             Ok((cancelled,early_stopped,best_epoch))=>{
                 if best_epoch>0 && !cancelled {
@@ -867,6 +867,7 @@ pub fn hybrid_train(
                 let _=app.emit("hybrid-error",error);
             }
         }
+        state.inner.training.store(false,Ordering::Release);
     });
     Ok(())
 }
@@ -1225,6 +1226,8 @@ pub fn hybrid_reset(app:AppHandle,state:State<'_,HybridState>)->Result<HybridSta
     };
     let file=path(&app)?;
     if file.exists(){fs::remove_file(&file).map_err(|e|e.to_string())?;}
+    let teacher_bank=rehearsal_path(&app)?;
+    if teacher_bank.exists(){fs::remove_file(&teacher_bank).map_err(|e|e.to_string())?;}
     // Preserve the old checkpoint, but prevent reset weights from
     // automatically re-importing them on subsequent launches.
     fs::write(file.with_extension("no-import"),b"explicit reset; do not auto-import older weights") 
