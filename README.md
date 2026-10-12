@@ -1,3 +1,21 @@
+## v0.7.0 — Trainer regression fix: rehearsal + protected checkpoint selection (2026-10-12)
+
+**Why:** The user's 399-step to 735-step diagnostic JSONL showed later Dialogue training replaced the greeting `hello → Hello!` with a dominant `Yes, a...` pattern. Tokenizer growth alone did not change greeting predictions; gradient batches did, with no episodic memory involved. Training loss fell, but older skills declined. The old trainer picked the best epoch by current-lesson held-out next-character loss only.
+
+**Design — ONE neural brain, no hardcoded cognition:**
+- Separate Rust teacher archive `app/src-tauri/src/rehearsal.rs`, stored in app-data `neural-nova-rehearsal-v0.7.json`. Max **3** earlier curricula. Each is saved in original ASCII source form and re-prepared deterministically; **only its training split** can ever be replayed. Its held-out split remains evaluation-only and is never added to gradient batches.
+- Archive is linked to the **current joint weight fingerprint**, so resetting Nova or externally loading an unrelated checkpoint will not silently replay another model's lessons. Accepted lessons are archived after their best checkpoint is saved. If no acceptable epoch is found, old checkpoint is restored and no lesson is promoted.
+- Training now interleaves **one real previous-lesson gradient batch after every three new batches**. Mixed prior Dialogue, Text, and Conversation sources each use the same joint HybridBrain training entry point appropriate to their memory mode; no path produces a separate answer, canned response, or teacher inference.
+- The trainer measures average **prior held-out token loss**, equal weight per archived lesson, max 256 deterministic validation examples per old lesson. Default guard accepts a new checkpoint only when (a) the new lesson's held-out loss improves, (b) prior held-out loss remains at most **baseline +0.10** nats, and (c) if selected, teacher Test & Corrections greedy answer accuracy is no lower than before. It selects the lowest new-lesson loss **among eligible epochs**. Guard can be disabled for controlled experiments; the loss tolerance has strict 0.05, moderate 0.10 and permissive 0.20 choices.
+- The previously-existing early-stopping and adaptive-rate toggles remain independent. Gentle 0.001 remains fixed with adaptive off. Retention guard rejects bad checkpoints but does not change neural sampling or cognition.
+- Pre-lesson snapshots and JSONL diagnostics continue. New events include `rehearsal_baseline`, `rehearsal_batch`, `train_epoch.priorHeldoutLoss`, `train_epoch.retentionGuardAccepted`, and a `training_selected_checkpoint` policy description.
+- Teach tab: compact expandable **Keep earlier lessons** section includes replay and retention toggles, threshold, archive status, and an explicit import for old lesson TXT (critical for the user's 399-step checkpoint trained before this version). Importing archives the teacher source only; it **does not train** Nova until the next run. Teacher grades and expected replies are never used at inference.
+- Reset wipes the teacher replay archive in addition to neural weights. The chatbot and visualizer remain unchanged. Archive is **not** shared with the independent original Nova on main.
+
+**Important caveats and test steps:** This is a teacher/trainer policy, not proof of general language comprehension. Older holdouts are sampled; rare behaviors outside them may still be forgotten. For a precise greeting guard, save greeting questions as a separate Test & Corrections teacher benchmark and select it for the next lesson. Protect a copy of the original 399-step checkpoint. Import its original prior dialogue lesson TXT into the archive, enable Replay and Protect, choose the saved benchmark, and repeat the same Lesson 03 with Gentle 0.001 and early stopping. Compare old/new heldout loss, teacher accuracy, accepted epochs, and JSONL. Avoid test corrections during evaluation.
+
+**Validation:** Check latest GitHub Actions Rust core tests AND both Windows/Android native builds for the final commit before calling the installers verified. Earlier cancelled runs do not count.
+
 # Neural Nova v0.5.0 — one jointly trainable hybrid brain
 
 **Experimental branch only:** `experimental/neural-nova`. Original Nova on `main` is untouched.
