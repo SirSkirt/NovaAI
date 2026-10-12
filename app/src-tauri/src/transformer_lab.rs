@@ -194,7 +194,7 @@ pub async fn transformer_chat(
 }
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
-pub(crate) struct Lesson{
+pub struct Lesson{
     pub(crate) mode:String,
     pub(crate) text:String,
     pub(crate) epochs:u32,
