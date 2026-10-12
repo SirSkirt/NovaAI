@@ -2,7 +2,7 @@
 //! no rule-based replies or string lookup are used at inference.
 use crate::{encode_ascii_context, Network};
 
-pub const MAX_DIALOGUE_PAIRS: usize = 96;
+pub const MAX_DIALOGUE_PAIRS: usize = 1024;
 pub const MAX_QUESTION_BYTES: usize = 180;
 pub const MAX_ANSWER_BYTES: usize = 128;
 
