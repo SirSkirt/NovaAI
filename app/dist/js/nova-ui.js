@@ -75,6 +75,9 @@ function setRunning(value){
   $("resetBrain").disabled=running||!initialized;
   $("sendMessage").disabled=running||!initialized||busy;
   $("inspectBrain").disabled=running||!initialized;
+  for(const id of ["adaptiveTraining","earlyStopping","trainingRate","trainingEpochs"]){
+    $(id).disabled=running;
+  }
   setState(running?"Nova is learning":initialized?"Nova ready":"Loading…",running?"running":"ok");
 }
 function status(s){
@@ -118,6 +121,40 @@ function countData(){
     ?input.split("\n").filter(line=>line.includes("\t")&&line.trim()).length+" lesson pairs"
     :new TextEncoder().encode(input).length+" bytes";
 }
+const TRAINER_SETTINGS_KEY="neural-nova-0.3.2-trainer-settings";
+function describeSchedule(){
+  const rate=$("trainingRate").value;
+  const adaptive=$("adaptiveTraining").checked;
+  const earlyStop=$("earlyStopping").checked;
+  const lr=adaptive?"Starts at "+rate+"; may only decrease if validation stalls.":"Stays fixed at "+rate+" for every epoch.";
+  const stop=earlyStop?" Early stopping independently watches validation loss (6 epochs without improvement).":
+    " Training runs up to the maximum epochs unless you press Stop.";
+  $("trainingScheduleHelp").textContent=lr+stop;
+}
+function saveSchedule(){
+  describeSchedule();
+  try{
+    localStorage.setItem(TRAINER_SETTINGS_KEY,JSON.stringify({
+      adaptiveLearningRate:$("adaptiveTraining").checked,
+      earlyStopping:$("earlyStopping").checked,
+      learningRate:$("trainingRate").value
+    }));
+  }catch(_){}
+}
+function loadSchedule(){
+  try{
+    const p=JSON.parse(localStorage.getItem(TRAINER_SETTINGS_KEY)||"null");
+    if(p && typeof p==="object"){
+      if(typeof p.adaptiveLearningRate==="boolean")$("adaptiveTraining").checked=p.adaptiveLearningRate;
+      if(typeof p.earlyStopping==="boolean")$("earlyStopping").checked=p.earlyStopping;
+      if(["0.001","0.003","0.005"].includes(p.learningRate))$("trainingRate").value=p.learningRate;
+    }
+  }catch(_){}
+  describeSchedule();
+}
+for(const id of ["adaptiveTraining","earlyStopping","trainingRate"]){
+  $(id).addEventListener("change",saveSchedule);
+}
 $("lessonMode").addEventListener("change",e=>{rememberDataset();modeChanged(e.target.value);});
 $("lessonData").addEventListener("input",()=>{rememberDataset();countData();});
 $("lessonFile").addEventListener("change",()=>safe(async()=>{
@@ -152,7 +189,8 @@ $("startTraining").addEventListener("click",()=>safe(async()=>{
   const epochs=Number($("trainingEpochs").value);
   const text=$("lessonData").value;
   const learningRate=Number($("trainingRate").value);
-  const adaptive=$("adaptiveTraining").checked;
+  const adaptiveLearningRate=$("adaptiveTraining").checked;
+  const earlyStopping=$("earlyStopping").checked;
   if(!Number.isInteger(epochs)||epochs<1||epochs>60)throw Error("Choose 1–60 epochs.");
   if(!text.trim())throw Error("Provide training data.");
   if(!/^[\x00-\x7f]*$/.test(text))throw Error("Training data contains characters outside ASCII.");
@@ -163,9 +201,11 @@ $("startTraining").addEventListener("click",()=>safe(async()=>{
   try{
     await invoke("hybrid_train",{
       lesson:{mode:activeMode,text,epochs},
-      options:{adaptive,learningRate,patience:6}
+      options:{adaptiveLearningRate,earlyStopping,learningRate,patience:6}
     });
-    report("INFO","Training","Joint training started: "+activeMode+" · max "+epochs+" epochs, "+(adaptive?"adaptive":"fixed")+" learning rate "+learningRate+".");
+    report("INFO","Training","Joint training started: "+activeMode+" · max "+epochs+
+      " epochs · "+(adaptiveLearningRate?"adaptive":"fixed")+" LR "+learningRate+
+      " · early stopping "+(earlyStopping?"on":"off")+".");
     await poll();
   }catch(e){setRunning(false);throw e;}
 },"Training"));
@@ -312,7 +352,7 @@ $("inspectBrain").addEventListener("click",()=>safe(async()=>{
 },"Brain inspection"));
 $("inspectMessage").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("inspectBrain").click();}});
 $("copyDiagnostics").addEventListener("click",()=>safe(async()=>{
-  const text="Neural Nova hybrid v0.3.1\n"+JSON.stringify(latestStatus)+"\n"+
+  const text="Neural Nova hybrid v0.3.2\n"+JSON.stringify(latestStatus)+"\n"+
     debugEntries.map(e=>"["+e.time+"] ["+e.level+"] ["+e.source+"] "+e.message).join("\n\n");
   await navigator.clipboard.writeText(text);
   report("INFO","Debugger","Copied diagnostic report.");
@@ -364,6 +404,7 @@ async function boot(){
   for(const mode of ["dialogue","text"]){
     try{const v=localStorage.getItem("nova-hybrid-"+mode);if(v!==null)datasets[mode]=v;}catch(_){}
   }
+  loadSchedule();
   modeChanged("dialogue");setRunning(false);
   if(!window.__TAURI__?.core?.invoke){setState("Installed app required","error");report("ERROR","Startup","Run the installed Windows or Android app for Rust neural learning.");return;}
   await listen();
