@@ -18,7 +18,7 @@ struct Layout {
     tok:Range<usize>, pos:Range<usize>,
     q:Range<usize>, k:Range<usize>, v:Range<usize>, o:Range<usize>,
     f1:Range<usize>, b1:Range<usize>, f2:Range<usize>, b2:Range<usize>,
-    output:Range<usize>, bout:Range<usize>, len:usize,
+    output:Range<usize>, bout:Range<usize>, bridge:Range<usize>, len:usize,
 }
 fn allocate(cursor:&mut usize,n:usize)->Range<usize> {
     let start=*cursor;*cursor+=n;start..*cursor
@@ -37,7 +37,8 @@ fn layout()->Layout {
     let b2=allocate(&mut n,D);
     let output=allocate(&mut n,VOCAB*D);
     let bout=allocate(&mut n,VOCAB);
-    Layout{tok,pos,q,k,v,o,f1,b1,f2,b2,output,bout,len:n}
+    let bridge=allocate(&mut n,D*VOCAB);
+    Layout{tok,pos,q,k,v,o,f1,b1,f2,b2,output,bout,bridge,len:n}
 }
 fn random(seed:&mut u64)->f32 {
     *seed^=*seed>>12;*seed^=*seed<<25;*seed^=*seed>>27;
@@ -98,7 +99,7 @@ impl Transformer {
         }
         for (r,input_size) in [
             (&l.q,D),(&l.k,D),(&l.v,D),(&l.o,D),
-            (&l.f1,D),(&l.f2,FF),(&l.output,D)
+            (&l.f1,D),(&l.f2,FF),(&l.output,D),(&l.bridge,VOCAB)
         ] {
             let radius=(2.0/input_size as f32).sqrt()*0.5;
             for w in &mut weights[r.clone()] {
@@ -111,7 +112,13 @@ impl Transformer {
     }
     pub fn parameter_count(&self)->usize { self.weights.len() }
     pub fn context_length(&self)->usize {CONTEXT}
-    fn forward(&self,context:&[u8])->Result<Cache,String> {
+    fn forward(&self,context:&[u8])->Result<Cache,String> {self.forward_with_dense(context,None)}
+    fn forward_with_dense(&self,context:&[u8],dense:Option<&[f32]>)->Result<Cache,String> {
+        if let Some(data)=dense {
+            if data.len()!=VOCAB || data.iter().any(|v|!v.is_finite()) {
+                return Err("Hybrid bridge expects 128 finite dense features".into());
+            }
+        }
         if context.is_empty() {return Err("Transformer needs at least one context byte".into());}
         let tokens=context[context.len().saturating_sub(CONTEXT)..].to_vec();
         if !tokens.is_ascii() {return Err("Experimental tokenizer supports ASCII only".into());}
@@ -141,6 +148,10 @@ impl Transformer {
         let ff=mv(&self.weights,&l.f2,D,FF,&act);
         let mut hidden=mid.clone();
         for j in 0..D {hidden[j]+=ff[j]+self.weights[l.b2.start+j];}
+        if let Some(features)=dense {
+            let projected=mv(&self.weights,&l.bridge,D,VOCAB,features);
+            for j in 0..D {hidden[j]+=projected[j];}
+        }
         let mut logits=mv(&self.weights,&l.output,VOCAB,D,&hidden);
         for j in 0..VOCAB {logits[j]+=self.weights[l.bout.start+j];}
         let probabilities=stable_softmax(&logits);
@@ -156,8 +167,12 @@ impl Transformer {
         }).collect())
     }
     fn gradient(&self,history:&[u8],target:u8)->Result<(f32,Vec<f32>),String> {
+        let (loss,grad,_)=self.gradient_with_dense(history,target,None)?;
+        Ok((loss,grad))
+    }
+    pub(crate) fn gradient_with_dense(&self,history:&[u8],target:u8,dense:Option<&[f32]>)->Result<(f32,Vec<f32>,Vec<f32>),String> {
         if target as usize>=VOCAB {return Err("Target character must be ASCII".into());}
-        let c=self.forward(history)?;
+        let c=self.forward_with_dense(history,dense)?;
         let l=layout();
         let mut grad=vec![0.0;l.len];
         let loss=-(c.probabilities[target as usize].max(1e-30)).ln();
@@ -165,6 +180,9 @@ impl Transformer {
         delta[target as usize]-=1.0;
         for (j,d) in delta.iter().enumerate() {grad[l.bout.start+j]+=*d;}
         let mut dh=back_mv(&self.weights,&l.output,VOCAB,D,&c.hidden,&delta,&mut grad);
+        let dense_gradient=if let Some(features)=dense {
+            back_mv(&self.weights,&l.bridge,D,VOCAB,features,&dh,&mut grad)
+        } else {vec![0.0;VOCAB]};
         let dact=back_mv(&self.weights,&l.f2,D,FF,&c.act,&dh,&mut grad);
         for j in 0..D {grad[l.b2.start+j]+=dh[j];}
         let mut dpre=dact;
@@ -206,7 +224,39 @@ impl Transformer {
                 grad[pi+j]+=dx[i][j];
             }
         }
-        Ok((loss,grad))
+        Ok((loss,grad,dense_gradient))
+    }
+    pub fn predict_hybrid(&self,context:&[u8],dense:&[f32])->Result<Vec<f32>,String> {
+        Ok(self.forward_with_dense(context,Some(dense))?.probabilities)
+    }
+    pub fn attention_hybrid(&self,context:&[u8],dense:&[f32])->Result<Vec<Attention>,String> {
+        let cache=self.forward_with_dense(context,Some(dense))?;
+        Ok(cache.tokens.iter().enumerate().map(|(i,&code)|Attention{
+            index:i,code,probability:cache.attention[i]
+        }).collect())
+    }
+    pub fn bridge_signal(&self,dense:&[f32])->Result<Vec<f32>,String> {
+        if dense.len()!=VOCAB {return Err("Expected 128 dense bridge features".into());}
+        Ok(mv(&self.weights,&layout().bridge,D,VOCAB,dense))
+    }
+    pub(crate) fn apply_gradients(&mut self,sum:&mut [f32],lr:f32)->Result<(),String> {
+        if sum.len()!=self.weights.len() {return Err("Transformer gradient length mismatch".into());}
+        if !lr.is_finite()||!(1e-6..=0.05).contains(&lr) {return Err("Invalid learning rate".into());}
+        let norm=(sum.iter().map(|g|(*g as f64).powi(2)).sum::<f64>()).sqrt();
+        let clip=if norm>1.0 {(1.0/norm) as f32}else{1.0};
+        self.step+=1;
+        let bias1=(1.0f64-0.9f64.powf(self.step as f64)) as f32;
+        let bias2=(1.0f64-0.999f64.powf(self.step as f64)) as f32;
+        for i in 0..self.weights.len() {
+            let g=sum[i]*clip;
+            self.momentum[i]=0.9*self.momentum[i]+0.1*g;
+            self.variance[i]=0.999*self.variance[i]+0.001*g*g;
+            let m=self.momentum[i]/bias1;
+            let v=self.variance[i]/bias2;
+            self.weights[i]-=lr*m/(v.sqrt()+1e-8);
+            if !self.weights[i].is_finite() {return Err("Non-finite weight during training".into());}
+        }
+        Ok(())
     }
     pub fn train_batch(&mut self,samples:&[(Vec<u8>,u8)],lr:f32)->Result<f32,String> {
         if samples.is_empty() {return Err("Cannot train on empty batch".into());}
@@ -222,20 +272,7 @@ impl Transformer {
         }
         let inv=1.0/samples.len() as f32;
         for g in &mut sum {*g*=inv;}
-        let norm=(sum.iter().map(|g|(*g as f64).powi(2)).sum::<f64>()).sqrt();
-        let clip=if norm>1.0 {(1.0/norm) as f32}else{1.0};
-        self.step+=1;
-        let bias1=(1.0f64-0.9f64.powf(self.step as f64)) as f32;
-        let bias2=(1.0f64-0.999f64.powf(self.step as f64)) as f32;
-        for i in 0..self.weights.len() {
-            let g=sum[i]*clip;
-            self.momentum[i]=0.9*self.momentum[i]+0.1*g;
-            self.variance[i]=0.999*self.variance[i]+0.001*g*g;
-            let m=self.momentum[i]/bias1;
-            let v=self.variance[i]/bias2;
-            self.weights[i]-=lr*m/(v.sqrt()+1e-8);
-            if !self.weights[i].is_finite() {return Err("Non-finite weight during training".into());}
-        }
+        self.apply_gradients(&mut sum,lr)?;
         Ok(loss*inv)
     }
     pub fn evaluate(&self,samples:&[(Vec<u8>,u8)])->Result<(f32,f32),String> {
