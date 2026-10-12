@@ -108,6 +108,19 @@ impl Network {
         self.layers.iter().map(|l| l.weights.len() + l.biases.len()).sum()
     }
 
+    /// Inspect real per-neuron activations. Includes the original input,
+    /// all hidden layers, and output probabilities (4 columns for v0.1).
+    pub fn activations(&self, input: &[f32]) -> Result<Vec<Vec<f32>>, String> {
+        self.forward(input).map(|(activations, _)| activations)
+    }
+
+    /// Connection weight between a pair of neurons in adjacent layers.
+    pub fn connection_weight(&self, transition: usize, from: usize, to: usize) -> Option<f32> {
+        let layer = self.layers.get(transition)?;
+        if from >= layer.inputs || to >= layer.outputs { return None; }
+        layer.weights.get(to * layer.inputs + from).copied()
+    }
+
     /// Every hidden layer uses ReLU; final output uses stable softmax.
     /// Returns probabilities whose sum is approximately 1.
     pub fn predict(&self, input: &[f32]) -> Result<Vec<f32>, String> {
