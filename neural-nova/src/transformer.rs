@@ -1,6 +1,6 @@
 //! Small causal, single-head Transformer decoder trained from scratch in Rust.
 //! No ML framework, no canned replies, no rule-based answering.
-//! Character vocabulary: 128 ASCII tokens. Attention context: last 128 bytes.
+//! Character vocabulary: 128 ASCII tokens. Configurable 128/256-character context.
 //! This single-block CPU reference implementation prioritizes correctness over speed.
 use std::fs::File;
 use std::io::{Read,Write};
@@ -8,7 +8,8 @@ use std::ops::Range;
 use std::path::Path;
 
 pub const VOCAB:usize=128;
-pub const CONTEXT:usize=128;
+pub const CONTEXT:usize=256;
+pub const ORIGINAL_CONTEXT:usize=128;
 pub const D:usize=32;
 pub const FF:usize=64;
 const MAGIC:&[u8;8]=b"NTRF0200";
@@ -23,10 +24,11 @@ struct Layout {
 fn allocate(cursor:&mut usize,n:usize)->Range<usize> {
     let start=*cursor;*cursor+=n;start..*cursor
 }
-fn layout()->Layout {
+fn layout()->Layout {layout_for(CONTEXT)}
+fn layout_for(window:usize)->Layout {
     let mut n=0;
     let tok=allocate(&mut n,VOCAB*D);
-    let pos=allocate(&mut n,CONTEXT*D);
+    let pos=allocate(&mut n,window*D);
     let q=allocate(&mut n,D*D);
     let k=allocate(&mut n,D*D);
     let v=allocate(&mut n,D*D);
@@ -114,13 +116,19 @@ impl Transformer {
     pub fn context_length(&self)->usize {CONTEXT}
     fn forward(&self,context:&[u8])->Result<Cache,String> {self.forward_with_dense(context,None)}
     fn forward_with_dense(&self,context:&[u8],dense:Option<&[f32]>)->Result<Cache,String> {
+        self.forward_with_dense_window(context,dense,CONTEXT)
+    }
+    fn forward_with_dense_window(&self,context:&[u8],dense:Option<&[f32]>,window:usize)->Result<Cache,String> {
+        if window!=ORIGINAL_CONTEXT && window!=CONTEXT {
+            return Err("Select a 128- or 256-character context window".into());
+        }
         if let Some(data)=dense {
             if data.len()!=VOCAB || data.iter().any(|v|!v.is_finite()) {
                 return Err("Hybrid bridge expects 128 finite dense features".into());
             }
         }
         if context.is_empty() {return Err("Transformer needs at least one context byte".into());}
-        let tokens=context[context.len().saturating_sub(CONTEXT)..].to_vec();
+        let tokens=context[context.len().saturating_sub(window)..].to_vec();
         if !tokens.is_ascii() {return Err("Experimental tokenizer supports ASCII only".into());}
         let l=layout();
         let count=tokens.len();
@@ -227,10 +235,16 @@ impl Transformer {
         Ok((loss,grad,dense_gradient))
     }
     pub fn predict_hybrid(&self,context:&[u8],dense:&[f32])->Result<Vec<f32>,String> {
-        Ok(self.forward_with_dense(context,Some(dense))?.probabilities)
+        self.predict_hybrid_window(context,dense,CONTEXT)
+    }
+    pub fn predict_hybrid_window(&self,context:&[u8],dense:&[f32],window:usize)->Result<Vec<f32>,String> {
+        Ok(self.forward_with_dense_window(context,Some(dense),window)?.probabilities)
     }
     pub fn attention_hybrid(&self,context:&[u8],dense:&[f32])->Result<Vec<Attention>,String> {
-        let cache=self.forward_with_dense(context,Some(dense))?;
+        self.attention_hybrid_window(context,dense,CONTEXT)
+    }
+    pub fn attention_hybrid_window(&self,context:&[u8],dense:&[f32],window:usize)->Result<Vec<Attention>,String> {
+        let cache=self.forward_with_dense_window(context,Some(dense),window)?;
         Ok(cache.tokens.iter().enumerate().map(|(i,&code)|Attention{
             index:i,code,probability:cache.attention[i]
         }).collect())
@@ -238,6 +252,51 @@ impl Transformer {
     pub fn bridge_signal(&self,dense:&[f32])->Result<Vec<f32>,String> {
         if dense.len()!=VOCAB {return Err("Expected 128 dense bridge features".into());}
         Ok(mv(&self.weights,&layout().bridge,D,VOCAB,dense))
+    }
+    /// Load an older 128-position Transformer, retaining every learned weight
+    /// and both Adam moments. The old right-aligned positions are copied into
+    /// the *last* 128 positions, so old short-context predictions are preserved.
+    /// Positions 0..127 are newly initialized and need training before longer
+    /// context is a reliable capability. Works with or without the old bridge.
+    pub fn import_compatible_arrays(&mut self,weights:&[f32],momentum:&[f32],variance:&[f32])->Result<(),String>{
+        if weights.len()!=momentum.len() || weights.len()!=variance.len(){
+            return Err("Transformer checkpoint array sizes disagree".into());
+        }
+        if weights.iter().chain(momentum).chain(variance).any(|v|!v.is_finite()){
+            return Err("Transformer checkpoint contains non-finite values".into());
+        }
+        let current=layout();
+        if weights.len()==current.len {
+            self.weights.copy_from_slice(weights);
+            self.momentum.copy_from_slice(momentum);
+            self.variance.copy_from_slice(variance);
+            return Ok(());
+        }
+        let legacy=layout_for(ORIGINAL_CONTEXT);
+        if weights.len()!=legacy.len && weights.len()!=legacy.bridge.start {
+            return Err("Unsupported Transformer checkpoint parameter count".into());
+        }
+        for (dst,src) in [(&mut self.weights,weights),
+                          (&mut self.momentum,momentum),
+                          (&mut self.variance,variance)] {
+            for (old,new) in [
+                (&legacy.tok,&current.tok),(&legacy.pos,&current.pos),
+                (&legacy.q,&current.q),(&legacy.k,&current.k),
+                (&legacy.v,&current.v),(&legacy.o,&current.o),
+                (&legacy.f1,&current.f1),(&legacy.b1,&current.b1),
+                (&legacy.f2,&current.f2),(&legacy.b2,&current.b2),
+                (&legacy.output,&current.output),(&legacy.bout,&current.bout)
+            ] {
+                let start=if old.start==legacy.pos.start && old.end==legacy.pos.end{
+                    new.end-old.len()
+                }else{new.start};
+                dst[start..start+old.len()].copy_from_slice(&src[old.clone()]);
+            }
+            if src.len()==legacy.len {
+                dst[current.bridge.clone()].copy_from_slice(&src[legacy.bridge.clone()]);
+            }
+        }
+        Ok(())
     }
     pub(crate) fn apply_gradients(&mut self,sum:&mut [f32],lr:f32)->Result<(),String> {
         if sum.len()!=self.weights.len() {return Err("Transformer gradient length mismatch".into());}
@@ -326,21 +385,23 @@ impl Transformer {
         // Backward-compatible load for the independent v0.2 Transformer: its
         // original parameters/moments are retained; the appended trainable
         // bridge receives fresh initialization and zero optimizer moments.
-        if stored_count!=layout().len && stored_count!=layout().bridge.start {
+        let old=layout_for(ORIGINAL_CONTEXT);
+        if stored_count!=layout().len && stored_count!=old.len && stored_count!=old.bridge.start {
             return Err("Transformer checkpoint parameter count mismatch".into());
         }
         let mut step=[0u8;8];
         file.read_exact(&mut step).map_err(|e|e.to_string())?;
         let mut out=Self::new(1);
         out.step=u64::from_le_bytes(step);
-        for array in [&mut out.weights,&mut out.momentum,&mut out.variance] {
-            for value in &mut array[..stored_count] {
+        let mut arrays=[vec![0.0;stored_count],vec![0.0;stored_count],vec![0.0;stored_count]];
+        for array in &mut arrays{
+            for value in array{
                 let mut bytes=[0u8;4];
                 file.read_exact(&mut bytes).map_err(|e|e.to_string())?;
                 *value=f32::from_le_bytes(bytes);
-                if !value.is_finite(){return Err("Invalid floating-point checkpoint data".into());}
             }
         }
+        out.import_compatible_arrays(&arrays[0],&arrays[1],&arrays[2])?;
         let mut trailing=[0u8;1];
         if file.read(&mut trailing).map_err(|e|e.to_string())?!=0 {
             return Err("Unexpected bytes at end of checkpoint".into());
@@ -351,6 +412,50 @@ impl Transformer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn selecting_128_or_256_matches_on_short_context(){
+        let model=Transformer::new(7);
+        let dense=vec![0.2;VOCAB];
+        let a=model.predict_hybrid_window(b"U: hello\\nN: ",&dense,128).unwrap();
+        let b=model.predict_hybrid_window(b"U: hello\\nN: ",&dense,256).unwrap();
+        assert_eq!(a,b);
+        let long=vec![b'a';175];
+        assert_eq!(model.attention_hybrid_window(&long,&dense,128).unwrap().len(),128);
+        assert_eq!(model.attention_hybrid_window(&long,&dense,256).unwrap().len(),175);
+        assert!(model.predict_hybrid_window(b"hello",&dense,129).is_err());
+    }
+    #[test]
+    fn legacy_128_position_import_preserves_short_context_weights_and_moments(){
+        let mut learned=Transformer::new(89);
+        let previous=layout_for(ORIGINAL_CONTEXT);
+        let current=layout();
+        let mut old=[vec![0.0;previous.len],vec![0.0;previous.len],vec![0.0;previous.len]];
+        learned.momentum.fill(0.017);
+        learned.variance.fill(0.021);
+        for (dest,source) in old.iter_mut().zip([&learned.weights,&learned.momentum,&learned.variance]){
+            for (old_range,new_range) in [
+                (&previous.tok,&current.tok),(&previous.pos,&current.pos),
+                (&previous.q,&current.q),(&previous.k,&current.k),
+                (&previous.v,&current.v),(&previous.o,&current.o),
+                (&previous.f1,&current.f1),(&previous.b1,&current.b1),
+                (&previous.f2,&current.f2),(&previous.b2,&current.b2),
+                (&previous.output,&current.output),(&previous.bout,&current.bout),
+                (&previous.bridge,&current.bridge)]{
+                let offset=if old_range.start==previous.pos.start && old_range.end==previous.pos.end{
+                    new_range.end-old_range.len()
+                }else{new_range.start};
+                dest[old_range.clone()].copy_from_slice(&source[offset..offset+old_range.len()]);
+            }
+        }
+        let mut migrated=Transformer::new(123);
+        migrated.import_compatible_arrays(&old[0],&old[1],&old[2]).unwrap();
+        let dense=vec![0.3;VOCAB];
+        assert_eq!(learned.predict_hybrid_window(b"U: hello\\nN: ",&dense,128).unwrap(),
+                   migrated.predict_hybrid_window(b"U: hello\\nN: ",&dense,128).unwrap());
+        assert_eq!(&migrated.momentum[current.pos.end-D*128..current.pos.end],
+                   &learned.momentum[current.pos.end-D*128..current.pos.end]);
+        assert_eq!(&migrated.variance[current.bridge],&learned.variance[current.bridge]);
+    }
     #[test]
     fn causal_predictions_ignore_data_after_the_context() {
         let model=Transformer::new(3);
