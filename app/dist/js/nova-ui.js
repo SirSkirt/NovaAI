@@ -550,6 +550,7 @@ async function boot(){
     const turns=await invoke("hybrid_conversation");
     for(const turn of turns){bubble("user",turn.user);bubble("nova",turn.assistant);}
     report("INFO","Brain","Unified hybrid brain, trainable word units and persisted multi-turn neural memory loaded. "+turns.length+" stored turns.");
+    document.dispatchEvent(new Event("neural-nova-booted"));
   }catch(e){setState("Startup error","error");report("ERROR","Startup",e);}
   setInterval(()=>{if(running)void poll();},1000);
 }
