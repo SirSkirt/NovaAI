@@ -1,3 +1,19 @@
+NEURAL NOVA v0.7.1 TRAINER HANDOFF
+
+## v0.7.1 — Text validation split and lower neural learning rates (2026-10-12)
+
+- **Text/Language validation changed**: no more 'first 90% of bytes train / last 10% validate'. The teacher prepares independent whole **paragraphs** (blank-line-separated) when there are at least five, otherwise complete **sentences or lines**. Every section is assigned as a whole to training or validation using a deterministic hash; equal text up to case/whitespace normalization stays in the same group. Approximately 20% of unique section groups are held out, not necessarily exactly 20% of bytes. Neither training nor validation contexts can span section boundaries, and tokenizer vocabulary growth only sees the training sections. Reversing the file order doesn't change the assignment. This is stronger than the old tail-based holdout but does **not** prevent paraphrase/topic contamination and doesn't guarantee representative topic coverage.
+- Text files with **fewer than five distinct meaningful sections now return an explanatory error** instead of a misleading held-out accuracy. Recommend longer varied text, preferably separate paragraphs with blank lines. ASCII limit remains 120–50,000 bytes; user is preparing a larger varied corpus.
+- Rehearsal archives re-prepare previously saved lessons using this updated split: existing Text rehearsal sources also need at least five distinct sections. Dialogue and multi-turn preparation are unchanged.
+- **Two new train learning rates**: `0.0003` (Very gentle) and `0.0001` (Extra gentle), in addition to old 0.001/0.003/0.005. The native trainer accepts values down to 0.0001. Both neural pathways already honor the actual selected rate. Separately, adaptive learning now derives a monotonic floor from the selected rate; choosing 0.0001 can never silently jump up to the old 0.0003 floor. The user can leave adaptive OFF to hold the selected rate fixed. Test & Corrections corrective LR remains separate and unchanged.
+- New Rust core unit tests verify non-overlapping paragraph holdouts, deterministic reordering, duplicate protection, refusal of unsplittable corpora, and nonincreasing adaptive schedules below 0.0003.
+- Train JSONL `lesson_before_vocabulary` now records `trainingSections`, `heldoutSections`, and `validationStrategy`. This is teaching/measurement code only; the transformer, dense network, inference, weights, and checkpoint format did not change.
+
+**Recommended comparison:** Back up the working 399-step checkpoint, keep previous dialogue rehearsal and the exact greeting test enabled, then train the new diversified Text curriculum at fixed **0.0003**, early stopping ON, replay and prior-skill guard ON, and JSONL recording ON. For a controlled comparison with **0.0001**, start from the **same** saved 399-step checkpoint and identical archive/curriculum. Larger, more varied corpora and lower rates may reduce overfitting, but are not guaranteed to solve it. Inspect per-epoch training/held-out loss and greeting accuracy. Build status must be confirmed in the latest Actions run before installation.
+
+
+--- Previous handoffs ---
+
 NEURAL NOVA v0.7.0 TRAINER HANDOFF
 
 ## v0.7.0 — Trainer regression fix: rehearsal + protected checkpoint selection (2026-10-12)
