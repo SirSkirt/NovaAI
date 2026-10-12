@@ -14,7 +14,7 @@
   <header class="app-header">
     <div class="brand">
       <span class="brand-symbol" aria-hidden="true">◉</span>
-      <div><h1>Neural Nova <span class="beta">v0.5.0</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
+      <div><h1>Neural Nova <span class="beta">v0.6.0</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
     </div>
     <div class="status-pill" id="brainState" role="status"><span class="status-indicator"></span><span id="brainStateText">Starting…</span></div>
   </header>
@@ -83,6 +83,57 @@
           </details>
         </div>
       </div>
+      <details class="card test-lab" id="testLab">
+        <summary>Tests &amp; Corrections <span class="subtle">Neural replies · independent grading · supervised updates</span></summary>
+        <div class="test-lab-body">
+          <p class="muted">Import a TXT of questions and a separate TXT answer key (one per line), or paste both. A TAB-separated combined test TXT is also supported. Nova sees only the question during inference.</p>
+          <div class="test-bar">
+            <div><label for="testName">Test name</label><input id="testName" maxlength="80" value="Nova's language check"></div>
+            <div><label for="testSaved">Saved tests</label><select id="testSaved"><option value="">Select a saved test</option></select></div>
+          </div>
+          <div class="test-import-grid">
+            <div><label for="testQuestions">Test questions</label><textarea id="testQuestions" spellcheck="false" rows="5" placeholder="hello Nova&#10;what is your name?"></textarea>
+              <label class="file-button" for="testQuestionsFile">＋ Import questions TXT</label><input type="file" id="testQuestionsFile" accept=".txt,text/plain"></div>
+            <div><label for="testAnswers">Answer key — teacher only</label><textarea id="testAnswers" spellcheck="false" rows="5" placeholder="Hello!&#10;My name is Nova."></textarea>
+              <label class="file-button" for="testAnswersFile">＋ Import answer key TXT</label><input type="file" id="testAnswersFile" accept=".txt,text/plain"></div>
+          </div>
+          <details class="teacher-extra">
+            <summary>Optional untouched generalization test</summary>
+            <p class="muted">These questions and answers will never be included in corrective training. Ask unfamiliar variations to measure transfer.</p>
+            <div class="test-import-grid">
+              <div><label for="testUnseenQuestions">Unseen questions</label><textarea id="testUnseenQuestions" rows="3" spellcheck="false"></textarea>
+                <label class="file-button" for="testUnseenQuestionsFile">＋ Import unseen TXT</label><input type="file" id="testUnseenQuestionsFile" accept=".txt,text/plain"></div>
+              <div><label for="testUnseenAnswers">Unseen answer key</label><textarea id="testUnseenAnswers" rows="3" spellcheck="false"></textarea>
+                <label class="file-button" for="testUnseenAnswersFile">＋ Import unseen key TXT</label><input type="file" id="testUnseenAnswersFile" accept=".txt,text/plain"></div>
+            </div>
+          </details>
+          <div class="row wrap"><button type="button" class="secondary compact" id="testSave">Save test</button><button type="button" class="secondary compact" id="testDelete">Delete selected test</button></div>
+          <div class="test-options">
+            <div><label for="testAttempts">Attempts/question</label><input id="testAttempts" type="number" min="1" max="5" value="3"></div>
+            <div><label for="testRate">Corrective learning rate</label><select id="testRate"><option value="0.001" selected>Gentle · 0.001</option><option value="0.003">Balanced · 0.003</option></select></div>
+            <div><label for="testReplyLength">Max reply length</label><select id="testReplyLength"><option value="64">64</option><option value="128" selected>128</option><option value="256">256</option></select></div>
+            <div><label for="testContext">Context tokens</label><select id="testContext"><option value="128" selected>128</option><option value="256">256</option></select></div>
+            <div><label for="testSampling">Generation</label><select id="testSampling"><option value="greedy" selected>Most likely</option><option value="seeded">Seeded · 42</option></select></div>
+          </div>
+          <div class="row wrap test-checks">
+            <label class="checkbox-line"><input type="checkbox" id="testCorrections" checked>Apply neural corrections</label>
+            <label class="checkbox-line"><input type="checkbox" id="testRetention" checked>Test retention afterward</label>
+            <label class="checkbox-line"><input type="checkbox" id="testGeneralization" checked>Test unseen variations</label>
+          </div>
+          <div class="row wrap actions">
+            <button type="button" class="primary" id="testStart">▶ Start test</button>
+            <button type="button" class="secondary" id="testPause" disabled>Pause</button>
+            <button type="button" class="secondary" id="testResume" disabled>Resume</button>
+            <button type="button" id="testStop" disabled>Stop</button>
+          </div>
+          <p class="muted" id="testRunStatus">Ready to save a test. All first attempts are completed before any corrective training.</p>
+          <details class="teacher-extra test-overview" id="testOverview" open>
+            <summary>Test Overview <span id="testOverviewSummary" class="subtle">No results yet</span></summary>
+            <div id="testOverviewStats" class="test-overview-stats"></div>
+            <div id="testResultList" class="test-result-list"></div>
+          </details>
+        </div>
+      </details>
     </section>
     <section class="tab-pane" id="pane-chat" role="tabpanel" aria-labelledby="tab-chat" hidden>
       <div class="pane-title"><div><p class="eyebrow">ONE GENERATIVE VOICE</p><h2>Chat with Nova</h2></div><span class="subtle">No canned answers · No model selection</span></div>
