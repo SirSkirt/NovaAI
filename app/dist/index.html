@@ -8,6 +8,7 @@
   <title>Neural Nova — Brain Lab</title>
   <link rel="stylesheet" href="./styles.css">
   <script defer src="./js/nova-ui.js"></script>
+  <script defer src="./js/diagnostic-ui.js"></script>
   <script defer src="./js/test-ui.js"></script>
 </head>
 <body>
@@ -230,7 +231,31 @@ hey there</textarea>
   </main>
   <details id="diagnostics" class="diagnostics">
     <summary><span class="debug-title"><strong>⌘ Debugger</strong><small id="diagnosticCount">0 errors · 0 entries</small></span><span class="debug-toggle">▾</span></summary>
-    <div class="debug-body"><div class="row wrap debug-tools"><span class="muted">Training events, Rust commands, UI failures</span><div class="row"><button id="copyDiagnostics" type="button" class="secondary compact">Copy report</button><button id="clearDiagnostics" type="button" class="secondary compact">Clear</button></div></div><pre id="diagnosticLog" role="log" aria-live="polite">No diagnostics recorded in this session.</pre></div>
+    <div class="debug-body">
+      <div class="row wrap debug-tools"><span class="muted">Training events, Rust commands, UI failures</span><div class="row"><button id="copyDiagnostics" type="button" class="secondary compact">Copy report</button><button id="clearDiagnostics" type="button" class="secondary compact">Clear</button></div></div>
+      <pre id="diagnosticLog" role="log" aria-live="polite">No diagnostics recorded in this session.</pre>
+      <details id="deepDiagnostics" class="teacher-extra">
+        <summary>Deep neural logging · memory and trainer investigation</summary>
+        <p class="muted">Opt-in, append-only local JSONL for this run. Records questions, neural predictions, training metadata and test answer keys. Lesson text is fingerprinted rather than copied. Review the file before sharing it.</p>
+        <div class="row wrap actions">
+          <button type="button" id="startDeepLog" class="primary">Start recording</button>
+          <button type="button" id="stopDeepLog" class="secondary" disabled>Stop recording</button>
+          <button type="button" id="copyDeepLog" class="secondary">Copy JSONL</button>
+          <button type="button" id="saveDeepLog" class="secondary">Save JSONL</button>
+        </div>
+        <p class="muted" id="deepLogStatus">Recording off. Start before loading a checkpoint or teaching the first lesson.</p>
+        <div class="section-line"><label for="deepProbePrompts">Isolated diagnostic questions — one per line</label></div>
+        <textarea id="deepProbePrompts" rows="4" spellcheck="false">hello
+Hi
+good morning
+hey there</textarea>
+        <div class="row wrap">
+          <label class="checkbox-line" for="deepProbeMemory"><input id="deepProbeMemory" type="checkbox"> Compare with saved conversation memory (read-only)</label>
+          <button type="button" id="runDeepProbe" class="secondary">Inspect same weights</button>
+        </div>
+        <pre id="deepProbeOutput" class="epoch-history" style="max-height:360px;overflow:auto;white-space:pre-wrap">No isolated probe yet.</pre>
+      </details>
+    </div>
   </details>
   <footer>Neural Nova experimental · One shared-loss hybrid model · Original Nova on main remains untouched</footer>
 </div>
