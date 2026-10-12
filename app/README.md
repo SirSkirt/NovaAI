@@ -1,31 +1,27 @@
-# Nova V7.0.0-alpha.9.3.1 — Compile Fix
+# Neural Nova v0.1 — experimental-only replacement
 
-Alpha 9.3.1 is a compile-only repair to the alpha 9.3 Basic English + Teacher Refinement release. The architecture and behavior remain alpha 9.3; the Rust lifetime on `sentence_kind()` is now explicit. It does **not** add another language model, Teacher reasoner, reflection engine, compatibility layer, or fallback brain.
+This is the **new** Neural Nova application for branch `experimental/neural-nova`. Its original rule-based cognition is not compiled or loaded; the only reasoning backend is the independent, from-scratch Rust neural network in `/neural-nova`.
 
-The update adds a deliberately small **Basic English bootstrap** to the existing Rust semantic pipeline: enough structural English to understand simple Year 1 teaching, but not a built-in English education.
+## What works
+- 1,024 → 512 → 512 → 128 fully connected neural network; 853,120 learnable weights/biases
+- 8 ASCII characters × 128 one-hot features as input; 128-way next-character distribution
+- Text-corpus training (Adam, backpropagation, gradients, cross-entropy)
+- Real activations for **all 2,176 neurons**; inspect top weighted contributions
+- Brain visualizer in the input/hidden/hidden/output format, responsive to mobile/desktop
+- On-device asynchronous training, cancellation, progress and epoch losses
+- Local weights-only checkpoint in separate Neural Nova app data, automatic on epoch/stop
+- Next-character generation with sampling and temperature
+- Safe reset confined to experimental model data
 
-> **Enough English to attend school, not enough English to skip school.**
+## Building
+```sh
+cd neural-nova && cargo test
+cd ../app && npm install && npm run tauri build
+```
 
-The bootstrap preserves whole utterances and basic structural cues such as phrase groupings, left-link-right relations, simple copular forms, negation, quotation boundaries, statement/question/request cues, deictic/reference cues, coordination, and a small amount of conversational continuity. It does not preteach school concepts such as noun, pronoun, proper name, semantic-role terminology, proposition, reasoning, evidence, reflection, school, lesson, teacher, student, test, or grammar rules.
+Android debug APK can be built with Tauri Android SDK/NDK installed:
+`cd app && npm run android:init && npm run android:debug-apk`
 
-Teacher tooling is also refined:
+**Not a chat LLM:** this is an eight-character lookback feed-forward character predictor. The UI labels it accordingly. Model outputs are only meaningful after training. Large text corpora take a long time, especially on phones. Character vocabulary is currently ASCII only.
 
-- points such as `0.5 / 1`, optional percentage and grade;
-- Teacher Notes;
-- exact strike/highlight/underline spans on immutable question/answer text;
-- optional notes attached to each marked span;
-- attempt number and lesson/source context;
-- preserved Rust Thinking trace and Inspector context;
-- feedback stored as provenance-bearing **non-executable Knowledge**;
-- Start Reflection still sends an ordinary Teacher utterance through Nova's normal Rust turn path.
-
-See `ARCHITECTURE.md`, `TEACHING.md`, `V7-ALPHA-9.3-BASIC-ENGLISH-TEACHER.md`, `V7-ALPHA-9.3-VALIDATION.md`, and `handoff.txt`.
-
-Build versions:
-
-- package: `7.0.0-alpha.9.3.1`
-- Tauri: `7.0.0-alpha.9.3.1`
-- Cargo: `7.0.0-alpha.9.3.1`
-
-
-Compile repair details: see `V7-ALPHA-9.3.1-COMPILE-FIX.md` and `V7-ALPHA-9.3.1-VALIDATION.md`.
+Neural Nova's package identifier is `com.qtech.neuralnova.experimental`, distinct from original Nova. Original Nova remains on `main`. The original ZIP is preserved only as an archival source snapshot, not used at runtime.
