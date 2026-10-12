@@ -2,7 +2,7 @@
 use neural_nova::hybrid::HybridBrain;
 use neural_nova::dialogue::dialogue_prefix;
 use neural_nova::transformer::VOCAB;
-use neural_nova::trainer::{prepare,training_order,Example,PreparedLessons};
+use neural_nova::trainer::{prepare,training_order,Example,PreparedLessons,ScheduleConfig,ScheduleState};
 use crate::transformer_lab::Lesson;
 use serde::{Deserialize,Serialize};
 use std::fs;
@@ -14,9 +14,8 @@ use tauri::{AppHandle,Emitter,Manager,State};
 
 const CHECKPOINT:&str="neural-nova-hybrid-0.3.nhyb";
 const BATCH:usize=8;
-const DEFAULT_LEARNING_RATE:f32=0.003;
+const DEFAULT_LEARNING_RATE:f32=0.001;
 const MIN_IMPROVEMENT:f32=0.0005;
-const MIN_LEARNING_RATE:f32=0.0003;
 
 struct Session{
     brain:HybridBrain,trained:bool,
@@ -192,7 +191,10 @@ pub async fn hybrid_chat(state:State<'_,HybridState>,message:String,max_chars:us
 #[derive(Clone,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct TrainOptions {
+    // Accept old 0.3.1 clients as a compatibility fallback only.
     adaptive:Option<bool>,
+    adaptive_learning_rate:Option<bool>,
+    early_stopping:Option<bool>,
     learning_rate:Option<f32>,
     patience:Option<u32>,
 }
@@ -203,7 +205,11 @@ pub fn hybrid_train(
 )->Result<(),String>{
     if !(1..=60).contains(&lesson.epochs){return Err("Choose 1–60 epochs".into());}
     let plan=prepare(&lesson.mode,&lesson.text)?;
-    let adaptive=options.as_ref().and_then(|o|o.adaptive).unwrap_or(true);
+    let legacy=options.as_ref().and_then(|o|o.adaptive);
+    let adaptive_learning_rate=options.as_ref().and_then(|o|o.adaptive_learning_rate)
+        .or(legacy).unwrap_or(false);
+    let early_stopping=options.as_ref().and_then(|o|o.early_stopping)
+        .or(legacy).unwrap_or(true);
     let starting_lr=options.as_ref().and_then(|o|o.learning_rate).unwrap_or(DEFAULT_LEARNING_RATE);
     let patience=options.as_ref().and_then(|o|o.patience).unwrap_or(6);
     if !starting_lr.is_finite() || !(0.0003..=0.006).contains(&starting_lr){
@@ -228,7 +234,8 @@ pub fn hybrid_train(
     if let Err(error)=ready{state.inner.training.store(false,Ordering::Release);return Err(error);}
     state.inner.stop.store(false,Ordering::Release);
     tauri::async_runtime::spawn_blocking(move||{
-        let result=train_inner(&app,&state,&plan,lesson.epochs,adaptive,starting_lr,patience);
+        let result=train_inner(&app,&state,&plan,lesson.epochs,
+            adaptive_learning_rate,early_stopping,starting_lr,patience);
         if let Err(ref e)=result{
             if let Ok(mut s)=lock(&state){s.error=Some(e.clone());s.stage="Training failed".into();}
             eprintln!("Neural Nova hybrid trainer error: {e}");
@@ -249,7 +256,8 @@ pub fn hybrid_train(
 /// still computes all cognition, predictions and shared gradients itself.
 fn train_inner(
     app:&AppHandle,state:&HybridState,lessons:&PreparedLessons,
-    epochs:u32,adaptive:bool,starting_lr:f32,patience:u32,
+    epochs:u32,adaptive_learning_rate:bool,early_stopping:bool,
+    starting_lr:f32,patience:u32,
 )->Result<(bool,bool,u32),String>{
     let train:&[Example]=&lessons.train;
     let valid:&[Example]=&lessons.validation;
@@ -263,8 +271,9 @@ fn train_inner(
         (s.brain.clone(),loss,accuracy,s.trained)
     };
     let mut best_epoch=0u32;
-    let mut learning_rate=starting_lr;
-    let mut stale_epochs=0u32;
+    let mut schedule=ScheduleState::new(starting_lr,ScheduleConfig{
+        adaptive_learning_rate,early_stopping,patience,
+    });
     let mut completed=0usize;
     let mut cancelled=false;
     let mut early_stopped=false;
@@ -273,6 +282,7 @@ fn train_inner(
         let stage=if epoch==1&&lessons.mode=="dialogue"{
             "Warm-up: short contexts first"
         }else{"Practice: shuffled examples"};
+        let learning_rate=schedule.learning_rate;
         let order=training_order(train,epoch,&lessons.mode);
         let mut epoch_loss=0.0f64;
         let mut trained_count=0usize;
@@ -321,8 +331,7 @@ fn train_inner(
             s.heldout_accuracy=Some(accuracy);
             (loss,accuracy,improved)
         };
-        if improved {stale_epochs=0;}
-        else{stale_epochs+=1;}
+        let should_stop=schedule.observe_validation(improved);
         let _=app.emit("hybrid-epoch",serde_json::json!({
             "epoch":epoch,"epochs":epochs,
             "trainLoss":epoch_loss/trained_count as f64,
@@ -332,14 +341,9 @@ fn train_inner(
             "trainLessons":lessons.train_lessons,"validationLessons":lessons.validation_lessons
         }));
         if cancelled{break;}
-        if adaptive{
-            if stale_epochs>=patience {
-                early_stopped=true;
-                break;
-            }
-            if stale_epochs>0 && stale_epochs%2==0{
-                learning_rate=(learning_rate*0.5).max(MIN_LEARNING_RATE);
-            }
+        if should_stop{
+            early_stopped=true;
+            break;
         }
     }
     {
@@ -353,7 +357,7 @@ fn train_inner(
         s.best_heldout_loss=Some(best_loss);
         s.heldout_loss=Some(best_loss);
         s.heldout_accuracy=Some(best_accuracy);
-        s.learning_rate=learning_rate;
+        s.learning_rate=schedule.learning_rate;
         s.early_stopped=early_stopped;
         s.tokens_per_second=(completed as f64/started.elapsed().as_secs_f64().max(0.001)) as f32;
         s.stage=if cancelled{"Stopped; best checkpoint restored"}
