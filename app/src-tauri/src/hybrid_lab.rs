@@ -948,9 +948,9 @@ pub fn hybrid_test_start(app:AppHandle,state:State<'_,HybridState>,
         id:id.clone(),test_id:test.id.clone(),name:test.name.clone(),started_at:test_time(),
         status:"running".into(),config:options.clone(),
         questions:test.cases.iter().map(|c|QuestionResult{question:c.question.clone(),
-            expected:c.expected.clone(),attempts:Vec::new(),retention:None}).collect(),
+            expected:c.expected.clone(),teacher_answer:None,attempts:Vec::new(),retention:None}).collect(),
         unseen:test.unseen.iter().map(|c|QuestionResult{question:c.question.clone(),
-            expected:c.expected.clone(),attempts:Vec::new(),retention:None}).collect(),
+            expected:c.expected.clone(),teacher_answer:None,attempts:Vec::new(),retention:None}).collect(),
         baseline_unseen_correct:None,final_unseen_correct:None,
         initial_correct:0,final_correct:0,corrected:0,still_incorrect:0,
         training_updates:0,start_step:steps,end_step:steps,error:None
@@ -985,6 +985,7 @@ pub fn hybrid_test_start(app:AppHandle,state:State<'_,HybridState>,
 #[tauri::command]
 pub fn hybrid_test_review(app:AppHandle,state:State<'_,HybridState>,
     run_id:String,index:usize,attempt:usize,teacher_grade:String,
+    corrected_answer:Option<String>,
 )->Result<(),String>{
     if state.inner.training.load(Ordering::Acquire){return Err("Wait for the test to finish before reviewing".into());}
     if !["correct","incorrect","needsReview"].contains(&teacher_grade.as_str()){
@@ -992,8 +993,18 @@ pub fn hybrid_test_review(app:AppHandle,state:State<'_,HybridState>,
     }
     let mut data=test_archive(&state)?;
     let report=data.reports.iter_mut().find(|r|r.id==run_id).ok_or("Run not found")?;
-    let answer=report.questions.get_mut(index)
-        .and_then(|q|q.attempts.get_mut(attempt)).ok_or("Attempt not found")?;
+    let question=report.questions.get_mut(index).ok_or("Question not found")?;
+    if let Some(target)=corrected_answer{
+        if !target.is_empty(){
+            if target.len()>256||!target.bytes().all(|c|(32..=126).contains(&c)){
+                return Err("Teacher's corrected answer must be 1–256 printable ASCII characters".into());
+            }
+            // The original key is never overwritten. This is a review note,
+            // not an automatic or hidden inference override or weight update.
+            question.teacher_answer=Some(target);
+        }
+    }
+    let answer=question.attempts.get_mut(attempt).ok_or("Attempt not found")?;
     answer.teacher_grade=Some(teacher_grade);
     report.recalculate();
     persist_archive(&app,&data)
