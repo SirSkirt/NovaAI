@@ -3,6 +3,7 @@ mod transformer_lab;
 mod hybrid_lab;
 mod test_lab;
 mod diagnostic_log;
+mod rehearsal;
 
 use neural::NeuralState;
 use transformer_lab::TransformerState;
