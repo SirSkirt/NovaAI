@@ -1,0 +1,20 @@
+{
+  "name": "nova-local-assistant",
+  "private": true,
+  "version": "7.0.0-alpha.9.3.1",
+  "description": "Nova V7 alpha 9.3: Rust-authoritative mind with a minimal Basic English bootstrap and refined Teacher feedback/observability tools.",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "android:init": "tauri android init",
+    "android:dev": "tauri android dev",
+    "android:studio": "tauri android dev --open",
+    "android:build": "tauri android build --apk --aab",
+    "android:apk": "tauri android build --apk",
+    "android:debug-apk": "tauri android build --debug --apk"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

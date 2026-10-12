@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111318" />
+  <title>Nova V7 alpha 9.3 — Basic English + Teacher Refinement</title>
+
+  <!-- =========================================================
+       SECTION: STYLES
+       Future file: src/styles.css
+       ========================================================= -->
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a20;
+      --panel-2: #1f232c;
+      --panel-3: #262b35;
+      --text: #f3f5f7;
+      --muted: #9aa3af;
+      --accent: #7c9cff;
+      --accent-strong: #6586f1;
+      --border: #2d333e;
+      --user: #24314f;
+      --assistant: #20242c;
+      --success: #68d391;
+      --warning: #f0c36b;
+      --danger: #ff7b7b;
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      min-height: 100dvh;
+      display: flex;
+      justify-content: center;
+    }
+
+    button, textarea, input { font: inherit; }
+
+    button { -webkit-tap-highlight-color: transparent; }
+
+    .app {
+      width: min(100%, 920px);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding:
+        calc(12px + env(safe-area-inset-top))
+        14px
+        12px;
+      background: rgba(15, 17, 21, 0.94);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+    }
+
+    .brand { min-width: 0; }
+
+    .brand-title {
+      font-size: 1rem;
+      font-weight: 750;
+      line-height: 1.1;
+    }
+
+    .brand-subtitle {
+      margin-top: 4px;
+      font-size: 0.76rem;
+      color: var(--muted);
+    }
+
+    .topbar-actions {
+      display: flex;
+      gap: 7px;
+    }
+
+    .button {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 9px 11px;
+      cursor: pointer;
+    }
+
+    .button:active { transform: scale(0.97); }
+
+    .chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px 14px 128px;
+      scroll-behavior: smooth;
+    }
+
+    .message-row {
+      display: flex;
+      margin-bottom: 14px;
+    }
+
+    .message-row.user { justify-content: flex-end; }
+    .message-row.assistant { justify-content: flex-start; }
+
+    .message {
+      max-width: min(84%, 700px);
+      padding: 11px 13px;
+      border-radius: var(--radius);
+      line-height: 1.47;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      border: 1px solid transparent;
+    }
+
+    .message.user {
+      background: var(--user);
+      border-color: #314369;
+      border-bottom-right-radius: 5px;
+    }
+
+    .message.assistant {
+      background: var(--assistant);
+      border-color: var(--border);
+      border-bottom-left-radius: 5px;
+    }
+
+    .message-meta {
+      margin-top: 5px;
+      font-size: 0.69rem;
+      color: var(--muted);
+      opacity: 0.85;
+    }
+
+    .status {
+      display: none;
+      margin: 0 14px 10px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 0.79rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    .status.visible { display: block; }
+
+    .composer-wrap {
+      position: fixed;
+      left: 50%;
+      bottom: 0;
+      z-index: 15;
+      width: min(100%, 920px);
+      transform: translateX(-50%);
+      padding:
+        10px
+        12px
+        calc(10px + env(safe-area-inset-bottom));
+      background: linear-gradient(to top, var(--bg) 72%, rgba(15,17,21,0));
+    }
+
+    .composer {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      padding: 8px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+    }
+
+    #messageInput {
+      flex: 1;
+      min-height: 42px;
+      max-height: 160px;
+      resize: none;
+      border: none;
+      outline: none;
+      color: var(--text);
+      background: transparent;
+      padding: 10px 8px;
+      line-height: 1.4;
+    }
+
+    #messageInput::placeholder { color: #77808d; }
+
+    #sendButton {
+      width: 44px;
+      height: 44px;
+      flex: 0 0 44px;
+      border: none;
+      border-radius: 14px;
+      background: var(--accent);
+      color: #0b0d11;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    #sendButton:disabled {
+      opacity: 0.55;
+      cursor: default;
+    }
+
+    #sendButton:active:not(:disabled) {
+      background: var(--accent-strong);
+      transform: scale(0.97);
+    }
+
+    /* =========================================================
+       SECTION: BRAIN INSPECTOR STYLES
+       Future file: src/ui/brain-panel.css
+       ========================================================= */
+
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 29;
+      display: none;
+      background: rgba(0,0,0,0.48);
+    }
+
+    .drawer-backdrop.open { display: block; }
+
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 30;
+      width: min(92vw, 470px);
+      height: 100dvh;
+      transform: translateX(105%);
+      transition: transform 180ms ease;
+      background: var(--panel);
+      border-left: 1px solid var(--border);
+      box-shadow: -12px 0 30px rgba(0,0,0,0.3);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .drawer.open { transform: translateX(0); }
+
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding:
+        calc(14px + env(safe-area-inset-top))
+        14px
+        14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .drawer-title {
+      font-weight: 750;
+    }
+
+    .drawer-content {
+      overflow-y: auto;
+      padding: 14px 14px calc(20px + env(safe-area-inset-bottom));
+    }
+
+    .brain-section {
+      margin-bottom: 18px;
+    }
+
+    .brain-section h3 {
+      margin: 0 0 8px;
+      font-size: 0.85rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .brain-card {
+      padding: 10px 11px;
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: var(--panel-2);
+      font-size: 0.83rem;
+      line-height: 1.4;
+    }
+
+    .brain-card.inferred {
+      border-style: dashed;
+    }
+
+    .brain-card small {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+    }
+
+    .brain-list-group {
+      margin-bottom: 12px;
+      padding: 10px 11px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+
+    .brain-list-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .brain-list-title {
+      font-weight: 750;
+      line-height: 1.35;
+    }
+
+    .brain-list-meta {
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.35;
+    }
+
+    .curriculum-grade-line {
+      margin-top: 8px;
+      line-height: 1.4;
+    }
+
+    .curriculum-grade-line span {
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .brain-grade-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .brain-grade-button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 9px;
+      padding: 7px 10px;
+      min-height: 34px;
+      font: inherit;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+
+    .brain-grade-button.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 750;
+    }
+
+    .brain-list-preview .brain-card,
+    .brain-expand-body .brain-card {
+      margin-bottom: 8px;
+    }
+
+    .brain-list-preview .brain-card:last-child,
+    .brain-expand-body .brain-card:last-child {
+      margin-bottom: 0;
+    }
+
+    .brain-expand {
+      margin-top: 10px;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+
+    .brain-expand-summary {
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 0.84rem;
+    }
+
+    .brain-expand-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .brain-expand-summary::before {
+      content: "▸";
+      display: inline-block;
+      margin-right: 6px;
+      transition: transform 150ms ease;
+    }
+
+    .brain-expand[open] .brain-expand-summary::before {
+      transform: rotate(90deg);
+    }
+
+    .brain-expand-body {
+      margin-top: 10px;
+    }
+
+    .brain-source-group {
+      border-top: 1px solid var(--border);
+      padding: 8px 0;
+    }
+
+    .brain-source-group:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .brain-source-summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      padding: 6px 0;
+    }
+
+    .brain-source-summary::-webkit-details-marker { display: none; }
+    .brain-source-summary::before { content: "▸"; transition: transform 150ms ease; }
+    .brain-source-group[open] > .brain-source-summary::before { transform: rotate(90deg); }
+    .brain-source-summary strong { flex: 1; }
+    .brain-source-summary span { color: var(--muted); font-size: .78rem; white-space: nowrap; }
+    .brain-source-body { margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--border); }
+
+    .brain-rule-diagnostic {
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .brain-rule-summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 10px 11px;
+      user-select: none;
+    }
+
+    .brain-rule-summary::-webkit-details-marker { display: none; }
+    .brain-rule-summary::after {
+      content: "Details ▸";
+      display: block;
+      margin-top: 7px;
+      color: var(--accent);
+      font-size: 0.76rem;
+      font-weight: 700;
+    }
+    .brain-rule-diagnostic[open] .brain-rule-summary::after { content: "Details ▾"; }
+    .brain-rule-body {
+      border-top: 1px solid var(--border);
+      padding: 10px 11px 11px;
+      display: grid;
+      gap: 10px;
+      background: var(--panel);
+    }
+    .brain-diag-row {
+      display: grid;
+      gap: 4px;
+      overflow-wrap: anywhere;
+    }
+    .brain-diag-row > strong { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .brain-diag-list { margin: 0; padding-left: 18px; }
+    .brain-diag-muted { color: var(--muted); }
+
+    .empty {
+      color: var(--muted);
+      font-size: 0.84rem;
+      padding: 8px 0;
+    }
+
+    @media (min-width: 700px) {
+      .chat {
+        padding-left: 24px;
+        padding-right: 24px;
+      }
+
+      .composer-wrap {
+        padding-left: 24px;
+        padding-right: 24px;
+      }
+    }
+  
+
+    /* =========================================================
+       V4.3.13 — PLAIN-ENGLISH THINKING TRACE
+       ========================================================= */
+
+    .thinking-row {
+      margin-top: -4px;
+      margin-bottom: 10px;
+    }
+
+    .thinking-shell {
+      width: min(84%, 700px);
+    }
+
+    .thinking-details {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--assistant);
+      overflow: hidden;
+    }
+
+    .thinking-summary {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 12px;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+    }
+
+    .thinking-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .thinking-title {
+      font-weight: 680;
+    }
+
+    .thinking-status {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+
+    .thinking-spinner {
+      width: 15px;
+      height: 15px;
+      flex: 0 0 15px;
+      border: 2px solid var(--muted);
+      border-right-color: transparent;
+      border-radius: 999px;
+      animation: nova4313-spin 0.78s linear infinite;
+    }
+
+    .thinking-spinner.complete {
+      animation: none;
+      border-right-color: var(--muted);
+      opacity: 0.45;
+    }
+
+    @keyframes nova4313-spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .thinking-body {
+      padding: 10px 12px 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .thinking-steps {
+      display: grid;
+      gap: 9px;
+    }
+
+    .thinking-step {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      animation: nova4313-step-in 0.18s ease-out;
+    }
+
+    @keyframes nova4313-step-in {
+      from {
+        opacity: 0;
+        transform: translateY(3px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .thinking-step-label {
+      color: var(--muted);
+      font-size: 0.69rem;
+      font-weight: 760;
+      letter-spacing: 0.045em;
+      text-transform: uppercase;
+      padding-top: 2px;
+    }
+
+    .thinking-step-text {
+      color: var(--text);
+      line-height: 1.46;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 640px) {
+      .thinking-step {
+        grid-template-columns: 1fr;
+        gap: 2px;
+      }
+    }
+
+
+  
+
+    /* Tauri Android / display-cutout safe areas */
+    @supports (padding: max(0px)) {
+      body {
+        padding-top: env(safe-area-inset-top);
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+    }
+
+    @media (max-width: 720px) {
+      button,
+      input,
+      summary {
+        touch-action: manipulation;
+      }
+
+      .app-shell,
+      .chat-shell {
+        max-width: 100%;
+      }
+    }
+
+
+  
+    /* V6.2 controlled application access */
+    .app-control-label { display:block; margin:12px 0 6px; color:var(--muted); font-size:.78rem; font-weight:700; }
+    .app-control-select { width:100%; min-height:42px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); padding:8px 10px; }
+    .app-control-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .app-control-checkbox { display:flex; gap:9px; align-items:flex-start; margin-top:12px; line-height:1.4; font-size:.82rem; color:var(--muted); }
+    .app-control-checkbox input { margin-top:3px; }
+    .app-access-live { border-color:currentColor !important; font-weight:700; }
+
+
+    /* =========================================================
+       V7 — RUST SEMANTIC CORE • PASS 2
+       Desktop-only. Existing mobile breakpoints below remain authoritative.
+       ========================================================= */
+    @media (min-width: 900px) {
+      .app { width: min(100%, 1280px); max-width: 1280px; }
+      .topbar { padding: 16px 26px; gap: 18px; }
+      .brand-title { font-size: 1.12rem; }
+      .brand-subtitle { font-size: 0.82rem; max-width: 720px; }
+      .topbar-actions { gap: 9px; }
+      .chat { padding: 26px 32px 154px; }
+      .message { max-width: min(72%, 820px); padding: 12px 15px; }
+      .thinking-shell { width: min(78%, 920px); }
+      .composer-wrap { width: min(100%, 1280px); padding-left: 32px; padding-right: 32px; }
+      .composer { width: min(100%, 940px); margin-left: auto; margin-right: auto; }
+      .drawer { width: min(62vw, 780px); }
+      .drawer-header { padding: 18px 20px; }
+      .drawer-content { padding: 18px 20px 28px; }
+      .brain-card { padding: 12px 14px; font-size: 0.88rem; }
+    }
+
+    /* =========================================================
+       CURRENT — MOBILE CHAT BREATHING ROOM
+       Layout-only. No cognitive or chat-controller behavior is changed here.
+       ========================================================= */
+    @media (max-width: 640px) {
+      .topbar {
+        align-items: stretch;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding:
+          calc(9px + env(safe-area-inset-top))
+          8px
+          8px;
+      }
+
+      .topbar > .brand {
+        flex: 1 1 100%;
+        padding: 0 2px;
+      }
+
+      .topbar > .topbar-actions {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .topbar > .topbar-actions .button {
+        min-width: 0;
+        padding: 8px 5px;
+        font-size: 0.78rem;
+        white-space: nowrap;
+      }
+
+      .brand-title { font-size: 0.96rem; }
+      .topbar > .brand .brand-subtitle {
+        margin-top: 3px;
+        font-size: 0.7rem;
+        line-height: 1.3;
+      }
+
+      .chat {
+        padding: 12px 8px 110px;
+      }
+
+      .message-row {
+        margin-bottom: 10px;
+      }
+
+      .message {
+        max-width: 94%;
+        padding: 10px 11px;
+        border-radius: 14px;
+        font-size: 0.96rem;
+        line-height: 1.43;
+      }
+
+      .message.assistant { max-width: 97%; }
+      .thinking-shell { width: 97%; max-width: none; }
+
+      .status {
+        margin: 0 8px 7px;
+      }
+
+      .composer-wrap {
+        padding:
+          6px
+          6px
+          calc(6px + env(safe-area-inset-bottom));
+      }
+
+      .composer {
+        gap: 5px;
+        padding: 6px;
+        border-radius: 16px;
+      }
+
+      #messageInput {
+        min-height: 40px;
+        padding: 9px 7px;
+        font-size: 16px;
+      }
+
+      #sendButton {
+        width: 42px;
+        height: 42px;
+        flex-basis: 42px;
+        border-radius: 13px;
+      }
+
+      .drawer {
+        width: 100vw;
+        max-width: none;
+        border-left: none;
+      }
+
+      .drawer-header {
+        gap: 8px;
+        padding:
+          calc(10px + env(safe-area-inset-top))
+          9px
+          10px;
+      }
+
+      .drawer-header .topbar-actions {
+        flex: 0 0 auto;
+        gap: 5px;
+      }
+
+      .drawer-header .button {
+        padding: 8px 9px;
+      }
+
+      .drawer-content {
+        padding: 10px 9px calc(16px + env(safe-area-inset-bottom));
+      }
+
+      .brain-card {
+        padding: 10px;
+        font-size: 0.81rem;
+      }
+
+      .brain-list-group {
+        padding: 10px;
+      }
+
+      .brain-list-header {
+        gap: 4px;
+      }
+
+      .brain-list-meta,
+      .brain-expand-summary {
+        font-size: 0.79rem;
+      }
+
+      .brain-grade-controls {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .brain-grade-button {
+        min-width: 0;
+        padding: 7px 5px;
+        font-size: 0.75rem;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .topbar > .topbar-actions {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .topbar > .topbar-actions .button {
+        min-height: 38px;
+        font-size: 0.8rem;
+      }
+
+      .message {
+        max-width: 96%;
+      }
+
+      .message.assistant,
+      .thinking-shell {
+        max-width: 100%;
+        width: 100%;
+      }
+    }
+
+    /* Current presentation: clearer thinking + learned cognition cards */
+    .brain-card-title {
+      display: block;
+      line-height: 1.35;
+      margin-bottom: 2px;
+    }
+
+    .brain-card-detail {
+      margin-top: 7px;
+      color: var(--text);
+      line-height: 1.42;
+    }
+
+    .cognitive-module-card {
+      overflow-wrap: anywhere;
+    }
+
+    .thinking-step-text {
+      font-size: 0.92rem;
+    }
+
+    @media (max-width: 640px) {
+      .thinking-body {
+        padding: 8px 10px 10px;
+      }
+
+      .thinking-steps {
+        gap: 8px;
+      }
+
+      .thinking-step {
+        padding-bottom: 7px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .thinking-step:last-child {
+        padding-bottom: 0;
+        border-bottom: none;
+      }
+
+      .thinking-step-label {
+        font-size: 0.64rem;
+      }
+
+      .thinking-step-text {
+        font-size: 0.9rem;
+        line-height: 1.4;
+      }
+    }
+
+    .developer-trace-turn {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .developer-trace-turn > summary {
+      cursor: pointer;
+      padding: 12px 14px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      list-style: none;
+    }
+    .developer-trace-turn > summary::-webkit-details-marker { display: none; }
+    .developer-trace-prompt { font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .developer-trace-meta { color: var(--muted); font-size: .76rem; flex: 0 0 auto; }
+    .developer-trace-body { border-top: 1px solid var(--line); padding: 12px 14px 14px; display: grid; gap: 10px; }
+    .developer-trace-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); gap: 8px; }
+    .developer-trace-stat { padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.018); }
+    .developer-trace-stat strong { display:block; font-size:.72rem; text-transform:uppercase; color:var(--muted); letter-spacing:.04em; margin-bottom:3px; }
+    .developer-trace-raw { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.74rem; max-height:360px; overflow:auto; }
+
+    /* V7 alpha 9.3 — Basic English bootstrap + teacher/observability tooling */
+    .brain-fold { border: 1px solid var(--line); border-radius: 14px; margin-bottom: 12px; overflow: hidden; background: var(--panel); }
+    .brain-fold > summary { cursor: pointer; list-style: none; padding: 13px 15px; font-weight: 700; display:flex; justify-content:space-between; gap:12px; }
+    .brain-fold > summary::-webkit-details-marker { display:none; }
+    .brain-fold-body { border-top:1px solid var(--line); padding: 12px 14px 14px; display:grid; gap:10px; }
+    .brain-explain-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:9px; }
+    .teacher-feedback-card { display:grid; gap:10px; }
+    .teacher-preserved-label { font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:700; margin-bottom:4px; }
+    .teacher-annotatable { white-space:pre-wrap; line-height:1.55; padding:10px 11px; border:1px solid var(--line); border-radius:9px; background:rgba(255,255,255,.018); user-select:text; }
+    .teacher-mark-highlight { background:rgba(255,210,76,.32); border-radius:3px; }
+    .teacher-mark-underline { text-decoration: underline 2px; text-underline-offset:3px; }
+    .teacher-mark-strike { text-decoration: line-through 2px; opacity:.78; }
+    .teacher-feedback-controls { display:grid; gap:8px; }
+    .teacher-credit-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .teacher-credit-input { width:90px; padding:7px 8px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); }
+    .teacher-grade-input { width:120px; padding:7px 8px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); }
+    .teacher-notes { width:100%; min-height:76px; resize:vertical; padding:9px 10px; border-radius:9px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font:inherit; }
+    .teacher-annotation-buttons { display:flex; gap:7px; flex-wrap:wrap; }
+    .teacher-mark-chip { display:inline-flex; align-items:center; gap:5px; margin:3px 5px 3px 0; padding:4px 7px; border:1px solid var(--line); border-radius:999px; font-size:.72rem; color:var(--muted); }
+    .teacher-mark-remove { border:0; background:transparent; color:inherit; cursor:pointer; font-weight:700; }
+    .teacher-feedback-status { color:var(--muted); font-size:.75rem; }
+    .brain-meaning-step { padding:7px 9px; border-left:3px solid var(--line); background:rgba(255,255,255,.014); border-radius:0 8px 8px 0; }
+    .brain-meaning-step strong { display:block; font-size:.7rem; text-transform:uppercase; color:var(--muted); margin-bottom:2px; }
+
+  </style>
+</head>
+
+<body>
+  <!-- =========================================================
+       SECTION: APP MARKUP
+       Future file: src/index.html
+       ========================================================= -->
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-title">Nova V7 — Rust Mind Inspector</div>
+        <div class="brand-subtitle">One Rust-authoritative developing mind • human-readable Thinking • teacher feedback • technical inspection</div>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="appAccessButton" class="button" type="button">App Access</button>
+        <button id="learnButton" class="button" type="button">Document</button>
+        <button id="brainButton" class="button" type="button">Brain</button>
+        <button id="clearButton" class="button" type="button">Clear</button>
+        <input
+          id="learnFileInput"
+          type="file"
+          accept=".txt,.md,.log,.csv,.json,text/plain,text/markdown,text/csv,application/json"
+          hidden
+        />
+      </div>
+    </header>
+
+    <section id="chat" class="chat" aria-live="polite" aria-label="Conversation"></section>
+    <div id="status" class="status"></div>
+
+    <div class="composer-wrap">
+      <form id="composer" class="composer">
+        <textarea
+          id="messageInput"
+          rows="1"
+          placeholder="Talk naturally..."
+          autocomplete="off"
+          enterkeyhint="send"
+        ></textarea>
+        <button id="sendButton" type="submit" aria-label="Send message">↑</button>
+      </form>
+    </div>
+  </main>
+
+  <!-- =========================================================
+       SECTION: BRAIN INSPECTOR MARKUP
+       Future file: src/ui/brain-panel.html
+       ========================================================= -->
+  <div id="drawerBackdrop" class="drawer-backdrop"></div>
+
+  <aside id="brainDrawer" class="drawer" aria-label="Assistant brain inspector">
+    <div class="drawer-header">
+      <div>
+        <div class="drawer-title">Brain Inspector</div>
+        <div class="brand-subtitle">Why Nova did that • semantics • goals • learning • tests • Grandpa Rust telemetry</div>
+      </div>
+      <div class="topbar-actions">
+        <button id="reflectionButton" class="button" type="button" title="Send an ordinary Teacher reflection request through Nova's normal input path">Start Reflection</button>
+        <button id="relearnButton" class="button" type="button" title="Rebuild learned knowledge and cognition from retained lesson sources">Relearn</button>
+        <button id="testButton" class="button" type="button">Tests</button>
+        <button id="closeBrainButton" class="button" type="button">Close</button>
+      </div>
+    </div>
+
+    <div id="brainContent" class="drawer-content"></div>
+  </aside>
+
+  <!-- =========================================================
+       SECTION: CONTROLLED APPLICATION ACCESS
+       No external application is controllable until the user explicitly
+       grants one window for the current native app session.
+       ========================================================= -->
+  <aside id="appAccessDrawer" class="drawer" aria-label="Controlled application access">
+    <div class="drawer-header">
+      <div>
+        <div class="drawer-title">App Access</div>
+        <div class="brand-subtitle">Session-only • one approved window • Rust gatekeeper</div>
+      </div>
+      <button id="closeAppAccessButton" class="button" type="button">Close</button>
+    </div>
+    <div class="drawer-content">
+      <section class="brain-section">
+        <h3>Authorization</h3>
+        <div id="appAccessStatus" class="brain-card">No application access.</div>
+        <label class="app-control-label" for="appAdapterSelect">Adapter</label>
+        <select id="appAdapterSelect" class="app-control-select">
+          <option value="chatgpt_browser" selected>ChatGPT browser conversation (recommended)</option>
+          <option value="generic_text">Generic approved text application</option>
+        </select>
+        <label class="app-control-label" for="appWindowSelect">Visible window</label>
+        <select id="appWindowSelect" class="app-control-select"></select>
+        <div class="app-control-row">
+          <button id="refreshAppWindowsButton" class="button" type="button">Refresh</button>
+          <button id="enableAppAccessButton" class="button primary-ish" type="button">Approve Selected</button>
+          <button id="endAppAccessButton" class="button" type="button">End Access</button>
+        </div>
+        <div class="empty">Approval is not persisted. Restarting Nova ends the grant. ChatGPT mode also refuses input if the approved browser window stops identifying itself as ChatGPT.</div>
+      </section>
+
+      <section class="brain-section">
+        <h3>Conversation bridge</h3>
+        <div class="brain-card">
+          1. Put the caret in ChatGPT's message box.<br>
+          2. Send Nova's latest reply.<br>
+          3. When ChatGPT responds, select its response text in the browser.<br>
+          4. Capture the selection back into Nova.
+        </div>
+        <div class="app-control-row">
+          <button id="focusApprovedAppButton" class="button" type="button">Focus App</button>
+          <button id="sendLastNovaReplyButton" class="button" type="button">Send Last Nova Reply</button>
+        </div>
+        <div class="app-control-row">
+          <button id="captureAppSelectionButton" class="button" type="button">Capture Selected Reply</button>
+        </div>
+        <label class="app-control-checkbox">
+          <input id="autoSendBridgeCheckbox" type="checkbox">
+          After a captured reply makes Nova answer, automatically send Nova's new answer back to the approved app.
+        </label>
+        <div id="appBridgeStatus" class="empty">Bridge idle.</div>
+      </section>
+
+      <section class="brain-section">
+        <h3>Current sandbox</h3>
+        <div class="brain-card">
+          Allowed after approval: focus the exact approved window, paste/type text, press Enter, and copy explicitly selected text from that window.<br><br>
+          Not granted: shell, process launch, filesystem access, arbitrary window switching, unrestricted mouse control, or control of a different application.
+        </div>
+      </section>
+    </div>
+  </aside>
+
+  <!-- =========================================================
+       SECTION: JAVASCRIPT
+       The blocks below are deliberately modular.
+       ========================================================= -->
+    <script src="./js/config.js"></script>
+    <script src="./js/self_model.js"></script>
+    <script src="./js/state.js"></script>
+    <script src="./js/language.js"></script>
+    <script src="./js/memory.js"></script>
+    <script src="./js/cognition_rules.js"></script>
+
+    <!-- Native alpha 9.3: Rust NovaMind owns cognition and the durable mind. The historical JavaScript cognition files below remain for browser-development/regression only; native mutation roots are retired and are never Rust fallbacks. -->
+    <script src="./js/cognitive_modules.js"></script>
+    <script src="./js/cognitive_synthesis.js"></script>
+    <script src="./js/teaching_synthesis.js"></script>
+    <script src="./js/adaptive_synthesis.js"></script>
+    <script src="./js/general_epistemic_synthesis.js"></script>
+    <script src="./js/general_teaching_synthesis.js"></script>
+    <script src="./js/document_ingestion.js"></script>
+    <script src="./js/cognitive_abstraction.js"></script>
+    <script src="./js/activity_goals.js"></script>
+    <script src="./js/mind_states.js"></script>
+    <script src="./js/free_thought.js"></script>
+    <script src="./js/v620_maintenance.js"></script>
+    <script src="./js/v620_generic_core.js"></script>
+
+    <!-- Presentation + trusted host boundary. -->
+    <script src="./js/rust_mind_bridge.js"></script>
+    <script src="./js/ui.js"></script>
+    <script src="./js/app_control.js"></script>
+    <script src="./js/native_persistence.js"></script>
+    <script src="./js/main.js"></script>
+    <!--
+      Nova V7 alpha 9.3: Rust NovaMind is the native brain and persistence authority.
+      These scripts provide UI, thin IPC, and retained browser-development tooling; retired native
+      JavaScript cognition paths are not fallbacks or co-owners. Thinking and Brain Inspector render
+      the same authoritative Rust cognitive state.
+    -->
+  </body>
+</html>

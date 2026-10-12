@@ -1,0 +1,772 @@
+NOVA PROJECT HANDOFF
+====================
+Updated for: Nova V7.0.0-alpha.9.3.1 — Alpha 9.3 Compile Fix
+
+PURPOSE OF THIS FILE
+--------------------
+This is the permanent project handoff. Read it before changing Nova. The Issues ledger is permanent: do not delete resolved issues. Update their status/version if they regress or are superseded.
+
+PROJECT OVERVIEW
+----------------
+Nova is a developmental local AI/cognitive architecture built in Tauri. Nova is intended to learn semantic knowledge, reusable cognitive structures, relationships, categories, experience routes, abstractions and internal goals through teaching and experience. Generic substrate machinery belongs in code; curriculum answers and phrase-specific behavior do not.
+
+V7 completed the authoritative brain migration from JavaScript to Rust in Pass 9. Native Tauri JavaScript is now UI/presentation + thin IPC only. Historical JavaScript cognition code may remain for browser-only development/regression, but it is not loaded as native authority, does not hydrate the native mind, and is never a Rust fallback.
+
+CRITICAL ARCHITECTURAL RULES
+----------------------------
+1. ONE CURRENT MIND. Rust `NovaMind` is native Nova.
+2. Improve/replace current architecture in place. Never old system -> wrapper -> new wrapper.
+3. No Rust-fails -> JS-Nova fallback. A Rust failure is an error/blocked current mind.
+4. Do not hardcode answers, question-word mappings, phrase-specific behavior, or curriculum facts into the substrate.
+5. Built-in primitives/categories are generic bootstrap machinery, not a closed ontology.
+   - Alpha9.3 Basic English is structural school-entry substrate only: enough English to attend school, not enough English to skip school. Do not preteach classroom grammar/semantic concepts through it.
+6. Stored Only is legitimate developmental state and can awaken after later capability learning.
+7. Experience routes are Nova-built from successful cognition. They guide attention but never forbid broadening.
+8. Free thought/internal goals use the same Rust executive as user goals. No autonomous second brain.
+9. Response meaning and terminal state are Rust-owned. JS renders the returned realization.
+10. Rust conversation history/discourse chooses cognitive context. JS does not select prior chat context for Nova.
+11. Rust owns the complete durable mind payload, hydration, migration, serialization, recovery and reset.
+12. JS may provide opaque UI state (chat display/Thinking/technical telemetry history) to a checkpoint; it may not provide or replace `NovaMind`.
+13. Keep Rust modular. `NovaMind` coordinates focused subsystems rather than becoming a monolith.
+14. Stable persistence location remains Tauri `app_data_dir()` for `com.qtech.nova`; never create per-version minds.
+15. External app/tool authorization remains separate from cognition.
+
+CURRENT VERSION / MIGRATION STATUS
+----------------------------------
+Release: V7.0.0-alpha.9.3.1 — Alpha 9.3 Compile Fix
+Rust mind schema: 12
+Rust teacher/test schema: 2
+Rust developmental schema: 1
+Rust internal-cognition schema: 1
+Rust semantic memory schema: 1
+Rust canonical semantic schema: 5
+Rust architecture id: 7.0.0-rust-authoritative-mind-alpha-9.3
+Migration phase: RUST_AUTHORITATIVE
+
+AUTHORITATIVE OWNERSHIP — RUST (PASS 9)
+---------------------------------------
+- turn lifecycle and current turn state
+- conversation history and discourse continuity
+- surface observation/scopes and participant/deictic grounding
+- minimal Basic English structural bootstrap for school-entry language (whole utterance, phrase/clause shape, simple negation/coordination/question/request/context cues) without a built-in grammar curriculum
+- semantic construction, request construction, semantic-goal induction and evidence composition
+- semantic memory, source/provenance and native teaching parsing/translation
+- learned cognitive rules/modules/candidates, execution and capability gating
+- synthesis executability, capability graph and Stored Only reconsideration
+- experience-route scheduling, broadening, reflection, strengthening/decay
+- developmental episodes, categories/relations, consolidation and provisional abstractions
+- internal goals/free thought through the same executive
+- conversation teaching-event interpretation
+- response realization and terminal meaning state
+- complete persistent `NovaMind` snapshot/hydration/migration/serialization/recovery/reset
+- teacher/test attempt history, points/partial-credit/grade feedback, immutable answer provenance, exact-span annotations + per-span notes, preserved attempt Thinking/Inspector context, all as non-executable evidence
+- atomic native mind checkpoint bytes through the stable app-data writer
+
+OWNERSHIP — JAVASCRIPT (NATIVE TAURI)
+-------------------------------------
+- input controls
+- Chat rendering/history presentation
+- human-readable Thinking presentation from the Rust cognitive trace
+- Brain Inspector rendering from a read-only Rust snapshot, including all developer/Grandpa Rust telemetry
+- Teacher/test editing controls and settings UI; grading data itself is Rust-owned
+- thin Tauri IPC coordination
+- opaque UI-state contribution to Rust checkpoints
+
+JavaScript no longer assembles a brain payload, restores Rust subsystem mirrors, synchronizes learned state, chooses prior conversation context, or runs native post-load cognitive maintenance. The raw `nova_state_*` commands and JS-driven Rust import/sync commands are not exposed to the frontend.
+
+PERSISTENCE
+-----------
+Pass 9 preserves the alpha6.1/V5-style stable app-data + temp/backup/verification contract. The payload owner changed: Rust now writes a `PersistentMindEnvelope` containing direct `NovaMind` serialization plus opaque UI presentation state.
+
+On first Pass 9 startup, Rust can migrate an alpha8.1-era payload itself by extracting the persisted Rust semantic/learning/development/internal-cognition mirrors and visible conversation messages. It immediately rewrites the result as a Pass 9 envelope. There is no ongoing dual-write/read-through architecture and no JavaScript mind reconstruction.
+
+CURRENT RUST MODULE LAYOUT
+--------------------------
+src-tauri/src/nova/
+  mind.rs / ids.rs / commands.rs
+  semantics/
+    surface.rs, bootstrap.rs, engine.rs, executive.rs, relational.rs, composition.rs, types.rs
+    knowledge/{mod,types,lexical,graph,evidence,store}.rs
+    requests/{mod,common,concept,general,introspection,relational}.rs
+  cognition/
+    mod.rs, types.rs, runtime.rs, scheduler.rs, conditions.rs, path.rs
+    operations/{mod,core,candidates,scopes,semantic,semantic_records,policy,learned_policy}.rs
+  learning/
+    mod.rs, types.rs, capabilities.rs, synthesis.rs
+  teaching/
+    mod.rs, types.rs, parser.rs, semantic.rs, cognition.rs
+  development.rs, internal.rs, realization.rs, teacher.rs, persistence.rs
+  trace/
+    mod.rs, meaning.rs
+
+Production Rust is intentionally split by responsibility. Tests may be larger, but do not allow production mind files to turn into a monolith.
+
+PERSISTENCE DETAILS
+-------------------
+The alpha6.1/V5-style atomic filesystem contract remains underneath the Pass 9 owner: stable Tauri `app_data_dir()` under `com.qtech.nova`, `nova-state.json`, backup and temp files, fsync/validation, verified commit, and recovery from a valid backup. The old custom `%LOCALAPPDATA%\QTech\Nova\UserData` location remains migration input only.
+
+Pass 9 changes the payload authority, not the proven atomic storage mechanism. Rust serializes `NovaMind` directly into `PersistentMindEnvelope.mind`; JavaScript contributes only opaque UI presentation state. Rust performs legacy alpha8.1 migration once and rewrites the state into the Pass 9 envelope. JavaScript no longer assembles, chooses, merges, or restores brain-state mirrors.
+
+CURRENT TEST / OBSERVATION BASELINE
+-----------------------------------
+Historical reasoning baseline:
+- V7 alpha2 / Pass 2: Lesson 1 1/5. Important success: "What is a lesson?" was answered semantically from learned concept relationships rather than an exact stored answer.
+- V7 alpha3 / Pass 3: Lesson 1 3/5 after replacing the narrow request path with the Rust semantic-goal executive.
+- Current reasoning defects are intentionally not being papered over during the migration. ISSUE-030 remains open.
+
+Alpha 9.3 school-entry language + teacher/observability regression targets:
+- Basic English bootstrap is inside the existing Rust semantic pipeline and preserves simple Year 1 structures without installing noun/pronoun/proper-name/agent/patient/grammar-rule concepts;
+- ordinary simple language such as `A person can answer a question.` is preserved as structural left/operator/link/right evidence while the whole utterance remains available;
+- simple question/request distinction, negation, coordination and previous-utterance candidates are represented as substrate cues, not learned school concepts;
+- Teacher grading may preserve points (for example `0.5 / 1`), optional percentage/grade, Teacher Notes, exact-span marks and notes attached to those marks;
+- old alpha9.2 test history normalizes deterministically into the new Teacher schema, including attempt numbering;
+- Thinking is rendered from the same Rust `cognitiveTrace` used by the current mind and contains meaning-level notice/interpret/connect/consider/conclude events rather than module/search/compiler telemetry;
+- detailed semantic/runtime/module/search/persistence telemetry lives inside Brain Inspector, not a second Developer Trace reasoning surface;
+- native teacher attempts are stored inside Rust `NovaMind.teacher_state`; original questions/answers remain immutable when grades or annotations change;
+- teacher credit supports 0–100% partial credit plus Teacher Notes and exact UTF-16 span annotations for strike/highlight/underline;
+- completed attempts remain Rust teacher-history only while a test is in progress; expected-answer/grading evidence is released into semantic memory only after the full run finalizes;
+- teacher feedback projects into semantic memory as `teacher_feedback` evidence with provenance and `nonExecutable=true`; it does not synthesize learned cognitive rules;
+- Start Reflection sends an ordinary Teacher utterance through the normal Rust turn path and supplies no hidden reflective questions or special reflection executor;
+- Brain Inspector separates current semantics, goals, relationships, knowledge used, Stored Only, test/feedback history, synthesis/development, and engineering telemetry so `Why did Nova do that?` can be answered from one authoritative snapshot.
+
+Pass 9 regression targets:
+- Rust bootstraps/restores the complete `NovaMind` without JavaScript reconstruction;
+- Rust serializes and atomically checkpoints the complete authoritative mind;
+- alpha8.1 Rust mirrors are accepted only as one-time migration input;
+- conversation history/context selection is Rust-owned and persisted with the mind;
+- native JavaScript sends only the new utterance/source metadata, not a selected prior-message window;
+- raw `nova_state_*` and per-subsystem Rust import/sync IPC commands are not exposed to the frontend;
+- Brain Inspector reads a Rust snapshot instead of mutable JS brain mirrors;
+- native JS raw persistence helpers refuse to act;
+- the alpha6.1 atomic filesystem writer remains the low-level commit mechanism.
+
+Inherited Pass 7 regression targets:
+- successful Rust-completed turns can create/strengthen experience routes from actual contributing cognition;
+- attempted experienced routes decay after failed turns;
+- initialized Rust learning state rejects frontend replacement of experience routes;
+- `register_category` and `relate_categories` mutate Rust developmental state;
+- developmental episodes/consolidation/provisional abstractions are Rust-owned;
+- legacy JS developmental records are accepted only as one-time migration input;
+- native JS route reflection/category mutation/consolidation cannot mutate authority;
+- alpha6.1 app-data persistence and hydration/write-gating remain unchanged;
+
+Inherited Pass 6 regression targets:
+- native turns use Rust semantic memory, not a per-turn JS knowledge snapshot;
+- native lesson/conversation ingestion sends raw teaching to Rust;
+- tests/expected answers are rejected from learning before an attempt;
+- Rust teaching creates semantic concepts/claims/guidance/procedures with source provenance;
+- Rust retains its own rules/candidates/modules for later Stored Only reconsideration;
+- initialized Rust semantic memory rejects later frontend replacement;
+- initialized Rust learning state rejects frontend rule/module/candidate injection;
+- re-teaching the same source ID replaces obsolete source-backed semantic/cognitive state instead of layering new teaching on stale teaching;
+- exact Rust semantic/learning state mirrors survive through the existing persistent payload;
+- one-time Pass-5-or-older imports normalize named legacy semantic evidence and learned cognition to Rust-owned deterministic source identity;
+- native JS semantic learner/compiler/synthesizer roots are retired or fail closed;
+- native turn startup failure does not wake the JavaScript brain;
+- Pass 5 fixed-point/capability/execution regressions remain in force.
+
+Validation limitation for this packaged pass: JavaScript syntax can be checked in the current environment, but the Rust toolchain is unavailable here, so Cargo compile/test results must be obtained in the normal project/GitHub Rust build environment before treating the release as compiled.
+
+PERMANENT ISSUES LEDGER
+=======================
+
+ISSUE-001 — Older Nova fallback could answer for current Nova
+Status: FIXED
+Fixed by: V6 current-mind architecture; explicitly preserved through V7 migration
+Problem: Older V6 paths could fall back all the way to older Nova/V4 behavior, making Nova appear to learn while current cognition had not developed.
+Resolution: One current mind; no older response fallback. Migrated Rust responsibilities do not call old JS Nova when they fail.
+DO NOT REINTRODUCE: Any compatibility responder or old-version answer fallback.
+
+ISSUE-002 — V6.1.1 semantic construction contained source-coded language assumptions
+Status: FIXED / REPLACED
+Fixed by: V6.2 generic architecture, then cleanly superseded by V7 Rust semantic migration (alpha2+)
+Problem: Source code contained language-specific constructors/assumptions and lessons could act like unlock keys for prebuilt answers.
+Resolution: Generic semantic substrate + learned semantic graph; V7 Rust semantic core is authoritative for migrated semantics.
+DO NOT REINTRODUCE: phrase/question-word -> semantic-role answer tables.
+
+ISSUE-003 — Giant monolith / wrapper-chain architecture
+Status: FIXED AS ARCHITECTURAL RULE; CONTINUOUSLY ENFORCED
+Resolution: V7 Rust mind is split into focused modules. NovaMind coordinates rather than containing all cognition.
+DO NOT REINTRODUCE: one giant nova_brain.rs or permanent wrappers around obsolete JS implementations.
+
+ISSUE-004 — V6.2.0 accidentally removed free-thought integration
+Status: FIXED
+Fixed in: V6.2.1
+Resolution: internal/self-generated goals use the same current executive.
+DO NOT REINTRODUCE: a separate free-thought brain or dropping internal-goal integration during migration.
+
+ISSUE-005 — Full scan of 300+ learned modules could freeze/crash
+Status: FIXED / IMPROVED
+Fixed in: V6.2.2 compact numbered map; improved V6.2.14 experience-built routing; Rust scheduler migrated in V7 alpha4; route reflection/index authority migrated in V7 alpha7
+Resolution: learned experience routes try successful cognitive paths first, but broaden when stalled. Novel problems may still explore broadly. Pass 7 makes route learning/strengthening/decay Rust-owned as well as route use.
+DO NOT REINTRODUCE: unconditional repeated full scans every cycle, or an index that prevents broadening.
+
+ISSUE-006 — Removing source-coded constructor caused semantic regression
+Status: FIXED
+Fixed in: V6.2.3
+Problem: Mira/Tavik semantic tests had empty semantic buckets after constructor removal.
+Resolution: current generic semantic construction restored without reviving V6.1 parser; later migrated/replaced in Rust.
+
+ISSUE-007 — Native state disappeared across uninstall/reinstall updates
+Status: REGRESSED IN V7 UPDATE WORKFLOW; ALPHA6.1 REPAIR IMPLEMENTED — LIVE INSTALLER VALIDATION REQUIRED
+Originally addressed: V6.2.15
+Regression report: during V7 development, uninstalling while choosing to keep application data and then installing the next build could lose the work performed in the previous install. Quinn reports Nova V5 had survived this workflow reliably.
+Alpha6.1 resolution: restore Tauri `app_data_dir()` / stable `com.qtech.nova` as the ONE native authority, matching the proven V5 persistence contract. Retire `%LOCALAPPDATA%\QTech\Nova\UserData` to one-time migration input; select the newest valid historical snapshot by savedAt/mtime; strengthen backup validation/recovery; await durable checkpoints after high-value actions.
+DO NOT REINTRODUCE: versioned save locations, install-directory state, a second writable migration directory, or completed learning/turn actions whose native commit is only fire-and-forget.
+
+ISSUE-008 — False "I understand" success on incomplete cognition
+Status: FIXED
+Fixed in: V6.2.8
+Resolution: removed acknowledgement that falsely marked partial semantic construction as success; Thinking trace exposes actual state.
+
+ISSUE-009 — Hardcoded cognitive fallback wording
+Status: FIXED
+Fixed in: V6.2.9
+Resolution: current cognition exposes truthful cognitive outcome; learned/current realization decides wording. No developer-coded normal cognitive excuses.
+
+ISSUE-010 — False synthesis executability from broad labels/categories
+Status: FIXED; RECHECKED IN V7 ALPHA4
+Fixed in: V6.2.10; alpha4 Rust capability gating explicitly avoids broad category metadata as capability production
+Problem: unrelated modules could appear reusable because of labels such as general/reasoning/lesson scope.
+Resolution: capability reuse requires explicit meaningful capabilities/forms/dependencies. `unmapped_cognitive_state_transformation` is diagnostic only.
+DO NOT REINTRODUCE: category/domain label == capability.
+
+ISSUE-011 — Curriculum test runner poked an internal workspace instead of actually prompting Nova
+Status: FIXED
+Fixed in: V6.2.12
+Resolution: Teacher questions are visible real turns, one at a time; wait for Nova, grade after attempt, then next question.
+
+ISSUE-012 — Automatic grader too literal
+Status: FIXED
+Fixed in: V6.2.13
+Resolution: PASS/FAIL/REVIEW plus persistent manual Correct/Incorrect/Use Auto override. Keep original automatic grade and user grade separately.
+
+ISSUE-013 — Auto-populated compact index harmed reasoning
+Status: FIXED
+Fixed in: V6.2.14; execution scheduler migrated to Rust in alpha4; reflection/index ownership migrated to Rust in alpha7
+Resolution: descriptors remain short metadata; actual index starts empty and is built from successful reasoning traces. Route is attention/history, not permission. JavaScript no longer owns native post-success route mutation.
+
+ISSUE-014 — Nova could store concepts but mainly retrieve direct/exact answers
+Status: IMPROVED; BASELINE CASE FIXED
+Improved in: V7 alpha2+
+Evidence: "What is a lesson?" successfully opened learned concept and composed a supported answer not stored as an exact Q/A pair.
+Remaining: continue improving transfer/multi-hop reasoning; do not treat one test as universal completion.
+
+ISSUE-015 — General semantic-goal construction was too narrow
+Status: IN PROGRESS / SUBSTANTIALLY IMPROVED
+Improved in: V7 alpha3
+Evidence: Lesson 1 moved from 1/5 in alpha2 to 3/5 in alpha3. Alpha3 can induce a general semantic information goal and compose learned evidence for richer questions.
+Next: observe failures under Rust module runtime before adding more semantic substrate.
+
+ISSUE-016 — Rust Pass 2 E0502 token borrow errors
+Status: FIXED
+Fixed in: V7 alpha2 compile-fix
+Resolution: semantic observation owns the token snapshot it needs before mutating canonical cognition. No unsafe/interior-mutability workaround.
+
+ISSUE-017 — Learned cognitive-module runtime still executed in JavaScript on native Tauri
+Status: FIXED FOR NATIVE EXECUTION IN V7 ALPHA4
+Fixed in: V7 alpha4 Pass 4
+Resolution: learned module data is bridged to Rust; Rust runs conditions/programs, validates canonical state, records module contributions, and exposes unsupported operations honestly. JS interpreter remains browser/dev only and is not a native fallback.
+
+ISSUE-018 — Persistent category mutation operations depend on JS-owned developmental graph
+Status: FIXED FOR NATIVE DEVELOPMENTAL AUTHORITY IN V7 ALPHA7
+Fixed in: V7 alpha7 Pass 7
+Resolution: `RustDevelopmentState` now owns developmental categories/relations. Rust cognitive operations implement `register_category` and `relate_categories` against that same persistent current-mind state. Native JS category mutation is retired/mirror-only.
+DO NOT REINTRODUCE: a separate JS developmental graph that learned Rust cognition must call or synchronize bidirectionally.
+
+ISSUE-019 — Persistent semantic memory, synthesis, and actual Stored Only reconsideration were JS-owned
+Status: FIXED FOR NATIVE SEMANTIC/LEARNING AUTHORITY IN V7 ALPHA6; DURABLE PAYLOAD OWNERSHIP TRACKED BY ISSUE-020
+Problem: Pass 4 could execute learned modules in Rust, but JavaScript still decided executability/Stored Only state and owned the semantic store used by turns.
+Resolution in alpha5: synthesis executability, active learned-module state, capability producer/waiter graph, and fixed-point Stored Only reconsideration moved to Rust.
+Resolution in alpha6: in-process semantic memory used by native turns, source provenance, lesson/source parsing, semantic learning, and cognitive candidate translation moved to Rust. Native turns no longer receive a JS knowledge snapshot.
+Do not reintroduce: native JS semantic/cognitive stores as current mind authority.
+
+ISSUE-020 — Rust NovaMind did not own authoritative long-term learned-state persistence
+Status: FIXED IN V7 ALPHA9
+Problem: through Pass 8, JavaScript still assembled the complete durable payload and restored Rust subsystem mirrors even though cognition itself was Rust-owned.
+Resolution: Pass 9 adds Rust `PersistentMindEnvelope` ownership. Rust loads/restores/migrates `NovaMind`, takes its own locked snapshot for checkpoints, serializes it, and commits it through the existing alpha6.1 atomic app-data writer. JavaScript contributes only opaque UI presentation state. Legacy alpha8.1 mirrors are imported once inside Rust and immediately rewritten as a Pass 9 envelope.
+DO NOT REINTRODUCE: JS-built mind payloads, per-subsystem frontend hydration, a second mind database, or version-specific save locations.
+
+ISSUE-021 — `module.requires` mixed capability dependencies with ordinary data/runtime preconditions
+Status: FIXED IN V7 ALPHA4
+Problem: treating every `requires` string as a CPU/cognitive capability would falsely block modules that merely require represented data/state.
+Resolution: Rust builds a known capability vocabulary from explicit capabilities/produces/cognitive forms and capability graph edges. Only recognized capability dependencies gate execution; ordinary state needs remain module conditions/program responsibility.
+
+ISSUE-022 — Typed Rust schemas could discard new learned top-level fields
+Status: FIXED IN V7 ALPHA4 FOR OPEN LEARNED RECORDS USED BY CURRENT RUNTIME
+Resolution: requests, references, unknown slots, conclusions, and unresolved needs support serde(flatten) extension maps; semantic normalization preserves learned request/unknown-slot/conclusion extensions; learned goals preserve open fields.
+Reason: learned cognition must be able to add structural data without Rust source edits for every new field.
+
+ISSUE-023 — Rust generic paths lacked JS numeric array-path parity
+Status: FIXED IN V7 ALPHA4
+Example: requests.0.actionFamily
+Resolution: get/set/delete mutable/immutable path traversal now handles numeric array segments.
+
+ISSUE-024 — Learned surface-family modules needed quoted payload capture
+Status: FIXED IN V7 ALPHA4
+Resolution: generic learned_surface_family condition can use learned positive/negative cues and capture a quoted region into a learned capture name. No action phrase meaning is hardcoded in production Rust.
+
+ISSUE-025 — Compound learned conditions could default incorrectly instead of applying nested logic
+Status: FIXED IN V7 ALPHA4
+Resolution: Rust condition evaluator recursively supports all / any / not condition objects.
+
+ISSUE-026 — Nested learned-module invocation could bypass capability gating
+Status: FIXED IN V7 ALPHA4
+Problem: an otherwise eligible module could invoke another learned module by ID/name from inside its program, potentially bypassing the top-level capability gate.
+Resolution: Rust now builds the invokable-module set through the same explicit capability filter used by the scheduler; nested invoke_module can only target modules that are currently eligible.
+Do not reintroduce: never let nested execution become a side door around capability/dependency truth.
+
+ISSUE-027 — Failed compound-condition branches could leak captures/state into later branches
+Status: FIXED IN V7 ALPHA4
+Problem: learned all/any/not conditions may perform captures while evaluating. A failed or negated child could leave those temporary captures in the runtime context and influence a later successful branch.
+Resolution: compound-condition evaluation is transactional: failed all restores its prior context; each failed any branch is rolled back before the next; not always restores child side effects after evaluating truth.
+Do not reintroduce: condition evaluation may inspect/capture provisionally, but unsuccessful branches must not mutate the surviving cognitive context.
+
+ISSUE-028 — Thinking panel mixed Nova's meaning-level cognition with developer telemetry
+Status: FIXED IN V7 ALPHA4.1; STRENGTHENED IN V7 ALPHA9.2
+Problem: Thinking displayed lines such as concept counts, relational assertion counts, semantic executive cycle counts, request counts, and module counts. Those described software machinery rather than what Nova interpreted.
+Resolution: Rust emits one structured `cognitiveTrace` from the authoritative canonical turn state. Alpha9.2 cleans the Rust meaning trace itself so Thinking says what Nova noticed, interpreted, connected, considered, left unresolved and concluded without exposing module names, search mode or compiler/runtime counters. Engineering telemetry remains available in Brain Inspector.
+Do not reintroduce: do not generate a second reasoning/explanation system in JavaScript and do not turn execution counters back into the human Thinking narrative.
+
+ISSUE-029 — No dedicated whole-chat technical Developer Trace
+Status: SUPERSEDED / INTEGRATED INTO BRAIN INSPECTOR IN V7 ALPHA9.2
+Problem: useful migration telemetry originally had nowhere to live except the per-turn Thinking panel or Brain Inspector.
+Historical resolution: alpha4.1 added a separate Developer Trace drawer grouped by turn.
+Current resolution: alpha9.2 removes the separate drawer and preserves that exact technical history under Brain Inspector's `Grandpa Rust telemetry` section. This keeps one technical debugging home while Thinking remains meaning-level. Telemetry is presentation-only and never feeds cognition.
+
+ISSUE-030 — Discourse reference in follow-up wording can fail to link to Nova's previous response
+Status: OPEN — DISCOVERED DURING V7 ALPHA4 TESTING
+Example observed: after a prior Nova response, user asked `Can you say that in a more natural way? ...`; Nova answered by defining `that` instead of treating the follow-up as referring to the prior response.
+Current alpha4.1 diagnostic improvement: recent conversation turns, including the previous assistant response, are now provided to Rust as explicit conversation-context evidence. The meaning trace truthfully reports whether Nova formed a semantic context link. It does NOT silently resolve the reference or add a hardcoded `that -> previous response` rule.
+Next reasoning work: inspect the new Reference/Context/Goal trace and improve the current generic reference/context-resolution machinery if the failure persists.
+Do not reintroduce: no phrase-specific `that` handler or UI-side post-hoc correction.
+
+ISSUE-031 — serde_json::json! macro rejected inline statement-block field expressions
+Status: FIXED IN V7 ALPHA4.1 COMPILE-FIX
+Problem: semantic_records.rs used fields such as `"identityKey": { let key = ...; if ... { ... } else { ... } }` inside json! object syntax. serde_json::json! parsed the braces as macro JSON/object tokens rather than a normal Rust statement block and failed with `unexpected end of macro invocation`.
+Resolution: all derived/defaulted semantic-record fields are computed as ordinary Rust local values before invoking json!. The macro now receives only finished expressions/values. No unsafe code, macro workaround, or JS fallback was added.
+Do not reintroduce: keep nontrivial control flow and local bindings outside serde_json::json! object fields. Treat json! as serialization syntax, not a miniature execution block.
+
+ISSUE-032 — Native JavaScript synthesis remained authoritative after Rust runtime migration
+Status: FIXED IN V7 ALPHA5
+Problem: Pass 4 moved learned-module execution to Rust, but JS still synthesized/stored modules and therefore decided what cognition was executable. That left the most important learning authority outside the new mind.
+Resolution: RustLearningState now owns rule/module status, active module catalog, candidate validation, synthesis executability, capability dependency graph, and fixed-point Stored Only reconsideration. Native JS candidate generation is proposal-only until its translator migrates.
+Do not reintroduce: JS `store module -> tell Rust it is executable` authority on the native path.
+
+ISSUE-033 — Fresh JavaScript cognition snapshots could replace Rust cognitive authority each turn
+Status: FIXED IN V7 ALPHA5
+Problem: earlier migration passes bridged the JS module catalog into every Rust turn. Once Rust owns learning state, that would allow a stale or different JS catalog to overwrite current cognition.
+Resolution: native turn input now sends `cognition: null`. Rust accepts bridged cognition only as a one-time bootstrap when its learning state is uninitialized; subsequent turns execute RustLearningState.
+Do not reintroduce: per-turn replacement of Rust learned state from frontend stores.
+
+ISSUE-034 — Teaching-to-candidate translation still lived in JavaScript
+Status: FIXED FOR NATIVE LESSON/SOURCE INGESTION IN V7 ALPHA6
+Problem: alpha5 still used JS lesson/document parsing and JS teaching -> declarative cognitive candidate translation even though Rust decided executability.
+Resolution: Pass 6 added Rust `teaching::{parser,semantic,cognition}` and `nova_mind_ingest_source`. Native document/conversation learning sends raw teaching to Rust; the JS document/cognition compilers are retired on Tauri.
+Pass 8 closes the adjacent conversation teaching-intent item under ISSUE-044: native event kind now comes from Rust.
+Do not reintroduce: JS parsing/classifying native lesson or conversation contents into the semantic/cognitive brain before Rust authority.
+
+ISSUE-035 — Rust synthesis could have trusted imported modules without validating the current substrate
+Status: FIXED IN V7 ALPHA5
+Problem: migration data may contain a module an older JS substrate called executable even though current Rust does not implement one of its operations/conditions. Blind import would recreate false executability.
+Resolution: Rust revalidates imported module programs and condition trees against the current Rust operation/condition vocabulary. Invalid imported modules are rejected and their associated rules are demoted to Stored Only.
+Do not reintroduce: `previous status == executable` as proof of current executability.
+
+ISSUE-036 — Whole-lesson/source-level construction could regress when native JS synthesis authority is disabled
+Status: FIXED IN V7 ALPHA5; NATIVE TRANSLATOR REPLACED IN RUST IN V7 ALPHA6
+Problem: V6.2.10+ could synthesize useful cognition from a whole lesson rather than isolated lines. Simply disabling JS synthesis would have lost that developmental capability during migration.
+Resolution in alpha5: the old whole-source translator temporarily ran non-mutating with `{store:false}` and proposed source-level modules that Rust validated. This preserved capability while authority moved.
+Resolution in alpha6: native source parsing and teaching-to-candidate construction moved into Rust `teaching::{parser,cognition}`. The alpha5 JS proposal route is retired on native Tauri rather than retained as a wrapper.
+Do not reintroduce: rule-at-a-time-only synthesis as a migration shortcut, or the old JS translator as a native proposal layer after Rust owns translation.
+
+ISSUE-037 — Diagnostic unmapped transformation could leak back into capability truth
+Status: FIXED / RE-ENFORCED IN V7 ALPHA5
+Problem: `unmapped_cognitive_state_transformation` historically became a broad pseudo-capability and falsely woke unrelated cognition.
+Resolution: Pass 5 filters this diagnostic out of capability producers and waiters during synthesis AND out of runtime module output capability calculation.
+Do not reintroduce: diagnostic/failure labels as reusable cognitive capabilities.
+
+ISSUE-038 — Native maintenance roots could still call the old JavaScript synthesizer after Pass 5 ownership moved
+Status: FIXED IN V7 ALPHA5 BEFORE PACKAGING
+Problem: several root/helper functions still contained unconditional `v520GeneralSynthesisPass` calls. Even if normal document learning was gated, post-hydration or source-rebuild maintenance could accidentally let JS mutate executable cognition on native Tauri.
+Resolution: native persistence maintenance, cognition-rule compilation, and source-rebuild maintenance now explicitly defer synthesis to Rust. Browser development keeps the JS path.
+Do not reintroduce: relying only on callers to remember `synthesize:false`; native synthesis authority must be blocked at root helpers too.
+
+ISSUE-039 — Fixed-point Stored Only reconsideration was iteration-order dependent within a synthesis round
+Status: FIXED IN V7 ALPHA5 BEFORE PACKAGING
+Problem: a module adopted early in a round could immediately satisfy a later rule in the same loop, while reversed rule order required another round. That made developmental awakening depend on storage order.
+Resolution: each synthesis round uses a snapshot of the module/capability state from the start of that round. Newly adopted cognition becomes capability evidence on the next round, making the fixed-point cascade deterministic and observable.
+Do not reintroduce: same-round capability visibility based on rule iteration order.
+
+ISSUE-040 — Clearing persistent/UI state could leave authoritative Rust learning alive in memory
+Status: FIXED IN V7 ALPHA5 BEFORE PACKAGING
+Problem: after Pass 5 moved learned cognition authority into Rust, the existing frontend reset cleared disk/JS state but did not clear the in-process RustLearningState. Nova could therefore retain native learned modules until process restart.
+Resolution: alpha5 added a Rust learning reset; Pass 6 evolved this into `nova_mind_reset_developmental_state`, which clears Rust semantic memory, learning state, module/capability views, discourse/current cognition, then the existing frontend reset clears persistent/UI state.
+Future note: when full persistent mind ownership moves to Rust, keep one authoritative Rust reset operation rather than parallel reset semantics.
+
+ISSUE-041 — Retired native JavaScript learning roots could still mutate mirrors if called indirectly
+Status: FIXED IN V7 ALPHA6 BEFORE PACKAGING
+Problem: after moving teaching authority to Rust, old root helpers such as `v500CompileCognitionRulesFromText`, `v534CompileDocumentCognition`, source rebuild, semantic hygiene/reindex, or `v520GeneralSynthesisPass` could still be reached indirectly by maintenance code.
+Resolution: native root guards now retire/fail closed before mutating semantic/cognitive state. Browser-only migration/development paths retain the old implementations temporarily.
+Do not reintroduce: protecting only the newest caller while leaving obsolete native mutation roots live.
+
+ISSUE-042 — Rust-generated semantic/learning state could be regenerated or partially reconstructed on restart
+Status: FIXED FOR PASS 6 STATE MIRRORS IN V7 ALPHA6
+Problem: if Rust-generated candidates or semantic state existed only in-process, restart recovery could depend on JS retranslating lessons and silently change Stored Only/executability state.
+Resolution: the existing stable payload now carries exact `rustSemanticMemoryState` and `rustLearningState` mirrors. Startup transports those mirrors opaquely back to Rust; Rust rehydrates semantic state and revalidates learned cognition against the current substrate. JS does not unpack the mirrors into replacement brain state. Legacy JS stores are used only for a one-time older-version import.
+Remaining: complete payload/file ownership is still ISSUE-020.
+
+ISSUE-043 — Re-teaching the same source could layer new teaching over obsolete source-backed state
+Status: FIXED IN V7 ALPHA6 BEFORE PACKAGING
+Problem: additive upserts could leave an old fact/rule/module alive when a source with the same ID was corrected or rewritten.
+Resolution: Rust source ingestion now removes that source's prior semantic evidence and Rust-generated rules/candidates/modules before learning its current contents. Procedure steps now carry source IDs for source-level cleanup.
+Do not reintroduce: source updates as append-only compatibility layers.
+
+ISSUE-044 — Conversation teaching-intent detection still lives in JavaScript
+Status: FIXED IN V7 ALPHA8
+Problem: after Pass 6, Rust owned actual ingestion but the JS coordinator still decided whether a conversation turn counted as teaching.
+Resolution: Pass 8 adds Rust current-turn `eventKind`. Native coordination reads that Rust decision; `v450DetectTeachingAct` is browser-only on this path. Structured teaching roles are recognized through the existing Rust teaching representation rather than a new phrase-trigger table.
+Do not reintroduce: frontend phrase detectors as native teaching authority.
+
+ISSUE-045 — Persisted Rust fallback IDs used `DefaultHasher`
+Status: FIXED IN V7 ALPHA6 BEFORE PACKAGING
+Problem: Rust's default hash implementation is not a durable file-format identity contract. Using it for concept/rule/module/source fallback IDs could make persisted identity unstable across compiler/runtime changes.
+Resolution: added deterministic `stable_hash_id` to the existing Rust ID subsystem using a fixed FNV-1a 64-bit algorithm and moved Pass 6 persisted fallback IDs onto it. Named source fallback IDs are based on canonical source name so editing/reteaching the same named source preserves replacement identity.
+Do not reintroduce: implementation-defined hashers for persisted mind identity.
+
+ISSUE-046 — Native document intake still let the JS parser decide whether a file was instructional
+Status: FIXED IN V7 ALPHA6 BEFORE PACKAGING
+Problem: Rust performed the actual learning, but the native document doorway still consulted the old JS document parser/classifier before deciding whether to invoke Rust learning. That left JavaScript with a brain-level veto/intent decision for lesson documents.
+Resolution: added non-mutating Rust `nova_mind_parse_source`. Native document intake asks the Rust teaching parser for `documentKind`, `instructional`, and `hasTestMaterial` before learning. JavaScript may still extract/render Teacher/test UI material, but it no longer decides native document learning truth.
+Do not reintroduce: a JS parser/classifier in front of Rust as the authority over what native Nova treats as teaching material.
+
+ISSUE-047 — JavaScript document archive IDs could bypass Rust source replacement
+Status: FIXED IN V7 ALPHA6 BEFORE PACKAGING
+Problem: native document intake initially archived the file in JS first and passed that JS-generated source ID into Rust. The JS archive ID can change when an edited file is re-uploaded, so Rust could see the correction as a new source and leave obsolete teaching alive.
+Resolution: native learned documents now enter Rust without a frontend-assigned brain ID. Rust derives the deterministic source ID from the named source and mirrors it back for UI/persistence. The one-time legacy semantic/cognitive import also normalizes named old JS source IDs/evidence to the same Rust source identity so post-upgrade corrections can replace their prior contribution.
+Do not reintroduce: UI/archive record identity as authoritative learned-source identity.
+
+ISSUE-048 — Pre-hydration/frontend saves could outrank the real durable mind; completed actions could also return before disk commit
+Status: FIXED IN V7 ALPHA6.1 — LIVE UPDATE VALIDATION REQUIRED
+Problem: `memory.js` loads before the native persistence bridge and async bootstrap. Any script-load/migration `saveState()` before hydration could serialize default/unhydrated frontend state with a fresh `persistence.savedAt`. Bootstrap then compared local cache vs durable state by savedAt, so that newly-created empty/partial cache could be considered "newer" and promoted over the actual saved mind. Later startup maintenance also queued saves before Rust semantic/learning mirrors had rehydrated. Separately, learning/turn completion could return while the native commit was still in flight.
+Resolution: alpha6.1 starts persistence hydration-closed. Pre-bootstrap `saveState()` is ignored rather than mutating cache. After bootstrap, both cache mutation and durable writes remain gated while maintenance and Rust hydration run. If Rust NovaMind hydration fails, the gate stays closed and the last saved state is untouched. After successful Rust hydration, startup opens persistence and performs one awaited checkpoint. Document learning, conversation learning, completed turns, and blocked/error turns also use awaited durable checkpoints.
+Do not reintroduce: any save before hydration that can acquire a newer timestamp than the not-yet-loaded durable state; fire-and-forget persistence as the only save at a high-value completed action; or startup snapshots overwriting the last known-good durable mind before Rust state is current.
+
+CHANGELOG
+=========
+
+V7.0.0-alpha.9.3 — Basic English + Teacher Refinement
+- Improved the existing Rust-authoritative semantic pipeline directly; no new language engine, Teacher reasoner, Reflection reasoner or fallback architecture was introduced.
+- Added a deliberately small Rust Basic English bootstrap that preserves whole utterances plus simple phrase/clause, copular/operator, negation, coordination, question/request and conversational-reference structure.
+- Replaced capitalization-dependent relational discovery with bootstrap structural relations. Capitalization no longer implies the learned concept of a proper name.
+- Kept classroom English/reasoning/school concepts learnable. The bootstrap is explicitly `enough English to attend school, not enough English to skip school`.
+- Added Brain Inspector visibility for the authoritative `englishBootstrap` observations and meaning-level Thinking interpretation from the same state.
+- Extended Rust Teacher history with points awarded/possible, optional grade, lesson context, deterministic attempt number, per-span notes, and preserved Inspector context.
+- Teacher point and percentage grades must agree if both are supplied; feedback edits validate transactionally before mutating persistent Teacher history.
+- Preserved immutable original questions/answers and the alpha9.2 answer-key isolation rule; released feedback remains non-executable Teacher evidence.
+- Added alpha9.3 regressions for school-entry structure, lack of hidden grammar labels, question/request/negation/coordination/context cues, score/span-note history, grade consistency, Rust ownership and alpha9.2 persistence compatibility.
+- Rust mind schema is 12; Teacher schema is 2; canonical semantic schema is 5.
+- The alpha6.1 low-level atomic persistence writer remains unchanged.
+
+V7.0.0-alpha.9.2 — Teacher & Observability Tools
+- Kept the final Pass 9 Rust-authoritative brain architecture; alpha9.2 is tooling/observability, not a new reasoning layer.
+- Cleaned the Rust human-readable cognitive trace so Thinking presents notice/interpret/connect/consider/unresolved/conclusion meaning rather than module/search/compiler telemetry.
+- Removed the separate Developer Trace drawer and moved detailed per-turn Rust telemetry into organized Brain Inspector sections.
+- Reorganized Brain Inspector around `Why did Nova do that?`, current semantics, goals/internal cognition, relationships, knowledge used, Stored Only, test/teacher history, synthesis/development, Grandpa Rust telemetry and ownership.
+- Added Rust-owned teacher/test attempt history with immutable original question/answer, 0–100% partial credit, Teacher Notes and exact strike/highlight/underline spans.
+- Each Rust teacher attempt also preserves the authoritative meaning-level cognitive trace and a compact Rust context snapshot from the attempt, so later debugging/reflection can inspect what Nova actually represented without JS inventing a retrospective rationale.
+- Test attempts are persisted immediately but answer-key/grading evidence stays out of semantic retrieval until the entire run finishes, preventing question-to-question leakage.
+- Teacher feedback is projected into semantic memory as explicit `teacher_feedback` evidence with provenance and `nonExecutable=true`; it never enters teaching-to-cognition synthesis.
+- Start Reflection sends one ordinary Teacher utterance through Nova's normal input path. The button supplies no reflective questions and no hidden reflection executor.
+- Added alpha9.2 regression tests for immutable answers, annotation bounds, non-executable feedback and unchanged Rust reasoning ownership.
+
+V7.0.0-alpha.9.1 — Post-Migration Dead-Code Cleanup
+- Removed obsolete production `nova_state_location`; diagnostics remain the supported persistence inspection surface.
+- Removed unused cognition `object_field` helper and unused `KnowledgeSnapshot::counts`.
+- Removed redundant `RustDevelopmentState::relate_categories`; the authoritative learned operation already mutates/commits the runtime developmental graph.
+- Removed old per-subsystem import/sync/reset APIs from the production build. Historical overwrite/migration regression helpers are now compiled only under `cfg(test)` and cannot exist in the app binary.
+- Kept whole-mind Pass 9 bootstrap/migration as the only production restoration architecture.
+- No `allow(dead_code)` suppression, no fallback brain, and no behavior/curriculum hardcoding was added.
+
+V7.0.0-alpha.7 — Developmental Authority (Pass 7)
+- Moved persistent experience-route reflection/index update authority into Rust; successful turns learn/strengthen routes from actual semantic signatures and materially changed modules.
+- Added Rust failure decay for attempted experienced routes while retaining broadening when a route stalls.
+- Frontend learning synchronization can no longer replace Rust `experience_routes` after Rust learning initializes.
+- Added typed `RustDevelopmentState` for categories, category relations, compact developmental episodes, provisional abstractions, and consolidation state.
+- Implemented learned `register_category` and `relate_categories` operations directly against the Rust developmental graph.
+- Moved native developmental episode recording and periodic consolidation/abstraction into Rust turn completion.
+- Added one-time legacy developmental import; after initialization JS developmental records cannot replace Rust authority.
+- Retired native JS post-turn reflection, category mutation, episode recording, and consolidation/abstraction paths; browser-only development implementations are not fallbacks.
+- Persist exact `rustDevelopmentState` through the existing temporary JS whole-payload serializer alongside Rust semantic/learning mirrors.
+- Preserved alpha6.1 stable Tauri app-data persistence, hydration gating, backup recovery, and awaited durable checkpoints.
+- Intentionally left free thought/internal goals for Pass 8 to avoid introducing a second autonomous executive during this migration.
+
+V7.0.0-alpha.6.1 — Durable Persistence Repair (Pass 6 brain unchanged)
+- Restored the proven Nova V5 persistence authority: Tauri `app_data_dir()` under stable identifier `com.qtech.nova` is again the ONE native state directory.
+- Retired `%LOCALAPPDATA%\QTech\Nova\UserData` as a writable authority; it is a one-time migration source only.
+- First alpha6.1 load compares valid app-data and retired-location primary/backup snapshots by payload `persistence.savedAt`, then filesystem mtime, and commits the newest snapshot into app-data before marking migration complete.
+- Preserved V5 temp -> backup -> commit behavior while strengthening it: fsync temp/backup/current, never overwrite good backup from corrupt current, reread/verify committed bytes, and attempt backup restore on commit failure.
+- Added a pre-bootstrap hydration gate so script-load `saveState()` calls cannot create a newer default cache snapshot before the real durable state is loaded; cache and disk writes remain gated until Rust hydration succeeds.
+- Added explicit awaited durable checkpoints after Rust startup hydration, document ingestion, conversation learning, completed turns, and blocked/error turns.
+- Removed the pre-Rust post-load save so startup cannot commit an incomplete transitional snapshot before Rust semantic/learning state has rehydrated.
+- Kept Pass 6 Rust cognition/semantic/learning architecture and schemas unchanged. This patch repairs application infrastructure; it does not add a brain wrapper or move authority back to JavaScript.
+- ISSUE-007 is marked REGRESSED/REPAIRED-PENDING-LIVE-VALIDATION rather than falsely remaining permanently FIXED.
+
+V7.0.0-alpha.6 — Semantic & Teaching Authority (Pass 6)
+- Moved in-process semantic-memory authority used by native turns into `RustSemanticMemoryState`.
+- Native turns now send both `knowledge: null` and `cognition: null`; initialized Rust state cannot be replaced by frontend snapshots.
+- Added Rust lesson/source parser, semantic teaching translator, cognitive teaching translator, source provenance, and `nova_mind_ingest_source`.
+- Native document and conversation learning now send raw teaching into Rust; tests/answer keys are rejected from learning before attempt.
+- Retained Rust-generated synthesis candidates inside `RustLearningState` so Stored Only reconsideration does not depend on JS retranslation.
+- Persisted exact Rust semantic/learning state mirrors in the existing stable payload for restart recovery; JS transports them opaquely and Rust rehydrates/revalidates them. Pass-5-or-older JS stores are one-time upgrade inputs only.
+- Added non-mutating Rust source classification so the native document doorway no longer lets the JS parser decide whether a source is instructional/test material.
+- Moved native learned-document source identity into Rust; JS no longer assigns the brain source ID, and one-time legacy imports normalize named source identities/evidence for future replacement.
+- Replaced implementation-defined persisted fallback hashing with deterministic Rust `stable_hash_id` identity.
+- Retired native JS semantic learner, cognitive compiler, document compiler, source rebuild, semantic hygiene relearner, and general synthesizer roots rather than keeping them as hidden fallback authority.
+- Changed native turn startup to fail closed if authoritative Rust NovaMind does not start.
+- Added source-replacement semantics so correcting/reteaching the same source ID removes obsolete source-backed semantic and cognitive state before relearning current contents.
+- Strengthened module deduplication so distinct declarative conditions/programs from the same source are not collapsed by descriptive metadata alone.
+- Evolved reset into `nova_mind_reset_developmental_state` so semantic + learning + discourse/current cognitive Rust state clear together.
+- Kept full payload/file persistence, experience reflection/index, developmental categories/consolidation, free thought, general realization, and conversation teaching-intent classification explicitly pending.
+- Removed the obsolete standalone V6.2.15 preservation helper from the clean V7 package; the stable non-versioned state path remains authoritative.
+
+
+V7.0.0-alpha.5 — Learning & Synthesis Authority (Pass 5)
+- Moved native learned cognitive rule/module state authority into RustLearningState.
+- Moved synthesis executability decisions into Rust; frontend candidate generation is proposal-only.
+- Added Rust validation of both learned operation programs and learned condition trees before adoption.
+- Revalidated imported migration modules; invalid old executable modules are rejected/demoted rather than trusted.
+- Moved capability producer/waiter dependency graph ownership into Rust without treating broad domains/categories as capabilities.
+- Moved Stored Only executability and bounded fixed-point reconsideration into Rust so later capability production can wake older cognition.
+- Preserved whole-source/whole-lesson construction by allowing the current translator to produce non-mutating source candidates that Rust validates/adopts.
+- Native turns no longer accept fresh frontend cognition snapshots after Rust learning state is initialized.
+- JavaScript mirrors authoritative Rust learning state only for current persistence/UI compatibility.
+- Hardened native synthesis boundaries at root maintenance/compiler helpers so post-hydration/source rebuild cannot accidentally run the old JS synthesizer.
+- Made fixed-point rounds snapshot-based so Stored Only awakening is deterministic rather than dependent on rule iteration order.
+- Added Rust learning reset command and wired the existing reset path to clear in-process Rust learning authority.
+- Kept semantic memory, lesson parsing/candidate translation, experience-index learning, developmental categories/consolidation, free thought, general realization, and payload persistence orchestration explicitly pending rather than pretending the brain migration is complete.
+
+
+V7.0.0-alpha.4.1 — Compile Fix: semantic_records json! normalization
+- Fixed Rust compiler errors in cognition/operations/semantic_records.rs caused by inline `let`/`if` statement blocks inside serde_json::json! object fields.
+- Refactored frame/entity/event/request/unknown-slot/evidence/conclusion defaults into ordinary Rust locals before JSON normalization.
+- Preserved the alpha4.1 Cognitive Trace UI architecture and all Pass 4 cognitive-runtime ownership; this is a compile correction, not another reasoning layer.
+
+V7.0.0-alpha.4.1 — Cognitive Trace UI (Pass 4.1)
+- Split per-turn Thinking from developer telemetry without adding a second reasoning system.
+- Added Rust-owned structured cognitiveTrace events grounded in the canonical state and Rust cognitive runtime report.
+- Thinking now renders meaning-level events: quotes/surface boundaries when relevant, references, conversation-context linkage, active learned concepts, relationships/events, represented goal/request, materially changing learned cognition, unresolved needs, and conclusion.
+- Added recent conversation turns to the Rust turn input as context evidence; this lets the trace expose when a previous assistant response was available but no semantic link was actually formed. It does not hardcode reference resolution.
+- Added whole-chat collapsible Developer Trace drawer grouped by turn with exact semantic/runtime reports, executive data, canonical IDs, experience/search activity, and duration.
+- Kept Brain Inspector as the deepest current/persistent mind-state view.
+- Developer Trace and Thinking are presentation-only consumers of the same authoritative Rust cognition; neither feeds a second reasoning path.
+- Preserved Pass 4 Rust cognitive runtime authority and all persistence paths.
+
+V7.0.0-alpha.4 — Cognitive Runtime (Pass 4)
+- Migrated native learned cognitive-module execution into modular Rust.
+- Added Rust execution-side experience-route scheduler: experienced route first; broaden when stalled; novel route = broad exploration.
+- Added known-capability gating and reporting of Stored Only rules whose explicit dependencies are now available.
+- Preserved open learned structural fields through typed canonical schemas.
+- Added numeric array path traversal parity for learned programs.
+- Added per-reference module execution over canonical reference mentions.
+- Migrated generic learned surface-family matching/quoted capture and recursive compound conditions.
+- Enforced capability gating on nested `invoke_module` calls so learned programs cannot bypass dependency truth.
+- Made compound-condition evaluation transactional so failed/negated branches cannot leak temporary captures into later reasoning.
+- Unsupported/unmigrated operations are reported honestly; no native JS module fallback.
+- Rust-supported semantic answers terminate before learned-module runtime can overwrite them.
+- JS remains the storage/synthesis authority for not-yet-migrated developmental systems and receives Rust contribution traces for temporary reflection/index updates.
+- Added this root handoff.txt with permanent Issues ledger.
+
+V7.0.0-alpha.3 — Semantic Goal Executive (Pass 3)
+- Replaced narrow Rust request construction with a bounded semantic-goal executive over the same canonical state.
+- Added learned-evidence ranking, additional concept activation from evidence, and supported proposition composition.
+- Improved structured lesson evidence preservation.
+- Prevented JS cognitive scheduler from running over already-supported Rust results.
+- Lesson 1 improved from 1/5 (alpha2) to 3/5 in user testing.
+
+V7.0.0-alpha.2 — Rust Semantic Core (Pass 2)
+- Migrated surface/scopes, structural relational semantics, request construction for migrated forms, concept activation, semantic graph traversal, and supported composition to Rust.
+- Removed active old V6 generic semantic constructor/resolver path rather than keeping it as fallback.
+- First major success: "What is a lesson?" answered from learned semantic graph without hardcoded Q/A.
+- Compile fix: owned token snapshot resolved Rust E0502 borrow errors.
+
+V7.0.0-alpha.1 — Rust Mind Foundation (Pass 1)
+- Established modular Rust NovaMind, typed canonical structures, Tauri IPC/diagnostic bridge.
+- Rust became authoritative for the real turn lifecycle while JS remained reasoning owner until migration.
+- No fake Rust wrapper calling older Nova logic.
+
+V6.2.16 — Plasticity Deepening
+- Strengthened experience routes/categories, developmental episodes, consolidation, capability dependency graph, and provisional experience abstractions.
+
+V6.2.15 — Durable Native Persistence
+- Moved stable mind path to %LOCALAPPDATA%\QTech\Nova\UserData with native write verification/backup and older-state migration support.
+
+V6.2.14 — Experience-Built Cognitive Index
+- Replaced auto-populated relevance index with Nova-built successful reasoning routes.
+
+ISSUE-049 — Native free thought still used the old JavaScript internal-goal executive
+Status: FIXED IN V7 ALPHA8
+Problem: Pass 7 migrated developmental experience, but `free_thought.js` still generated/ran self goals through `v620RunInternalGoal`, leaving an older JS executive alive for autonomous cognition.
+Resolution: Pass 8 adds Rust-owned internal cognition state. Learning/unresolved cognition can create generic Rust internal goals, and those goals are attempted through the same Rust semantic interpreter + learned cognitive runtime as ordinary turns. Native JS free-thought mutation/execution roots are retired.
+Do not reintroduce: a separate autonomous/free-thought brain.
+
+ISSUE-050 — JavaScript could still choose response surface/terminal state after Rust cognition
+Status: FIXED IN V7 ALPHA8
+Problem: JS extracted a surface and inferred SUPPORTED/BLOCKED/EXHAUSTED even when Rust owned the semantic/cognitive state. Turn completion also accepted frontend terminal/reason values.
+Resolution: Rust `RealizationReport` owns selected surface, terminal state, reason code, meaning availability, and whether a visible response is required. `NovaMind` stores the report and uses it when finishing the turn. Pass 9 removes terminal/reason fields from the frontend finish-turn DTO entirely; the UI reports only whether the Rust-selected response rendered.
+Do not reintroduce: UI-side semantic completion judgments or response selection.
+
+ISSUE-051 — JavaScript selected prior conversation context for Rust turns
+Status: FIXED IN V7 ALPHA9
+Problem: the native bridge selected the last ten UI messages and sent them as `conversationContext`, leaving a cognitive relevance/context policy in JavaScript.
+Resolution: `NovaMind` owns bounded conversation history and chooses recent context internally. Pass 9 narrows the native begin-turn IPC DTO to only the new utterance and source label. Legacy knowledge/cognition/context fields remain internal Rust test/migration inputs and are not frontend-accessible.
+DO NOT REINTRODUCE: UI-side selection/ranking of memory that Nova should reason over.
+
+ISSUE-052 — Raw persistence and subsystem-import IPC left frontend authority surfaces open
+Status: FIXED IN V7 ALPHA9
+Problem: even after normal callers stopped using old routes, Tauri still exposed raw `nova_state_load/save/clear` plus per-subsystem import/sync commands that could let frontend code replace parts of the brain.
+Resolution: Pass 9 removes those commands from the native invoke handler and removes their Tauri command wrappers. Frontend persistence is whole-mind bootstrap/checkpoint/reset; Rust owns the snapshot. Current cognitive IPC remains begin/parse/ingest/finish/snapshot. Native raw persistence helpers in JavaScript explicitly refuse to run.
+DO NOT REINTRODUCE: frontend commands that inject or replace authoritative Rust brain stores.
+
+
+ISSUE-053 — Retired per-subsystem migration APIs remained compiled after Pass 9
+Status: FIXED IN V7 ALPHA9.1
+Problem: Pass 9 removed frontend access to old semantic/learning/development/internal import and partial-reset routes, but their Rust production APIs plus a few superseded helpers still compiled and produced dead-code warnings.
+Resolution: alpha9.1 removes truly obsolete helpers and moves historical per-subsystem migration regression helpers behind `cfg(test)`. They do not exist in the production binary. Whole-mind Rust bootstrap/checkpoint/reset remains the only production persistence authority.
+DO NOT REINTRODUCE: `allow(dead_code)` as a substitute for removing retired architecture, or production per-subsystem restore doors that bypass whole-mind ownership.
+
+ISSUE-054 — Native teacher grading lacked partial credit, notes and exact-span feedback
+Status: FIXED IN V7 ALPHA9.2
+Problem: the older test UI primarily supported automatic/manual pass-fail review and did not preserve rich teacher correction as part of the Rust mind.
+Resolution: Rust `teacher_state` now owns completed test attempts and feedback. Teacher credit is 0–100%, Teacher Notes are preserved, strike/highlight/underline annotations reference validated exact spans of the immutable original question or Nova answer, and each attempt preserves the authoritative Rust cognitive trace plus compact attempt context for later debugging/reflection.
+DO NOT REINTRODUCE: editable original answers, JS-only grades as authoritative history, or grading metadata that can silently alter the attempted response.
+
+ISSUE-055 — Teacher feedback could become an accidental executable lesson or hidden reflection script
+Status: FIXED BY ARCHITECTURE IN V7 ALPHA9.2
+Problem: rich correction/reflection tooling could easily become a facade if feedback were compiled into behavior or if a Reflection button supplied developer-authored reflective questions.
+Resolution: feedback is stored as explicit non-executable `teacher_feedback` semantic evidence with provenance. Start Reflection sends an ordinary Teacher message through Nova's normal input path; Nova must interpret it and form/use reflective cognition herself. No hardcoded reflective-question list or special reflection reasoner is introduced.
+DO NOT REINTRODUCE: feedback -> executable rule synthesis, a hidden reflection command that bypasses the executive, or developer-authored questions presented as Nova's own reflection.
+
+ISSUE-056 — Brain Inspector/debug information was fragmented across drawers and subsystem-oriented views
+Status: FIXED / REORGANIZED IN V7 ALPHA9.2
+Problem: answering `Why did Nova do that?` required jumping between Thinking, Brain Inspector and the separate Developer Trace drawer.
+Resolution: Brain Inspector now organizes one Rust snapshot by debugging question: last meaning path, semantic interpretation, goals, relationships, knowledge used, Stored Only, teacher/test history, synthesis/development, and detailed Grandpa Rust telemetry. The separate Developer Trace drawer is retired.
+DO NOT REINTRODUCE: a second explanatory reasoner or post-hoc JS story generator; inspector explanations must remain projections of authoritative Rust state.
+
+ISSUE-057 — Teacher annotations could point outside or mutate the preserved attempted text
+Status: FIXED IN V7 ALPHA9.2
+Problem: span-level correction is only trustworthy if the annotated text is immutable and offsets mean the same thing in the browser and Rust.
+Resolution: UI selections use browser UTF-16 offsets; Rust validates the same UTF-16 ranges against the immutable question/original answer before storing them. Knowledge projection derives marked excerpts from those preserved originals.
+DO NOT REINTRODUCE: byte-offset/browser-offset mixing, accepting unchecked spans, or storing an edited answer as if it were Nova's original response.
+
+ISSUE-058 — Per-question grading evidence could leak answer-key material into later questions of the same test
+Status: FIXED BEFORE V7 ALPHA9.2 RELEASE
+Problem: the first alpha9.2 implementation projected a completed question's expected answer into semantic memory immediately. Although non-executable, later questions in the same run could retrieve that evidence and invalidate the test.
+Resolution: Rust records each attempt immediately in `teacher_state` for durability but marks its semantic evidence unreleased. After every question has been attempted, the native runner calls Rust `finalize_teacher_run`; only then are that run's test/feedback records projected into semantic memory. Feedback edits made before finalization also remain unreleased. Finalization is idempotent.
+DO NOT REINTRODUCE: expected answers, rubrics or grading evidence becoming cognitively retrievable before the full test run is complete.
+
+
+ISSUE-059 — Year 1 teaching language required too much prior English structure
+Status: FIXED IN V7 ALPHA9.3
+Problem: the Rust semantic pipeline preserved raw text and some useful structures, but ordinary simple teaching such as `A person can answer a question.` could still fail to become a stable structural relation unless capitalization/name-like heuristics happened to fit. This risked requiring a pre-primary curriculum merely to understand Year 1 instructions.
+Resolution: alpha9.3 adds a small Rust-owned `semantics/bootstrap.rs` stage inside the existing semantic pipeline. It preserves whole utterances, basic phrase/clause groupings, structural left/link/right evidence, simple copular/operator surfaces, negation, coordination, question/request cues and previous-utterance candidates. Relational construction now consumes those structural observations instead of depending on capitalization.
+DO NOT REINTRODUCE: a second language engine, capitalization-as-name semantics, phrase-specific answer handling, or a large built-in English curriculum.
+
+ISSUE-060 — A language bootstrap could silently become a hidden English/grammar education
+Status: FIXED BY ARCHITECTURAL INVARIANT IN V7 ALPHA9.3
+Problem: making lesson language easier to understand could accidentally preinstall concepts that Year 1 is supposed to teach, undermining the developmental experiment.
+Resolution: the Basic English bootstrap is intentionally structural only. It does not install classroom concepts such as noun, pronoun, proper name, semantic role names, proposition, reasoning, evidence, reflection, school, lesson, teacher, student, test or grammar rules. Discourse referents are not declared proper names and generic structural argument positions are not automatically labeled agent/patient roles. Tests assert that banned school-grammar labels are absent from bootstrap state.
+DO NOT REINTRODUCE: hidden ontology knowledge disguised as parser metadata. Motto: enough English to attend school, not enough English to skip school.
+
+ISSUE-061 — Teacher history needed school-style scores, per-span explanations and richer preserved debugging context
+Status: FIXED IN V7 ALPHA9.3
+Problem: alpha9.2 supported percentage credit and exact marks, but schoolwork-style `awarded / possible` scores, optional grade labels, easy per-span notes, deterministic attempt numbering and richer preserved Inspector context were incomplete in the end-to-end workflow.
+Resolution: Rust Teacher history now stores points, optional percentage/grade, deterministic attempt number, lesson/source context, per-span notes and authoritative Thinking/Inspector context. UI exposes those fields without editing the immutable original question/answer. Rust rejects contradictory point/percentage grades. Released feedback remains Teacher-provenance `nonExecutable=true` evidence and never becomes a direct behavior rule.
+DO NOT REINTRODUCE: JS-only gradebook truth, editable originals, conflicting grade representations, or Teacher notes compiled directly into cognition.
+
+ISSUE-062 — Rejected Teacher feedback edits could partially mutate the persistent grade record
+Status: FIXED IN V7 ALPHA9.3 BEFORE PACKAGING
+Problem: the first alpha9.3 feedback-update path validated some fields after assigning earlier grading fields. A conflicting point/percentage grade or invalid annotation could therefore return an error after partially changing the Rust Teacher record.
+Resolution: `RustTeacherState::update_feedback` is transactional. Rust validates the complete proposed percentage, point score, grade text, notes and every immutable-text annotation first, then mutates the record once. Regression coverage verifies that a rejected conflicting grade leaves all prior grade fields unchanged.
+DO NOT REINTRODUCE: partial Teacher-history writes on validation failure or UI-side rollback as a substitute for atomic Rust state mutation.
+
+
+ISSUE-063 — Basic-English sentence-kind helper had ambiguous borrowed return lifetime
+Status: FIXED IN V7 ALPHA9.3.1
+Problem: alpha9.3 introduced `sentence_kind(state, sentence_id) -> Option<&str>`. The returned string is borrowed from `CanonicalCognitiveState`, but the signature had two borrowed inputs and did not identify which input owns the return borrow, so rustc rejected it with E0106.
+Resolution: the helper now declares `sentence_kind<'a>(state: &'a CanonicalCognitiveState, sentence_id: &str) -> Option<&'a str>`. This models the real ownership directly. No `String` clone, compatibility helper, fallback parser, or alternate language path was added. A source-tree sweep confirmed the other borrowed-return helpers already use explicit lifetimes or return `'static` values.
+DO NOT REINTRODUCE: cloning authoritative semantic strings just to avoid expressing their actual borrow lifetime.
+
+POST-MIGRATION NEXT WORK
+========================
+The planned V7 JavaScript-to-Rust brain migration is complete in Pass 9. Do not create Pass 10 merely to move another wrapper. Future work should improve the CURRENT Rust mind directly.
+
+Recommended next engineering focus:
+1. build/compile alpha9.3.1 and fix any further real Rust compiler findings directly in the authoritative modules;
+2. verify alpha6.1-style uninstall/reinstall persistence with the new Rust envelope;
+3. run curriculum/reasoning probes against the final architecture;
+4. revisit open reasoning issues such as ISSUE-030 using Rust conversation/discourse machinery rather than phrase-specific patches;
+5. clean physically retired browser/legacy JavaScript files only when doing so does not remove useful browser regression tooling or UI dependencies;
+6. use the new teacher/test evidence and reorganized Inspector to diagnose reasoning failures before changing cognition; improve the current Rust mechanisms directly rather than teaching around architecture bugs.
+
+End state reached: **Rust is Nova's brain. JavaScript is the native UI.**
+
+
+V7.0.0-alpha.9.3.1 — ALPHA 9.3 COMPILE FIX
+------------------------------------------------
+Status: FIXED
+
+Real `rustc` feedback exposed one source-level ownership signature defect in the new Basic English bootstrap:
+- `semantics/bootstrap.rs::sentence_kind` returned `Option<&str>` while accepting both `&CanonicalCognitiveState` and `&str`, leaving the return lifetime ambiguous.
+- The return borrow is now explicitly tied to `CanonicalCognitiveState` with `sentence_kind<'a>(state: &'a CanonicalCognitiveState, sentence_id: &str) -> Option<&'a str>`.
+- No allocation/clone, fallback language engine, compatibility layer, or semantic behavior change was introduced.
+- Alpha9.3 Basic English and Teacher architecture remains authoritative and unchanged.
+
+V7.0.0-alpha.9 — FINAL RUST BRAIN MIGRATION (PASS 9)
+-------------------------------------------------------
+- Rust now owns complete persistent NovaMind payload construction, hydration, migration, serialization, recovery and reset.
+- Added Rust-owned bounded conversation history; native JS no longer selects the last ten messages as cognitive context.
+- Added Pass 9 persistent envelope separating direct Rust `mind` from opaque JS `ui` presentation state.
+- Rust migrates alpha8.1 Rust-state mirrors directly and rewrites one authoritative Pass 9 envelope.
+- Native startup no longer runs JavaScript post-load brain maintenance or per-subsystem Rust imports/synchronization.
+- Brain Inspector reads Rust snapshots directly instead of mutable JS cognition mirrors.
+- Removed raw state-file and per-subsystem brain-import/sync commands from frontend IPC exposure and removed the obsolete Tauri command wrappers.
+- Narrowed native begin-turn IPC to text + source label only with unknown-field rejection; frontend cannot inject knowledge/cognition/context snapshots.
+- Narrowed finish-turn IPC to turn ID + rendered-response fact only with unknown-field rejection; frontend cannot submit terminal/reason judgments.
+- Native reply coordination is now thin IPC/view work: Rust decides event kind, cognition, learning result, realization and terminal state.
+- Preserved stable alpha6.1 app-data path and atomic temp/backup/verify writer.
+- No fallback responder, hardcoded answer table, or parallel compatibility mind was added.
+
+V7.0.0-alpha.7.1 — PASS 7 COMPILE FIX
+-----------------------------------------
+Status: FIXED
+
+Build feedback from the real Rust compiler exposed two source-language defects that static validation missed:
+- `development.rs` used C/JavaScript-style leading-dot float literals (for example `.45`), which Rust rejects. These are now explicit Rust decimal literals such as `0.45`.
+- `teaching/parser.rs` moved one owned `String` through several independent role checks. The parser now uses one mutually-exclusive role dispatch, matching the semantic invariant that one teaching block has one role.
+
+This release does not add a compatibility layer or restore JavaScript authority. Pass 7 developmental authority remains Rust-owned. Alpha 6.1 persistence behavior is preserved.
+
+
+V7.0.0-alpha.8 — INTERNAL GOALS & REALIZATION AUTHORITY (PASS 8)
+-------------------------------------------------------------------
+- Moved native free thought/internal goals into Rust `RustInternalCognitionState`.
+- Internal goals use the same Rust semantic interpreter, learned module runtime, developmental reflection, and realization machinery as ordinary cognition.
+- Moved native conversation teaching event-kind decision to Rust for structured teaching; JS detector is no longer native authority.
+- Added Rust `RealizationReport` as response owner for surface + terminal meaning state.
+- Turn completion uses the stored Rust realization rather than frontend-provided terminal/reason values.
+- Added opaque `rustInternalCognitionState` persistence/UI mirror for the final pre-Pass-9 persistence transition.
+- Retired native JS free-thought/internal-goal roots; browser-only historical code is not a native fallback.
+- Preserved alpha6.1 persistence and Pass 7 developmental authority.
+
+
+V7.0.0-alpha.8.1 — PASS 8 COMPILE FIX
+----------------------------------------
+Status: FIXED
+
+Compiler feedback from the alpha 8 build exposed two source-level Rust errors in the new authoritative internal-cognition subsystem:
+- `internal.rs` used a three-placeholder `format!` string with only two arguments when constructing the stable internal-goal ID. The ID now correctly hashes `signature|revision` with two placeholders.
+- `internal.rs` imported `super::unix_ms`, but the existing authoritative time utility lives in `nova::mind::unix_ms`. The module now imports `super::mind::unix_ms`; no duplicate helper or compatibility wrapper was added.
+
+Architecture impact: NONE. Pass 8 ownership remains unchanged. Rust still owns internal goals/free thought, teaching-event classification, realization, and terminal-state authority. JavaScript did not regain any brain responsibility.
+
+Validation note: this repair was driven by actual `rustc` diagnostics from the alpha 8 build. Static checks also confirmed the corrected format arity and existing time-utility path.

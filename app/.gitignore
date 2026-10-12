@@ -1,0 +1,9 @@
+node_modules/
+src-tauri/target/
+.DS_Store
+*.log
+src-tauri/gen/android/
+src-tauri/gen/apple/
+*.jks
+*.keystore
+keystore.properties
