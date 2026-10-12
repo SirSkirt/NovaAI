@@ -396,6 +396,24 @@ $("resetBtn").addEventListener("click",()=>safeRun(async()=>{
 // Training examples use tab-separated lines. We show each user prompt and
 // desired response before committing gradient updates; none are a lookup table.
 const originalDialogueLessons=$("dialogueData").value;
+const curriculumKey="neural-nova.dialogue-curriculum.v1";
+function persistDialogueCurriculum(){
+  try{
+    window.localStorage.setItem(curriculumKey,$("dialogueData").value);
+  }catch(error){
+    logDiagnostic("WARN","Curriculum storage","Unable to save lesson text locally: "+errorText(error));
+  }
+}
+try {
+  const saved=window.localStorage.getItem(curriculumKey);
+  if(saved&&saved.length<40000){
+    $("dialogueData").value=saved;
+    logDiagnostic("INFO","Curriculum storage","Restored previously edited dialogue examples.");
+  }
+}catch(error){
+  logDiagnostic("WARN","Curriculum storage","Unable to restore previous lessons: "+errorText(error));
+}
+$("dialogueData").addEventListener("input",persistDialogueCurriculum);
 function addCurriculumPair(user,assistant){
   const question=(user||"").trim(), answer=(assistant||"").trim();
   if(!question||!answer)throw new Error("Both the question and ideal response are required.");
@@ -412,6 +430,7 @@ function addCurriculumPair(user,assistant){
     return;
   }
   $("dialogueData").value=(current?current+"\n":"")+row;
+  persistDialogueCurriculum();
   logDiagnostic("INFO","Dialogue School","Added one new supervised response example.");
 }
 $("addDialoguePair").addEventListener("click",()=>safeRun(()=>{
@@ -422,6 +441,7 @@ $("restoreDialogueSample").addEventListener("click",()=>safeRun(()=>{
   if(training)throw new Error("Wait until training stops before changing the lesson set.");
   if(!confirm("Restore the initial dialogue lesson examples? Your current lesson text will be replaced."))return;
   $("dialogueData").value=originalDialogueLessons;
+  persistDialogueCurriculum();
   logDiagnostic("INFO","Dialogue School","Restored the built-in example curriculum.");
 },"Restore dialogue lessons"));
 $("trainDialogues").addEventListener("click",()=>safeRun(async()=>{
@@ -430,6 +450,7 @@ $("trainDialogues").addEventListener("click",()=>safeRun(async()=>{
   const epochs=Number($("dialogueEpochs").value);
   if(!Number.isInteger(epochs)||epochs<1||epochs>25)throw new Error("Use 1–25 training epochs.");
   if(!text.trim())throw new Error("Add at least one dialogue example.");
+  persistDialogueCurriculum();
   if(/[^\x00-\x7F]/.test(text))throw new Error("Dialogue curriculum must be ASCII for v0.1.3.");
   activeTrainingMode="dialogue";
   setTraining(true);
