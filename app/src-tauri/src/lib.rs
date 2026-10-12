@@ -1,6 +1,7 @@
 mod neural;
 mod transformer_lab;
 mod hybrid_lab;
+mod test_lab;
 
 use neural::NeuralState;
 use transformer_lab::TransformerState;
