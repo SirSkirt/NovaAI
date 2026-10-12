@@ -1,291 +1,132 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b0e16">
-  <meta name="description" content="Neural Nova v0.2.0 experimental sentence-pattern learning laboratory">
-  <title>Neural Nova v0.1.2 — Experimental Brain Lab</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b101c">
+  <meta name="description" content="Neural Nova: one trainable hybrid neural brain">
+  <title>Neural Nova — Brain Lab</title>
   <link rel="stylesheet" href="./styles.css">
-  <script src="./js/brain.js" defer></script>
-  <script src="./js/transformer.js" defer></script>
+  <script defer src="./js/nova-ui.js"></script>
 </head>
 <body>
-  <div class="shell">
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-        <div><h1>Neural Nova</h1><p>Experimental brain lab <span class="alpha">v0.1.2</span></p></div>
+<div class="app-shell">
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-symbol" aria-hidden="true">◉</span>
+      <div><h1>Neural Nova <span class="beta">v0.3.0</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
+    </div>
+    <div class="status-pill" id="brainState" role="status"><span class="status-indicator"></span><span id="brainStateText">Starting…</span></div>
+  </header>
+  <nav class="nav-tabs" role="tablist" aria-label="Neural Nova workspace">
+    <button type="button" id="tab-teach" class="nav-tab selected" role="tab" aria-selected="true" aria-controls="pane-teach" data-tab="teach">✧ Teach</button>
+    <button type="button" id="tab-chat" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-chat" tabindex="-1" data-tab="chat">◉ Chat</button>
+    <button type="button" id="tab-visualize" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-visualize" tabindex="-1" data-tab="visualize">⌁ Visualize</button>
+  </nav>
+  <section class="quick-stats" aria-label="One unified network status">
+    <div class="stat"><span>Combined parameters</span><strong id="totalParams">—</strong></div>
+    <div class="stat"><span>Language pathway</span><strong id="transformerParams">—</strong></div>
+    <div class="stat"><span>Association pathway</span><strong id="denseParams">—</strong></div>
+    <div class="stat"><span>Shared training steps</span><strong id="trainingSteps">0</strong></div>
+  </section>
+  <main>
+    <section class="tab-pane" id="pane-teach" role="tabpanel" aria-labelledby="tab-teach">
+      <div class="pane-title"><div><p class="eyebrow">SHARED SUPERVISION</p><h2>Teach Nova</h2></div><span class="subtle">Both hemispheres learn from the same loss</span></div>
+      <div class="teach-grid">
+        <div class="card">
+          <div class="field-row">
+            <div class="wide-field"><label for="lessonMode">Lesson type</label><select id="lessonMode"><option value="dialogue">Dialogue / replies</option><option value="text">Text / language patterns</option></select></div>
+            <div class="small-field"><label for="trainingEpochs">Epochs</label><input id="trainingEpochs" type="number" min="1" max="20" value="3"></div>
+          </div>
+          <div class="section-line"><label for="lessonData">Training data</label><span id="lessonCount" class="subtle"></span></div>
+          <textarea id="lessonData" spellcheck="false" rows="9" aria-describedby="lessonHint"></textarea>
+          <p id="lessonHint" class="muted">One question and ideal reply per line, separated by a TAB. At least five different pairs.</p>
+          <div class="row wrap">
+            <label class="file-button" for="lessonFile">＋ Import .txt</label><input type="file" id="lessonFile" accept=".txt,text/plain">
+            <button type="button" id="sampleLesson" class="secondary compact">Example data</button>
+            <button type="button" id="clearLesson" class="secondary compact">Clear editor</button>
+          </div>
+          <details class="teacher-extra">
+            <summary>＋ Add a question and ideal response</summary>
+            <div class="correction-fields">
+              <div><label for="teacherQuestion">Question</label><input id="teacherQuestion" maxlength="180" placeholder="What is your name?"></div>
+              <div><label for="teacherAnswer">Ideal response</label><input id="teacherAnswer" maxlength="160" placeholder="My name is Nova."></div>
+            </div>
+            <button type="button" id="addLesson" class="secondary">Add to training data</button>
+          </details>
+        </div>
+        <div class="card training-card">
+          <div class="section-line"><h3>Training</h3><span id="checkpointText" class="subtle">Fresh weights</span></div>
+          <p class="muted">One generated output. The association network passes learned signals through a trainable bridge into the Transformer. Both pathways and the bridge are updated together.</p>
+          <div class="row wrap actions"><button type="button" class="primary" id="startTraining">▶ Start training</button><button type="button" id="stopTraining" disabled>Stop</button></div>
+          <div class="progress-head"><span id="trainingProgress">No active training</span><strong id="trainingPercent">0%</strong></div>
+          <div class="progress-track"><div id="trainingFill"></div></div>
+          <div class="metric-grid">
+            <div><span>Held-out loss</span><strong id="heldoutLoss">—</strong></div>
+            <div><span>Held-out accuracy</span><strong id="heldoutAccuracy">—</strong></div>
+          </div>
+          <details class="teacher-extra">
+            <summary>Epoch history and advanced controls</summary>
+            <pre id="epochHistory" class="epoch-history">No completed epochs yet.</pre>
+            <p class="muted">Validation is on withheld examples, not proof of generalization. A new hybrid checkpoint is saved after each epoch; earlier independent checkpoints remain untouched.</p>
+            <button type="button" id="resetBrain" class="danger">Reset unified brain</button>
+          </details>
+        </div>
       </div>
-      <div class="pill" id="brainState"><span class="status-dot"></span><span id="brainStateText">Starting</span></div>
-    </header>
-
-    <main>
-      <section class="intro">
-        <div>
-          <p class="eyebrow">BUILT IN RUST • FROM SCRATCH</p>
-          <h2>Watch Nova <em>learn.</em></h2>
-          <p>Train a causal Transformer from scratch, inspect its attention, and compare its language learning against the original dense neural experiment.</p>
+    </section>
+    <section class="tab-pane" id="pane-chat" role="tabpanel" aria-labelledby="tab-chat" hidden>
+      <div class="pane-title"><div><p class="eyebrow">ONE GENERATIVE VOICE</p><h2>Chat with Nova</h2></div><span class="subtle">No canned answers · No model selection</span></div>
+      <div class="card chat-card">
+        <div id="chatTranscript" role="log" aria-live="polite" class="chat-transcript"><div class="chat-placeholder">Teach Nova, then try a learned question or an unseen variation. Responses are generated by the combined network.</div></div>
+        <div class="chat-controls">
+          <label for="chatMessage">Your message</label>
+          <div class="composer"><input id="chatMessage" type="text" maxlength="180" autocomplete="off" placeholder="Talk to Nova…"><button type="button" class="primary" id="sendMessage">Send ↗</button></div>
+          <div class="row wrap"><button type="button" class="secondary compact" id="clearChat">Clear conversation</button><button type="button" class="secondary compact" id="correctReply" disabled>Teach a correction</button><span class="subtle">128-character effective context · ASCII-only · single turn</span></div>
         </div>
-        <div class="architecture">128 chars <span>→</span> Attention <span>→</span> Next char</div>
-      </section>
-
-      <p class="eyebrow">LEGACY DENSE NETWORK — PRESERVED FOR COMPARISON</p>
-      <section class="stats" aria-label="Legacy dense model statistics">
-        <div class="stat"><span>Legacy dense neurons</span><strong id="neuronTotal">2,176</strong></div>
-        <div class="stat"><span>Legacy dense parameters</span><strong id="parameterTotal">853,120</strong></div>
-        <div class="stat"><span>Training steps</span><strong id="stepCount">0</strong></div>
-        <div class="stat"><span>Last batch loss</span><strong id="lossValue">—</strong></div>
-      </section>
-
-      <section class="language-engine" aria-label="Neural Nova Transformer Language Engine">
-        <div class="engine-heading">
-          <div>
-            <p class="eyebrow">NEW IN V0.2.0 / FROM-SCRATCH SEQUENCE LEARNING</p>
-            <h2>Transformer Language Engine <span class="alpha">Experimental</span></h2>
-            <p>Train a new causal attention network on language and dialogue, then study what it predicts. The legacy dense network remains available below for comparison.</p>
-          </div>
-          <span class="engine-status" id="transformerState">Initializing Transformer…</span>
-        </div>
-        <div class="engine-summary">
-          <div><span>Architecture</span><strong>Embeddings → causal attention → feed-forward</strong></div>
-          <div><span>Context</span><strong>128 characters</strong></div>
-          <div><span>Trainable parameters</span><strong id="transformerParams">—</strong></div>
-          <div><span>Optimizer steps</span><strong id="transformerSteps">0</strong></div>
-        </div>
-        <div class="workspace">
-          <section class="panel engine-panel">
-            <div class="section-heading"><h2>Language training</h2><span class="mini-note">Native Rust • CPU</span></div>
-            <p class="section-copy">Use the varied text from <strong>Training Studio</strong> for next-character pretraining, or the question/answer pairs from <strong>Dialogue School</strong> for reply-only supervised learning. Both teach the same Transformer weights.</p>
-            <div class="engine-mode">
-              <label for="transformerMode">Lesson type</label>
-              <select id="transformerMode">
-                <option value="dialogue">Dialogue replies — from Dialogue School</option>
-                <option value="text">Language patterns — from Training Studio</option>
-              </select>
-              <p id="transformerDatasetHelp" class="note">At least five unique question/answer pairs; the last 20% are held out by entire pair. The dataset is read when you start training.</p>
-            </div>
-            <div class="settings-row">
-              <div><label for="transformerEpochs">Training epochs</label><input id="transformerEpochs" type="number" min="1" max="20" value="3"></div>
-              <div class="hint">Start with 3. The manually implemented Transformer is CPU-only and much slower than the dense network; keep initial lessons small.</div>
-            </div>
-            <div class="actions">
-              <button class="primary" id="transformerTrain" type="button">▶ Teach Transformer</button>
-              <button id="transformerStop" type="button" disabled>Stop</button>
-              <button id="transformerReset" type="button" class="danger">Reset Transformer only</button>
-            </div>
-            <div class="validation-metrics engine-metrics">
-              <div><span>Held-out loss</span><strong id="transformerLoss">—</strong></div>
-              <div><span>Held-out next-char accuracy</span><strong id="transformerAccuracy">—</strong></div>
-            </div>
-            <div class="progress-area">
-              <div class="progress-text"><span id="transformerProgress">No active Transformer training.</span><span id="transformerPercent">0%</span></div>
-              <div class="progress-track"><div id="transformerFill"></div></div>
-              <div class="epoch-log" id="transformerLog" aria-live="polite"></div>
-            </div>
-            <p class="note">The new Transformer saves its weights, Adam momentum, variance, and training step separately from the legacy network. No pretrained models, scripted replies, or hard-coded response fallbacks.</p>
-          </section>
-          <section class="panel engine-panel">
-            <div class="section-heading"><h2>Chat with the Transformer</h2><span class="mini-note">Learned output only</span></div>
-            <p class="section-copy">Check whether training transfers beyond exact phrases. The green responses here are generated by attention and learned weights, not by the legacy dense model.</p>
-            <div id="transformerTranscript" class="dialogue-transcript transformer-chat" role="log" aria-live="polite">
-              <div class="chat-placeholder">Train the Transformer first, then try a taught question and an unfamiliar variation.</div>
-            </div>
-            <label for="transformerMessage">Your message</label>
-            <input id="transformerMessage" type="text" maxlength="180" placeholder="What is your name?">
-            <div class="actions">
-              <button id="transformerSend" type="button" class="primary">Ask Transformer</button>
-              <button id="transformerClear" type="button">Clear chat</button>
-            </div>
-            <div class="engine-attention">
-              <div class="section-heading"><h3>Last-token attention</h3><span class="mini-note">Actual learned attention weights</span></div>
-              <div id="transformerAttention" class="attention-tiles" aria-label="Attention heatmap by character"><span class="muted">Generate a response to inspect which earlier characters received attention.</span></div>
-            </div>
-            <p class="note">Single-turn interaction; 128-character window; ASCII vocabulary. Attention patterns show computation, not an explanation of understanding. Untrained or insufficiently trained outputs may be nonsense.</p>
-          </section>
-        </div>
-      </section>
-
-      <section class="panel visualizer">
-        <div class="section-heading">
-          <div><p class="eyebrow">LIVE NEURAL ACTIVITY</p><h2>Legacy dense brain visualizer</h2></div>
-          <div class="live-label"><span class="live-dot"></span> Actual activations</div>
-        </div>
-        <div class="viz-legend">
-          <span><i class="swatch input"></i> Input / 1,024</span>
-          <span><i class="swatch hidden1"></i> Hidden 1 / 512</span>
-          <span><i class="swatch hidden2"></i> Hidden 2 / 512</span>
-          <span><i class="swatch output"></i> Output / 128</span>
-        </div>
-        <div class="canvas-container">
-          <canvas id="brainCanvas" role="img" aria-label="Neural network activity arranged as four columns. Tap a neuron to inspect its activation."></canvas>
-        </div>
-        <div class="inspect-detail" id="neuronDetail" aria-live="polite">Tap a neuron to see its layer, index and activation value.</div>
-        <p class="note">All <strong>2,176 neurons</strong> are plotted. Brightness represents activation; connection lines show a small selection of real weighted contributions. Sampling the connections keeps the visualization readable.</p>
-        <div class="predictions">
-          <span class="mini-heading">Most likely next characters</span>
-          <div id="predictions" class="prediction-list"><span class="muted">Waiting for a context…</span></div>
-        </div>
-      </section>
-
-      <div class="workspace">
-        <section class="panel">
-          <div class="section-heading"><div><p class="eyebrow">01 / TEACH LEGACY DENSE NETWORK</p><h2>Legacy training studio</h2></div></div>
-          <p class="section-copy">Paste an ASCII text corpus or load a .txt file. Nova predicts each next character from up to 64 preceding characters. Feed it varied sentences, paragraphs, and punctuation—not just repeated phrases.</p>
-          <label for="trainingText">Training data</label>
-          <textarea id="trainingText" rows="9" spellcheck="false" placeholder="Enter several connected sentences to train on...">The curious fox followed a lantern through the dark forest.
-When the rain finally stopped, the children walked home together.
-Although the road was wet, the driver approached the corner carefully.
-If the machine detects an error, it records the event before continuing.
-Nova can learn recurring patterns by comparing predictions with text.
-The little cat watched the birds from the sunny kitchen window.
-After the thunder faded, the villagers returned to their houses.
-While the scientist examined the results, her assistant wrote notes.
-The teacher asked a difficult question, and the students discussed it.
-Because the library was quiet, Maya could finish her long novel.</textarea>
-          <div class="toolbar">
-            <label class="upload" for="corpusFile">＋ Load .txt file</label>
-            <button id="loadLesson" type="button" class="sample-lesson">Load example lesson</button>
-            <input type="file" id="corpusFile" accept=".txt,text/plain">
-            <span class="muted" id="corpusSize">— bytes</span>
-          </div>
-          <div class="settings-row">
-            <div><label for="epochInput">Training epochs</label><input id="epochInput" type="number" min="1" max="25" value="3"></div>
-            <div class="hint">1–25 epochs · 40–250,000 ASCII bytes. Uses a 90/10 train/validation split; large corpora take longer.</div>
-          </div>
-          <div class="actions">
-            <button class="primary" id="startTrain">▶ Start training</button>
-            <button id="stopTrain" disabled>Stop</button>
-          </div>
-          <div class="progress-area">
-            <div class="validation-metrics" aria-label="Held-out evaluation metrics">
-              <div><span>Validation loss</span><strong id="validationLoss">—</strong></div>
-              <div><span>Validation next-char accuracy</span><strong id="validationAccuracy">—</strong></div>
-            </div>
-            <div class="progress-text"><span id="progressText">No active training session.</span><span id="progressPercent">0%</span></div>
-            <div class="progress-track"><div id="progressFill"></div></div>
-            <div class="epoch-log" id="trainingLog" aria-live="polite"></div>
-          </div>
-          <p class="note">Weights are saved automatically each epoch and when stopped. v0.1.2 uses a new checkpoint because the 64-character encoder is incompatible with v0.1. Original v0.1 weights remain saved. Validation checks held-out characters, not genuine understanding.</p>
-        </section>
-
-        <section class="panel">
-          <div class="section-heading"><div><p class="eyebrow">02 / PROBE LEGACY DENSE BRAIN</p><h2>Test legacy Nova</h2></div></div>
-          <p class="section-copy">Type a short phrase or a longer sentence to light up the neurons. Nova considers at most the last 64 ASCII characters when predicting the next one.</p>
-          <label for="probeInput">Input context</label>
-          <textarea rows="3" id="probeInput" spellcheck="false" placeholder="Try: hello no">hello no</textarea>
-          <div class="actions">
-            <button id="inspectBtn">Inspect neurons</button>
-            <button class="primary" id="generateBtn">✧ Generate text</button>
-          </div>
-          <div class="settings-row">
-            <div><label for="lengthInput">Characters to generate</label><input id="lengthInput" type="number" min="1" max="240" value="72"></div>
-            <div><label for="temperatureInput">Temperature</label><input id="temperatureInput" type="number" min="0.2" max="2" step="0.1" value="0.8"></div>
-          </div>
-          <div class="output" id="generatedOutput" aria-live="polite">Generated output will appear here.</div>
-          <p class="note">This model sees up to 64 characters of context and predicts one of 128 ASCII characters. It is still a feed-forward character model—not a Transformer or conversational LLM. More varied sentences are learnable patterns, not proof of comprehension.</p>
-        </section>
       </div>
-
-      <section class="dialogue-school" aria-label="Neural Nova Dialogue School">
-        <div class="section-heading" style="padding:8px 2px 13px"><div>
-          <p class="eyebrow">03 / TEACH LEGACY DENSE NETWORK</p><h2>Legacy Dialogue School <span class="alpha">Comparison</span></h2>
-        </div></div>
-        <p class="section-copy">A new kind of lesson: supply a user message and a desired Nova reply. Rust trains the neural weights to predict <strong>only the reply</strong>, using the question as context. There is no hardcoded answer lookup.</p>
-        <div class="workspace dialogue-workspace">
-          <section class="panel">
-            <div class="section-heading"><h2>Teach Nova to reply</h2><span class="mini-note">TAB-separated question / reply</span></div>
-            <label for="dialogueData">Dialogue curriculum</label>
-            <textarea id="dialogueData" rows="12" spellcheck="false" aria-describedby="dialogueFormat">hello nova	Hello!
-hi nova	Hi there!
-good morning	Good morning!
-good night	Sleep well!
-how are you	I am learning.
-what is your name	My name is Nova.
-who are you	I am Neural Nova.
-what can you do	I can practice language.
-thank you	You are welcome.
-thanks	No problem.
-what is a cat	A cat is an animal.
-what is a dog	A dog is an animal.
-what is a tree	A tree is a plant.
-what is an apple	An apple is a fruit.
-what is a grape	A grape is a fruit.
-what is rain	Rain is falling water.
-what is snow	Snow is frozen water.
-what color is the sky	The sky is often blue.
-what comes after one	Two comes after one.
-what comes after two	Three comes after two.
-what is two plus two	Four.
-what is three plus three	Six.
-say hello	Hello!
-say goodbye	Goodbye!
-bye nova	Goodbye!
-see you later	See you soon.
-are you learning	Yes, I am practicing.
-can you learn	I learn from examples.
-what is learning	Learning is improving with practice.
-what are words	Words help people communicate.</textarea>
-            <p id="dialogueFormat" class="note">One example per line: <code>question [TAB] ideal response</code>. Whole examples, not individual characters, are held out for validation. ASCII only; maximum 96 pairs.</p>
-            <div class="teacher-inputs">
-              <div><label for="teacherQuestion">User message</label><input id="teacherQuestion" type="text" maxlength="180" placeholder="What is your name?"></div>
-              <div><label for="teacherAnswer">Desired reply / correction</label><input id="teacherAnswer" type="text" maxlength="128" placeholder="My name is Nova."></div>
-            </div>
-            <div class="actions">
-              <button id="addDialoguePair" type="button">＋ Add lesson</button>
-              <button id="restoreDialogueSample" type="button">Restore example lessons</button>
-            </div>
-            <div class="settings-row">
-              <div><label for="dialogueEpochs">Dialogue epochs</label><input id="dialogueEpochs" type="number" min="1" max="25" value="3"></div>
-              <div class="hint">Start with 3 epochs. This CPU-only dense network still has a 64-character context and limited conversational capability.</div>
-            </div>
-            <div class="actions">
-              <button id="trainDialogues" class="primary" type="button">▶ Train dialogue lessons</button>
-              <span class="muted" id="dialogueStatus">No dialogue lesson running.</span>
-            </div>
-            <div class="validation-metrics">
-              <div><span>Held-out reply loss</span><strong id="dialogueValidationLoss">—</strong></div>
-              <div><span>Held-out char accuracy</span><strong id="dialogueValidationAccuracy">—</strong></div>
-            </div>
-            <p class="note">The last 20% of distinct question/reply pairs are reserved when at least five are provided. Low training loss means imitation; accuracy on unseen examples is a better (but still limited) signal.</p>
-          </section>
-          <section class="panel">
-            <div class="section-heading"><h2>Talk to Nova</h2><span class="mini-note">Neural output only</span></div>
-            <p class="section-copy">Chat with the trained model. Each message is supplied as a single user turn; this version does not retain earlier dialogue inside its 64-character model context. Correct bad responses in the Teacher fields.</p>
-            <div id="dialogueTranscript" class="dialogue-transcript" role="log" aria-live="polite">
-              <div class="chat-placeholder">Start by training the dialogue lessons, then ask Nova something it has practiced—or a new question to test generalization.</div>
-            </div>
-            <label for="dialogueMessage">Your message</label>
-            <input id="dialogueMessage" type="text" maxlength="180" placeholder="hello nova">
-            <div class="actions">
-              <button id="sendDialogue" class="primary" type="button">Send to Nova</button>
-              <button id="correctDialogue" type="button" disabled>Correct last answer</button>
-              <button id="clearDialogue" type="button">Clear chat</button>
-            </div>
-            <p class="note">Answers are generated character by character from the same trainable Rust network. This is a dialogue-learning prototype, not proof of language understanding or reliable reasoning.</p>
-          </section>
-        </div>
-      </section>
-
-      <section class="panel bottom">
-        <div><p class="eyebrow">CONTROL / EXPERIMENTAL ONLY</p><h2>Reset neural weights</h2><p>Reinitializes the model and deletes its experimental checkpoint. This cannot change original Nova or its data.</p></div>
-        <button class="danger" id="resetBtn">Reset neural brain</button>
-      </section>
-      <details id="diagnostics" class="diagnostics" open>
-        <summary class="diagnostics-heading">
-          <span><span class="diag-label">NEURAL NOVA DEBUGGER</span><strong>Runtime diagnostics</strong><small id="diagnosticCount">0 errors · 0 entries</small></span>
-          <span class="diag-caret" aria-hidden="true">▾</span>
-        </summary>
-        <div class="diagnostics-body">
-          <div class="diagnostics-toolbar">
-            <span>Front-end, native commands, training events and worker failures</span>
-            <div><button id="copyDiagnostics" type="button">Copy report</button><button id="clearDiagnostics" type="button">Clear</button></div>
+    </section>
+    <section class="tab-pane" id="pane-visualize" role="tabpanel" aria-labelledby="tab-visualize" hidden>
+      <div class="pane-title"><div><p class="eyebrow">LIVE MODEL TELEMETRY</p><h2>Inside Nova's brain</h2></div><span class="subtle">Schematic hemispheres, real network measurements</span></div>
+      <div class="visualize-grid">
+        <div class="card brain-card">
+          <div class="brain-legend"><span><i class="legend-dot language"></i> Left · language / attention</span><span><i class="legend-dot association"></i> Right · associations / dense activations</span><span><i class="legend-dot bridge"></i> Learned connection</span></div>
+          <div class="brain-stage">
+            <svg id="hemisphereBrain" viewBox="0 0 800 410" role="img" aria-label="Schematic of two trainable neural pathways joined by a trainable bridge">
+              <defs><radialGradient id="leftShade"><stop stop-color="#122e46"/><stop offset="1" stop-color="#131e39"/></radialGradient><radialGradient id="rightShade"><stop stop-color="#27304c"/><stop offset="1" stop-color="#221a36"/></radialGradient><clipPath id="clipLeft"><path d="M 385 74 C 320 25 250 55 211 90 C 125 74 88 138 116 189 C 62 251 116 337 202 341 C 255 395 328 352 385 337 Z"/></clipPath><clipPath id="clipRight"><path d="M 415 74 C 480 25 550 55 589 90 C 675 74 712 138 684 189 C 738 251 684 337 598 341 C 545 395 472 352 415 337 Z"/></clipPath></defs>
+              <path d="M385 74 C320 25 250 55 211 90 C125 74 88 138 116 189 C62 251 116 337 202 341 C255 395 328 352 385 337 Z" fill="url(#leftShade)" stroke="#3a8cc1" stroke-width="3"/>
+              <path d="M415 74 C480 25 550 55 589 90 C675 74 712 138 684 189 C738 251 684 337 598 341 C545 395 472 352 415 337 Z" fill="url(#rightShade)" stroke="#9f79c9" stroke-width="3"/>
+              <g stroke="#4f81a6" fill="none" stroke-width="1.5" opacity=".38" clip-path="url(#clipLeft)"><path d="M157 100 Q263 200 153 291 M232 70 Q135 190 275 347 M325 73 Q236 198 350 337 M117 201 Q257 141 370 224 M135 290 Q249 237 380 304 M162 138 Q288 120 373 162"/></g>
+              <g stroke="#a27fc0" fill="none" stroke-width="1.5" opacity=".38" clip-path="url(#clipRight)"><path d="M643 100 Q537 200 647 291 M568 70 Q665 190 525 347 M475 73 Q564 198 450 337 M683 201 Q543 141 430 224 M665 290 Q551 237 420 304 M638 138 Q512 120 427 162"/></g>
+              <g id="bridgeFibers" fill="none" stroke="#48d0b4" stroke-width="1.7" opacity=".3"><path d="M380 155 Q400 180 420 155"/><path d="M380 184 Q400 210 420 184"/><path d="M380 213 Q400 240 420 213"/><path d="M380 242 Q400 270 420 242"/><path d="M380 271 Q400 299 420 271"/></g>
+              <g id="leftActivity" clip-path="url(#clipLeft)"></g><g id="rightActivity" clip-path="url(#clipRight)"></g>
+              <text x="240" y="387" text-anchor="middle" fill="#8cbce1" font-size="15">Transformer</text>
+              <text x="560" y="387" text-anchor="middle" fill="#bca6e4" font-size="15">Dense pathway</text>
+            </svg>
           </div>
-          <pre id="diagnosticLog" role="log" aria-live="polite">No diagnostics recorded in this session.</pre>
+          <p id="visualizerDetail" class="viz-detail">Generate or inspect a message to display measured neural activity. Brightness corresponds to actual attention weights and dense activations, not intelligence or anatomical function.</p>
         </div>
-      </details>
-    </main>
-    <footer>Neural Nova v0.1.2 · Custom Rust neural network · Separate from original Nova</footer>
-  </div>
+        <aside class="card telemetry-card">
+          <h3>Inspect a message</h3>
+          <label for="inspectMessage">Input context</label>
+          <div class="row"><input type="text" id="inspectMessage" maxlength="180" placeholder="What is your name?"><button type="button" id="inspectBrain" class="primary">Inspect</button></div>
+          <div class="metric-grid">
+            <div><span>Attention tokens</span><strong id="attentionCount">—</strong></div>
+            <div><span>Dense neurons</span><strong id="neuronCount">2,176</strong></div>
+          </div>
+          <h3>Last-token attention</h3>
+          <div id="attentionTiles" class="attention-tiles"><span class="muted">No real attention measurements yet.</span></div>
+          <h3>Shared next-character prediction</h3>
+          <div id="predictions" class="prediction-list"><span class="muted">Run an inspection to view predictions.</span></div>
+          <p class="muted">The bridge projects dense pre-softmax features into the Transformer's hidden representation. Its weights are trained jointly with both networks.</p>
+        </aside>
+      </div>
+    </section>
+  </main>
+  <details id="diagnostics" class="diagnostics">
+    <summary><span class="debug-title"><strong>⌘ Debugger</strong><small id="diagnosticCount">0 errors · 0 entries</small></span><span class="debug-toggle">▾</span></summary>
+    <div class="debug-body"><div class="row wrap debug-tools"><span class="muted">Training events, Rust commands, UI failures</span><div class="row"><button id="copyDiagnostics" type="button" class="secondary compact">Copy report</button><button id="clearDiagnostics" type="button" class="secondary compact">Clear</button></div></div><pre id="diagnosticLog" role="log" aria-live="polite">No diagnostics recorded in this session.</pre></div>
+  </details>
+  <footer>Neural Nova experimental · One shared-loss hybrid model · Original Nova on main remains untouched</footer>
+</div>
 </body>
 </html>
