@@ -180,16 +180,35 @@ function renderQuestion(result,index,unseen=false,run=currentRun){
       select.value=a.teacherGrade||a.automatic;select.setAttribute("aria-label","Teacher grade");
       const button=document.createElement("button");button.className="secondary compact";button.type="button";
       button.textContent="Save teacher grade";
+      const corrected=document.createElement("input");corrected.type="text";
+      corrected.maxLength=256;corrected.placeholder="Optional corrected answer (teacher only)";
+      corrected.value=result.teacherAnswer||"";
+      corrected.setAttribute("aria-label","Teacher's revised expected answer");
       button.addEventListener("click",()=>runSafely(async()=>{
         await invoke("hybrid_test_review",{
-          runId:run.id,index,attempt:i,teacherGrade:select.value
+          runId:run.id,index,attempt:i,teacherGrade:select.value,
+          correctedAnswer:corrected.value.trim()?corrected.value.trim():null
         });
         await refresh();
         const newRecord=archive.reports.find(x=>x.id===run.id);
         if(newRecord){currentRun=newRecord;render(currentRun);}
-        state("Teacher override recorded alongside automatic assessment.");
+        state("Teacher review saved. The original answer and original Nova output remain intact.");
       }));
-      review.append(select,button);entry.append(review);
+      const useAsLesson=document.createElement("button");
+      useAsLesson.type="button";useAsLesson.className="secondary compact";
+      useAsLesson.textContent="Send correction to lessons";
+      useAsLesson.addEventListener("click",()=>{
+        const answer=corrected.value.trim()||result.teacherAnswer||result.expected;
+        if(!answer)return;
+        document.getElementById("lessonMode").value="dialogue";
+        document.getElementById("lessonMode").dispatchEvent(new Event("change"));
+        document.getElementById("teacherQuestion").value=result.question;
+        document.getElementById("teacherAnswer").value=answer;
+        document.querySelector(".card .teacher-extra").open=true;
+        document.getElementById("teacherAnswer").focus();
+        state("Correction placed in the ordinary lesson editor. It will NOT change Nova's weights until you teach it.");
+      });
+      review.append(select,corrected,button,useAsLesson);entry.append(review);
     }
     contents.append(entry);
   }
