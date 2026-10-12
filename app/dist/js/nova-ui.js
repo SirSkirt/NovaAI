@@ -86,7 +86,13 @@ function status(s){
   $("trainingSteps").textContent=s.transformerStep.toLocaleString();
   $("heldoutLoss").textContent=Number.isFinite(s.heldoutLoss)?s.heldoutLoss.toFixed(4):"—";
   $("heldoutAccuracy").textContent=Number.isFinite(s.heldoutAccuracy)?(s.heldoutAccuracy*100).toFixed(1)+"%":"—";
-  $("checkpointText").textContent=s.trained?"Learned weights saved / active":"Fresh untrained weights";
+  $("checkpointText").textContent=s.trained?"Joint learned weights saved":"Fresh untrained weights";
+  $("trainingStage").textContent=s.stage||"Idle";
+  $("lessonSplit").textContent=(s.trainLessons||0)+" training / "+(s.validationLessons||0)+" held-out lessons";
+  $("trainingSpeed").textContent=s.tokensPerSecond>0?"Throughput: "+s.tokensPerSecond.toFixed(1)+" tokens/s":"Throughput: —";
+  $("bestEpoch").textContent=(s.bestEpoch>0?"Best epoch: "+s.bestEpoch:"Best epoch: baseline")+
+    (Number.isFinite(s.bestHeldoutLoss)?" · loss "+s.bestHeldoutLoss.toFixed(4):"");
+
   if(s.total){
     const fraction=Math.min(1,s.completed/s.total);
     $("trainingFill").style.width=(fraction*100).toFixed(1)+"%";
@@ -102,8 +108,8 @@ function modeChanged(mode){
   activeMode=mode;
   $("lessonData").value=datasets[mode];
   $("lessonHint").textContent=mode==="dialogue"
-    ?"One question and ideal reply per line, separated by a TAB. At least five distinct pairs; whole pairs are held out."
-    :"120–14,000 ASCII bytes. Nova predicts each next character, with the final 10% held out.";
+    ?"Up to 1,024 dialogue pairs, 384 ASCII characters per reply; one TAB between question and answer. Validation holds out whole question groups."
+    :"120–50,000 ASCII bytes. The held-out text does not use training-text context; longer corpora are slower.";
   countData();
 }
 function countData(){
@@ -145,7 +151,9 @@ $("startTraining").addEventListener("click",()=>safe(async()=>{
   if(running)return;
   const epochs=Number($("trainingEpochs").value);
   const text=$("lessonData").value;
-  if(!Number.isInteger(epochs)||epochs<1||epochs>20)throw Error("Choose 1–20 epochs.");
+  const learningRate=Number($("trainingRate").value);
+  const adaptive=$("adaptiveTraining").checked;
+  if(!Number.isInteger(epochs)||epochs<1||epochs>60)throw Error("Choose 1–60 epochs.");
   if(!text.trim())throw Error("Provide training data.");
   if(!/^[\x00-\x7f]*$/.test(text))throw Error("Training data contains characters outside ASCII.");
   $("epochHistory").textContent="No completed epochs yet.";
@@ -153,8 +161,11 @@ $("startTraining").addEventListener("click",()=>safe(async()=>{
   $("trainingFill").style.width="0%";
   setRunning(true);
   try{
-    await invoke("hybrid_train",{lesson:{mode:activeMode,text,epochs}});
-    report("INFO","Training","Joint training started: "+activeMode+" · "+epochs+" epochs.");
+    await invoke("hybrid_train",{
+      lesson:{mode:activeMode,text,epochs},
+      options:{adaptive,learningRate,patience:6}
+    });
+    report("INFO","Training","Joint training started: "+activeMode+" · max "+epochs+" epochs, "+(adaptive?"adaptive":"fixed")+" learning rate "+learningRate+".");
     await poll();
   }catch(e){setRunning(false);throw e;}
 },"Training"));
@@ -326,15 +337,23 @@ async function listen(){
       $("trainingPercent").textContent=(100*p.completed/p.total).toFixed(1)+"%";
       $("trainingFill").style.width=(100*p.completed/p.total)+"%";
       $("trainingSteps").textContent=p.step.toLocaleString();
+      $("trainingStage").textContent=p.stage+" · learning rate "+p.learningRate.toFixed(5);
+      $("trainingSpeed").textContent="Throughput: "+p.tokensPerSecond.toFixed(1)+" tokens/s";
     });
     await events.listen("hybrid-epoch",({payload:p})=>{
       history("Epoch "+p.epoch+"/"+p.epochs+" | train "+p.trainLoss.toFixed(4)+
-        " | held-out "+p.validationLoss.toFixed(4)+" | accuracy "+(100*p.validationAccuracy).toFixed(1)+"%");
+        " | held-out "+p.validationLoss.toFixed(4)+" | accuracy "+(100*p.validationAccuracy).toFixed(1)+
+        "% | "+(p.improved?"NEW BEST":"no improvement")+" | LR "+p.learningRate.toFixed(5));
       $("heldoutLoss").textContent=p.validationLoss.toFixed(4);
       $("heldoutAccuracy").textContent=(100*p.validationAccuracy).toFixed(1)+"%";
+      $("bestEpoch").textContent="Best epoch: "+(p.bestEpoch||"baseline")+" · loss "+p.bestLoss.toFixed(4);
+      $("trainingSpeed").textContent="Throughput: "+p.tokensPerSecond.toFixed(1)+" tokens/s";
     });
     await events.listen("hybrid-done",({payload:p})=>{
-      setRunning(false);report("INFO","Training",p.cancelled?"Training stopped; checkpoint saved.":"Shared training completed; checkpoint saved.");
+      setRunning(false);
+      report("INFO","Training",p.cancelled?"Training stopped; best joint checkpoint restored.":
+        p.earlyStopped?"Validation stalled; early stopped at best epoch "+p.bestEpoch+".":
+        "Shared training finished; best validation checkpoint restored (epoch "+p.bestEpoch+").");
       void poll();
     });
     await events.listen("hybrid-error",({payload:p})=>{setRunning(false);report("ERROR","Rust training",p);void poll();});
