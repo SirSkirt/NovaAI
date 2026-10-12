@@ -1,4 +1,8 @@
-# Neural Nova v0.3.1 — three-tab hybrid brain lab
+# Neural Nova v0.3.2 — three-tab hybrid brain lab
+
+## v0.3.2 — Independent learning controls
+
+Teach now provides two independent toggles for adaptive learning-rate changes and early stopping. Default: Gentle (0.001), fixed rate, early stopping enabled. The teacher passes `adaptiveLearningRate` and `earlyStopping` separately to the joint Rust trainer. Fixed rate means no learning-rate changes for any epoch, even while early stopping can respond to held-out validation loss. Settings persist across app restarts. The previous adaptive schedule only **lowered**, never increased, the rate. No new model answering logic was introduced.
 
 ## v0.3.1 — Better teacher, same autonomous neural Nova
 
