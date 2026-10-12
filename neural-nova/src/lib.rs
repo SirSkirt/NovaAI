@@ -37,6 +37,7 @@ pub fn encode_ascii_context(history: &[u8]) -> Result<Vec<f32>, String> {
 }
 
 pub mod dialogue;
+pub mod transformer;
 
 use std::fs::File;
 use std::io::{Read, Write};
