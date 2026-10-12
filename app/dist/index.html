@@ -93,6 +93,13 @@ hey there</textarea>
             <button type="button" class="secondary" id="runTokenizerProbe">Compare A/B without training</button>
             <pre id="tokenizerProbeOutput" class="epoch-history" style="max-height:320px;overflow:auto;white-space:pre-wrap">No tokenizer probe run.</pre>
           </details>
+          <details class="teacher-extra">
+            <summary>Inspect dense–Transformer bridge (no model changes)</summary>
+            <label for="bridgeProbeMessage">Input message</label>
+            <input id="bridgeProbeMessage" value="hello" maxlength="180">
+            <button type="button" class="secondary" id="runBridgeProbe">Measure signal and bridge ablation</button>
+            <pre id="bridgeProbeOutput" class="epoch-history" style="max-height:240px;overflow:auto;white-space:pre-wrap">No bridge measurement yet.</pre>
+          </details>
         </div>
       </div>
       <details class="card test-lab" id="testLab">
