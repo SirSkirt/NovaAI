@@ -584,6 +584,14 @@ async function listen(){
         " | held-out "+p.validationLoss.toFixed(4)+" | accuracy "+(100*p.validationAccuracy).toFixed(1)+
         "% | "+(p.improved?"NEW BEST":"no improvement")+" | LR "+p.learningRate.toFixed(5)+
         (Number.isFinite(p.retentionAccuracy)?" | earlier skill "+(100*p.retentionAccuracy).toFixed(1)+"%":""));
+      if(Number.isFinite(p.transformerGradientNorm)){
+        history("Gradient norms (before clipping): Transformer "+
+          p.transformerGradientNorm.toFixed(4)+" · Dense "+
+          p.denseGradientNorm.toFixed(4)+" · Bridge "+
+          p.bridgeGradientNorm.toFixed(4)+" · clipped batches Transformer "+
+          (p.transformerClipFraction*100).toFixed(1)+"% / Dense "+
+          (p.denseClipFraction*100).toFixed(1)+"%");
+      }
       $("heldoutLoss").textContent=p.validationLoss.toFixed(4);
       $("heldoutAccuracy").textContent=(100*p.validationAccuracy).toFixed(1)+"%";
       $("bestEpoch").textContent="Best epoch: "+(p.bestEpoch||"baseline")+" · loss "+p.bestLoss.toFixed(4);
