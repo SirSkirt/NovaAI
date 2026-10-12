@@ -21,6 +21,11 @@ pub struct BrainSession {
     examples: u64,
     last_loss: Option<f32>,
     trained: bool,
+    completed_examples: usize,
+    total_examples: usize,
+    current_epoch: u32,
+    total_epochs: u32,
+    last_error: Option<String>,
 }
 
 struct Shared {
@@ -43,6 +48,11 @@ impl Default for NeuralState {
                 session: Mutex::new(BrainSession {
                     network, optimizer, steps: 0, examples: 0, last_loss: None,
                     trained: false,
+                    completed_examples: 0,
+                    total_examples: 0,
+                    current_epoch: 0,
+                    total_epochs: 0,
+                    last_error: None,
                 }),
                 training: AtomicBool::new(false),
                 cancel: AtomicBool::new(false),
@@ -61,6 +71,11 @@ pub struct BrainStatus {
     last_loss: Option<f32>,
     trained: bool,
     training: bool,
+    completed_examples: usize,
+    total_examples: usize,
+    current_epoch: u32,
+    total_epochs: u32,
+    last_error: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -137,6 +152,11 @@ fn status(state: &NeuralState, session: &BrainSession) -> BrainStatus {
         last_loss: session.last_loss,
         trained: session.trained,
         training: state.shared.training.load(Ordering::Acquire),
+        completed_examples: session.completed_examples,
+        total_examples: session.total_examples,
+        current_epoch: session.current_epoch,
+        total_epochs: session.total_epochs,
+        last_error: session.last_error.clone(),
     }
 }
 
@@ -307,17 +327,43 @@ pub fn neural_train(
         return Err("Neural Nova is already training".into());
     }
     state.shared.cancel.store(false, Ordering::Release);
+    let total_examples = (request.text.len() - WINDOW) * request.epochs as usize;
+    {
+        let setup = (|| -> Result<(), String> {
+            let mut session = lock_session(&state)?;
+            session.completed_examples = 0;
+            session.total_examples = total_examples;
+            session.current_epoch = 1;
+            session.total_epochs = request.epochs;
+            session.last_error = None;
+            Ok(())
+        })();
+        if let Err(error) = setup {
+            state.shared.training.store(false, Ordering::Release);
+            return Err(error);
+        }
+    }
     let state = state.inner().clone();
     let corpus = request.text.into_bytes();
     tauri::async_runtime::spawn_blocking(move || {
         let result = train_inner(&app, &state, &corpus, request.epochs);
+        if let Err(ref message) = result {
+            if let Ok(mut session) = lock_session(&state) {
+                session.last_error = Some(message.clone());
+            }
+            eprintln!("Neural Nova training worker error: {message}");
+        }
         state.shared.training.store(false, Ordering::Release);
         match result {
             Ok(cancelled) => {
-                let _ = app.emit("neural-done", serde_json::json!({ "cancelled": cancelled }));
+                if let Err(error) = app.emit("neural-done", serde_json::json!({ "cancelled": cancelled })) {
+                    eprintln!("Neural Nova could not emit training completion: {error}");
+                }
             }
             Err(message) => {
-                let _ = app.emit("neural-error", message);
+                if let Err(error) = app.emit("neural-error", message) {
+                    eprintln!("Neural Nova could not emit training error: {error}");
+                }
             }
         }
     });
@@ -353,6 +399,8 @@ fn train_inner(app: &AppHandle, state: &NeuralState, corpus: &[u8], epochs: u32)
                 let loss = s.network.train_batch(&batch, &mut s.optimizer)?;
                 s.steps += 1;
                 s.examples += batch.len() as u64;
+                s.completed_examples = completed + batch.len();
+                s.current_epoch = epoch;
                 s.trained = true;
                 s.last_loss = Some(loss);
                 let context = &corpus[position - 1..position - 1 + WINDOW];
@@ -407,6 +455,11 @@ pub fn neural_reset(app: AppHandle, state: State<'_, NeuralState>) -> Result<Bra
     session.examples = 0;
     session.last_loss = None;
     session.trained = false;
+    session.completed_examples = 0;
+    session.total_examples = 0;
+    session.current_epoch = 0;
+    session.total_epochs = 0;
+    session.last_error = None;
     let path = checkpoint_path(&app)?;
     if path.exists() { fs::remove_file(path).map_err(|e| e.to_string())?; }
     Ok(status(&state, &session))
