@@ -430,6 +430,12 @@ impl Transformer {
         }
         Ok(())
     }
+    /// Norm only of the learned dense-to-Transformer bridge gradient.
+    pub(crate) fn bridge_gradient_norm(&self,gradient:&[f32])->Result<f32,String>{
+        let range=layout().bridge;
+        if gradient.len()!=self.weights.len(){return Err("Bridge gradient shape mismatch".into());}
+        Ok(vector_norm(&gradient[range]))
+    }
     pub(crate) fn apply_gradients(&mut self,sum:&mut [f32],lr:f32)->Result<(),String> {
         if sum.len()!=self.weights.len() {return Err("Transformer gradient length mismatch".into());}
         if !lr.is_finite()||!(1e-6..=0.05).contains(&lr) {return Err("Invalid learning rate".into());}
