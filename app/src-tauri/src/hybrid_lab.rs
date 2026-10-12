@@ -267,7 +267,7 @@ fn trace(brain:&HybridBrain,history:&[u8],window:usize,memory:&[String])->Result
 }
 #[tauri::command]
 pub async fn hybrid_inspect(
-    state:State<'_,HybridState>,message:String,context_chars:Option<usize>,
+    app:AppHandle,state:State<'_,HybridState>,message:String,context_chars:Option<usize>,
 )->Result<HybridTrace,String>{
     if message.is_empty() || !message.is_ascii() || message.len()>180{
         return Err("Inspect 1–180 ASCII characters".into());
@@ -279,7 +279,16 @@ pub async fn hybrid_inspect(
         let s=lock(&state)?;
         let context=dialogue_prefix(&message)?;
         let memory=memory_turns(&s.history);
-        trace(&s.brain,&context,window,&memory)
+        let visualization=trace(&s.brain,&context,window,&memory)?;
+        if diag::enabled(&app.state::<Diagnostics>()){
+            let prediction=diagnostic_prediction(&s.brain,&message,window,&memory,false)
+                .unwrap_or_else(|e|serde_json::json!({"error":e}));
+            diag::record(&app.state::<Diagnostics>(),"visual_inspection",serde_json::json!({
+                "modelStep":s.brain.transformer.step,
+                "memorySlots":memory.len(),"probe":prediction
+            }));
+        }
+        Ok(visualization)
     }).await.map_err(|e|e.to_string())?
 }
 fn valid_window(input:Option<usize>)->Result<usize,String>{
@@ -374,6 +383,10 @@ pub async fn hybrid_chat(
         let mut history=dialogue_prefix(&message)?;
         let prompt_bytes=history.len();
         let prompt_tokens=s.brain.token_count(std::str::from_utf8(&history).map_err(|e|e.to_string())?)?;
+        let log_prediction=if diag::enabled(&app.state::<Diagnostics>()){
+            Some(diagnostic_prediction(&s.brain,&message,window,&memory,false)
+                .unwrap_or_else(|e|serde_json::json!({"error":e})))
+        }else{None};
         let mut result=Vec::<u8>::new();
         let seed_used=if deterministic{None}else{seed};
         let mut rng=seed.unwrap_or_else(||SystemTime::now().duration_since(UNIX_EPOCH)
@@ -403,6 +416,17 @@ pub async fn hybrid_chat(
         report.prompt_bytes_retained=prompt_bytes.saturating_sub(dropped_text.len());
         report.first_prompt_truncation_char=None; // exact token-level cutoff supplied instead
         report.memory_turns=memory.len();
+        if let Some(ref prediction)=log_prediction{
+            diag::record(&app.state::<Diagnostics>(),"chat_inference",serde_json::json!({
+                "message":message,"response":response,"committed":commit.unwrap_or(true),
+                "temperature":temperature,"deterministic":deterministic,
+                "samplingSeed":seed_used,"maxChars":max_chars,"window":window,
+                "modelStep":s.brain.transformer.step,"denseStep":s.brain.dense_adam_steps(),
+                "wordUnits":s.brain.tokenizer.words.len(),"memorySlotsUsed":memory.len(),
+                "contextReport":report,
+                "firstTokenAnalysis":prediction,
+            }));
+        }
         let next=ConversationTurn{user:message,assistant:response.clone()};
         let mut future=s.history.clone();
         future.push(next);
