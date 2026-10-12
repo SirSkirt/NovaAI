@@ -631,6 +631,56 @@ mod tests {
         }
     }
     #[test]
+    fn learned_bridge_and_memory_gradients_match_finite_difference(){
+        let mut model=Transformer::new(71);
+        let l=layout();
+        // Use two distinct learned memories and a nonzero trained-like reader
+        // to make the attention-query derivative measurable.
+        for j in 0..D{
+            model.weights[l.memory_write.start+j*D+j]=8.0;
+            model.weights[l.memory_read.start+j*D+j]=4.0;
+            model.weights[l.tok.start+(b'A' as usize)*D+j]=0.35;
+            model.weights[l.tok.start+(b'Z' as usize)*D+j]=-0.35;
+        }
+        let history=b"U: ask\nN: ".iter().map(|&v|v as u16).collect::<Vec<_>>();
+        let memory=vec![vec![b'A' as u16;5],vec![b'Z' as u16;5]];
+        let features=(0..VOCAB).map(|i|if i%2==0{0.07}else{-0.03}).collect::<Vec<_>>();
+        let (_,grad,input_gradient)=model.gradient_tokens_with_memory(
+            &history,b'H',Some(&features),&memory).unwrap();
+        let eps=0.002f32;
+        for index in [l.bridge.start+3*VOCAB+10,l.memory_read.start+3*D+3,
+                      l.memory_write.start+2*D+2]{
+            let mut plus=model.clone();plus.weights[index]+=eps;
+            let mut minus=model.clone();minus.weights[index]-=eps;
+            let forward=|m:&Transformer|m.forward_tokens_with_memory(
+                &history,Some(&features),CONTEXT,&memory).unwrap().probabilities[b'H' as usize];
+            let numeric=(-forward(&plus).ln()+forward(&minus).ln())/(2.0*eps);
+            assert!((numeric-grad[index]).abs()<0.02,
+                "weight {index}: finite difference {numeric} vs gradient {}",grad[index]);
+        }
+        let mut plus=features.clone();plus[10]+=eps;
+        let mut minus=features.clone();minus[10]-=eps;
+        let pplus=model.forward_tokens_with_memory(&history,Some(&plus),CONTEXT,&memory)
+            .unwrap().probabilities[b'H' as usize];
+        let pminus=model.forward_tokens_with_memory(&history,Some(&minus),CONTEXT,&memory)
+            .unwrap().probabilities[b'H' as usize];
+        let numeric=(-pplus.ln()+pminus.ln())/(2.0*eps);
+        assert!((numeric-input_gradient[10]).abs()<0.02,
+            "dense input finite difference {numeric} vs {}",input_gradient[10]);
+    }
+    #[test]
+    fn bridge_measurement_is_a_read_only_ablation(){
+        let model=Transformer::new(11);
+        let before=model.weights.clone();
+        let inputs=vec![b'U' as u16,b':' as u16,b' ' as u16,b'h' as u16];
+        let features=vec![0.1;VOCAB];
+        let measure=model.measure_bridge(&inputs,&features,128).unwrap();
+        assert!(measure.projected_bridge_norm.is_finite());
+        assert!(measure.bridge_to_transformer_ratio.is_finite());
+        assert!((0.0..=1.0).contains(&measure.next_character_total_variation));
+        assert_eq!(model.weights,before);
+    }
+    #[test]
     fn can_train_reply_character_and_restore_optimizer() {
         let mut model=Transformer::new(41);
         let example=vec![(b"U: Hello\nN: ".to_vec(),b'H')];
