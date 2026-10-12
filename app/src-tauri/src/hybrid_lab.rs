@@ -686,7 +686,35 @@ pub fn hybrid_train(
     let ready=(||->Result<(),String>{
         let mut s=lock(&state)?;
         if s.trained{snapshot_active_checkpoint(&app,&s.brain,"before-lesson")?;}
-        s.brain.learn_token_units(&plan.training_text);
+        let observing=diag::enabled(&app.state::<Diagnostics>());
+        let prompts=["hello","Hi","good morning","hey there"]
+            .iter().map(|p|p.to_string()).collect::<Vec<_>>();
+        if observing {
+            diag::record(&app.state::<Diagnostics>(),"lesson_before_vocabulary",serde_json::json!({
+                "lessonMode":lesson.mode,"requestedEpochs":lesson.epochs,
+                "adaptiveRate":adaptive_learning_rate,"earlyStopping":early_stopping,
+                "learningRate":starting_lr,"patience":patience,
+                "lessonLengthBytes":lesson.text.len(),"lessonFingerprint":diag::fingerprint(&lesson.text),
+                "trainingExamples":plan.train.len(),"validationExamples":plan.validation.len(),
+                "trainingSplitFingerprint":diag::fingerprint(&plan.training_text),
+                "tokenizerWords":s.brain.tokenizer.words.len(),
+                "stepTransformer":s.brain.transformer.step,"stepDense":s.brain.dense_adam_steps(),
+                "weightsFingerprint":diag::weight_digest(&s.brain),
+                "isolatedGreetingProbes":diagnostic_probes(&s.brain,&prompts,128,&[],false),
+                "chatMemoryTurnsUnusedByDialogueTraining":s.history.len().min(MEMORY_SLOTS),
+            }));
+        }
+        let previous_word_count=s.brain.tokenizer.words.len();
+        let introduced=s.brain.learn_token_units(&plan.training_text);
+        if observing {
+            diag::record(&app.state::<Diagnostics>(),"lesson_after_vocabulary",serde_json::json!({
+                "addedWords":introduced,"totalWords":s.brain.tokenizer.words.len(),
+                "newWordUnits":&s.brain.tokenizer.words[previous_word_count..],
+                "stepTransformer":s.brain.transformer.step,"stepDense":s.brain.dense_adam_steps(),
+                "weightsFingerprint":diag::weight_digest(&s.brain),
+                "isolatedGreetingProbes":diagnostic_probes(&s.brain,&prompts,128,&[],false),
+            }));
+        }
         s.epoch=0;s.epochs=lesson.epochs;s.completed=0;
         s.total=plan.train.len()*lesson.epochs as usize;
         s.heldout_loss=None;s.heldout_accuracy=None;s.train_loss=None;s.error=None;
@@ -762,6 +790,14 @@ fn train_inner(
         if !loss.is_finite(){return Err("Non-finite baseline validation loss".into());}
         s.heldout_loss=Some(loss);s.heldout_accuracy=Some(accuracy);
         s.best_heldout_loss=Some(loss);
+        if diag::enabled(&app.state::<Diagnostics>()){
+            diag::record(&app.state::<Diagnostics>(),"lesson_validation_baseline",serde_json::json!({
+                "loss":loss,"nextCharacterAccuracy":accuracy,
+                "step":s.brain.transformer.step,"wordUnits":s.brain.tokenizer.words.len(),
+                "weightsFingerprint":diag::weight_digest(&s.brain),
+                "selectionUsesOnlyCurrentLessonValidation":true,
+            }));
+        }
         (s.brain.clone(),loss,accuracy,s.trained)
     };
     // Diagnostic baseline is measured after existing vocabulary expansion.
@@ -814,6 +850,18 @@ fn train_inner(
                 (loss,s.brain.transformer.step,
                     s.brain.last_batch_diagnostics.clone().ok_or("Gradient diagnostics missing")?)
             };
+            if diag::enabled(&app.state::<Diagnostics>()){
+                diag::record(&app.state::<Diagnostics>(),"train_batch",serde_json::json!({
+                    "epoch":epoch,"optimizerStep":step,"examples":batch.len(),
+                    "learningRate":learning_rate,"batchLoss":loss,
+                    "transformerGradientNorm":diag.transformer_norm,
+                    "denseGradientNorm":diag.dense_norm,
+                    "bridgeGradientNorm":diag.bridge_norm,
+                    "transformerClipped":diag.transformer_clipped,
+                    "denseClipped":diag.dense_clipped,
+                    "usesEpisodicMemory":lessons.mode=="conversation",
+                }));
+            }
             trained_count+=batch.len();
             batches+=1;
             transformer_grad_norm+=diag.transformer_norm as f64;
@@ -858,6 +906,26 @@ fn train_inner(
         };
         if let Some(value)=retention_score{lock(state)?.retention_accuracy=Some(value);}
         let should_stop=schedule.observe_validation(improved);
+        if diag::enabled(&app.state::<Diagnostics>()){
+            let brain=lock(state)?.brain.clone();
+            let probes=["hello","Hi","good morning","hey there"].iter()
+                .map(|s|s.to_string()).collect::<Vec<_>>();
+            diag::record(&app.state::<Diagnostics>(),"train_epoch",serde_json::json!({
+                "epoch":epoch,"learningRate":learning_rate,
+                "trainingLoss":epoch_loss/trained_count as f64,
+                "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
+                "bestValidationLoss":best_loss,"bestEpoch":best_epoch,"improved":improved,
+                "earlyStopNow":should_stop,"retentionAccuracy":retention_score,
+                "transformerGradientMean":transformer_grad_norm/batches.max(1) as f64,
+                "denseGradientMean":dense_grad_norm/batches.max(1) as f64,
+                "bridgeGradientMean":bridge_grad_norm/batches.max(1) as f64,
+                "transformerClipFraction":transformer_clip_batches as f64/batches.max(1) as f64,
+                "denseClipFraction":dense_clip_batches as f64/batches.max(1) as f64,
+                "modelStep":brain.transformer.step,"wordUnits":brain.tokenizer.words.len(),
+                "weightsFingerprint":diag::weight_digest(&brain),
+                "isolatedGreetingProbes":diagnostic_probes(&brain,&probes,128,&[],false),
+            }));
+        }
         let _=app.emit("hybrid-epoch",serde_json::json!({
             "epoch":epoch,"epochs":epochs,
             "trainLoss":epoch_loss/trained_count as f64,
@@ -880,6 +948,19 @@ fn train_inner(
     }
     let restored_retention=if retention.is_empty(){None}
         else{Some(retention_accuracy(&best_brain,retention)?)};
+    if diag::enabled(&app.state::<Diagnostics>()){
+        let prompts=["hello","Hi","good morning","hey there"].iter()
+            .map(|p|p.to_string()).collect::<Vec<_>>();
+        diag::record(&app.state::<Diagnostics>(),"training_selected_checkpoint",serde_json::json!({
+            "requestedEpochs":epochs,"bestEpoch":best_epoch,"bestValidationLoss":best_loss,
+            "earlyStopped":early_stopped,"cancelled":cancelled,
+            "selectedStep":best_brain.transformer.step,
+            "weightsFingerprint":diag::weight_digest(&best_brain),
+            "selectedGreetingProbes":diagnostic_probes(&best_brain,&prompts,128,&[],true),
+            "retentionAccuracy":restored_retention,
+            "selectionPolicy":"minimum current-lesson held-out teacher-forced loss",
+        }));
+    }
     {
         let mut s=lock(state)?;
         s.retention_accuracy=restored_retention;
