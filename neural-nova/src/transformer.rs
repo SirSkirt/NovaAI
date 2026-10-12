@@ -180,7 +180,7 @@ impl Transformer {
         let mut memory_means=Vec::new();
         let mut memory_activations=Vec::new();
         let mut memory_context=vec![0.0;D];
-        for source in memory.iter().rev().take(12).rev(){
+        for source in memory.iter().skip(memory.len().saturating_sub(12)){
             if source.is_empty() {continue;}
             let mut mean=vec![0.0;D];
             for &id in source {
@@ -204,7 +204,7 @@ impl Transformer {
         for j in 0..VOCAB {logits[j]+=self.weights[l.bout.start+j];}
         let probabilities=stable_softmax(&logits);
         Ok(Cache{tokens,inputs,query,keys,values,attention,context,mid,pre,act,hidden,probabilities,
-            memory_sources:memory.iter().rev().take(12).rev().cloned().collect(),
+            memory_sources:memory.iter().skip(memory.len().saturating_sub(12)).cloned().collect(),
             memory_means,memory_activations,memory_context})
     }
     pub fn predict(&self,context:&[u8])->Result<Vec<f32>,String> {
