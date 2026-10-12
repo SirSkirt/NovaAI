@@ -1,6 +1,41 @@
 //! Neural Nova: self-contained dense neural network and training math.
 //! No machine-learning crates; parameters and gradients are flat row-major f32 arrays.
 
+/// Neural Nova v0.1.2: 64 recent ASCII characters, 16 fixed features each.
+/// The 1024-dimensional network input and the 128-way ASCII output stay unchanged.
+pub const CONTEXT_CHARS: usize = 64;
+pub const FEATURES_PER_CHAR: usize = 16;
+pub const ASCII_OUTPUTS: usize = 128;
+
+/// Deterministic, from-scratch context encoder used by both GUI and CLI.
+/// Left padding is encoded as all zeroes, distinct from a real space.
+/// Feature channels: 7 bipolar ASCII bits, uppercase, lowercase, digit,
+/// horizontal whitespace, punctuation, vowel, sentence boundary, newline, present.
+pub fn encode_ascii_context(history: &[u8]) -> Result<Vec<f32>, String> {
+    if history.iter().any(|byte| *byte >= ASCII_OUTPUTS as u8) {
+        return Err("Neural Nova v0.1.2 accepts ASCII text only".to_string());
+    }
+    let mut features = vec![0.0; CONTEXT_CHARS * FEATURES_PER_CHAR];
+    let recent = &history[history.len().saturating_sub(CONTEXT_CHARS)..];
+    let first_position = CONTEXT_CHARS - recent.len();
+    for (idx, &code) in recent.iter().enumerate() {
+        let offset = (first_position + idx) * FEATURES_PER_CHAR;
+        for bit in 0..7 {
+            features[offset + bit] = if (code >> bit) & 1 == 1 { 1.0 } else { -1.0 };
+        }
+        features[offset + 7] = f32::from(code.is_ascii_uppercase());
+        features[offset + 8] = f32::from(code.is_ascii_lowercase());
+        features[offset + 9] = f32::from(code.is_ascii_digit());
+        features[offset + 10] = f32::from(matches!(code, b' ' | b'\t' | b'\r'));
+        features[offset + 11] = f32::from(code.is_ascii_punctuation());
+        features[offset + 12] = f32::from(b"aeiouAEIOU".contains(&code));
+        features[offset + 13] = f32::from(matches!(code, b'.' | b'!' | b'?' | b'\n'));
+        features[offset + 14] = f32::from(code == b'\n');
+        features[offset + 15] = 1.0;
+    }
+    Ok(features)
+}
+
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -428,4 +463,24 @@ mod tests {
         assert_eq!(net.predict(&[0.2, 0.5, -1.0]).unwrap(),
                    loaded.predict(&[0.2, 0.5, -1.0]).unwrap());
     }
+    #[test]
+    fn longer_context_preserves_older_characters_and_padding() {
+        let short = encode_ascii_context(b"hello no").unwrap();
+        let long = encode_ascii_context(b"there was once a very curious cat; hello no").unwrap();
+        assert_eq!(short.len(), 1024);
+        assert_eq!(short[..(CONTEXT_CHARS-8)*FEATURES_PER_CHAR], vec![0.0; 896]);
+        assert_ne!(short, long);
+        assert_eq!(&short[(CONTEXT_CHARS-8)*FEATURES_PER_CHAR..], &long[(CONTEXT_CHARS-8)*FEATURES_PER_CHAR..]);
+        assert!(encode_ascii_context("café".as_bytes()).is_err());
+    }
+
+    #[test]
+    fn context_encoding_distinguishes_real_spaces_from_padding() {
+        let real_space = encode_ascii_context(b" ").unwrap();
+        let empty = encode_ascii_context(b"").unwrap();
+        assert_ne!(real_space, empty);
+        assert_eq!(real_space[1023], 1.0);
+        assert_eq!(empty[1023], 0.0);
+    }
+
 }
