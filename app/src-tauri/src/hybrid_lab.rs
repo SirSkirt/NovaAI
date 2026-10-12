@@ -764,7 +764,12 @@ pub fn hybrid_train(
                     "cancelled":cancelled,"earlyStopped":early_stopped,"bestEpoch":best_epoch
                 }));
             },
-            Err(error)=>{let _=app.emit("hybrid-error",error);}
+            Err(error)=>{
+                diag::record(&app.state::<Diagnostics>(),"training_error",serde_json::json!({
+                    "message":error,"mayHaveUnrestoredInMemoryWeights":true
+                }));
+                let _=app.emit("hybrid-error",error);
+            }
         }
     });
     Ok(())
