@@ -172,36 +172,51 @@ impl Network {
         Ok(self.forward(input)?.1.last().ok_or("No dense output")?.clone())
     }
 
-    /// Gradient supplied by the single hybrid loss, not a separate dense target.
-    pub(crate) fn gradients_from_logits(&self,input:&[f32],output_derivative:&[f32])->Result<Gradients,String>{
-        if output_derivative.len()!=self.layers.last().unwrap().outputs || output_derivative.iter().any(|x|!x.is_finite()) {
+    /// Add upstream shared-loss derivatives directly to a reusable batch buffer.
+    /// The learning objective is unchanged; this avoids a 3.4 MB dense gradient
+    /// allocation for EVERY character in the training batch.
+    pub(crate) fn accumulate_logits_gradients(
+        &self,input:&[f32],output_derivative:&[f32],gradients:&mut Gradients
+    )->Result<(),String>{
+        if output_derivative.len()!=self.layers.last().unwrap().outputs
+            || output_derivative.iter().any(|x|!x.is_finite()){
             return Err("Dense upstream derivative shape/value mismatch".into());
         }
+        if gradients.layers.len()!=self.layers.len() || gradients.layers.iter().zip(&self.layers)
+            .any(|(g,l)|g.weights.len()!=l.weights.len()||g.biases.len()!=l.biases.len()){
+            return Err("Dense gradient buffer topology mismatch".into());
+        }
         let (activations,preactivations)=self.forward(input)?;
-        let mut gradients=Gradients::zeros(self);
         let mut delta=output_derivative.to_vec();
-        for layer_idx in (0..self.layers.len()).rev() {
+        for layer_idx in (0..self.layers.len()).rev(){
             let layer=&self.layers[layer_idx];
             let previous=&activations[layer_idx];
             let grad=&mut gradients.layers[layer_idx];
-            for out in 0..layer.outputs {
+            for out in 0..layer.outputs{
                 grad.biases[out]+=delta[out];
                 let offset=out*layer.inputs;
-                for i in 0..layer.inputs {grad.weights[offset+i]+=delta[out]*previous[i];}
+                for i in 0..layer.inputs{grad.weights[offset+i]+=delta[out]*previous[i];}
             }
-            if layer_idx>0 {
+            if layer_idx>0{
                 let mut upstream=vec![0.0;layer.inputs];
-                for out in 0..layer.outputs {
+                for out in 0..layer.outputs{
                     let offset=out*layer.inputs;
-                    for i in 0..layer.inputs {upstream[i]+=layer.weights[offset+i]*delta[out];}
+                    for i in 0..layer.inputs{upstream[i]+=layer.weights[offset+i]*delta[out];}
                 }
                 for (i,value) in upstream.iter_mut().enumerate(){
-                    if preactivations[layer_idx-1][i]<=0.0 {*value=0.0;}
+                    if preactivations[layer_idx-1][i]<=0.0{*value=0.0;}
                 }
                 delta=upstream;
             }
         }
-        Ok(gradients)
+        Ok(())
+    }
+    pub(crate) fn gradients_from_logits(
+        &self,input:&[f32],output_derivative:&[f32]
+    )->Result<Gradients,String>{
+        let mut grad=Gradients::zeros(self);
+        self.accumulate_logits_gradients(input,output_derivative,&mut grad)?;
+        Ok(grad)
     }
 
     /// Returns a cross-entropy loss and gradients for a single example.
