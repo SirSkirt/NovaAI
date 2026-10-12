@@ -143,7 +143,7 @@ function modeChanged(mode){
     ?"Up to 1,024 dialogue pairs, 384 ASCII characters per reply; one TAB between question and answer. Validation holds out whole question groups."
     :mode==="conversation"
     ?"Multi-turn: write U: and N: lines, separate sessions with blank lines or ---. At least 5 independent sessions, each with 2+ turns. Held-out sessions test neural memory."
-    :"120–50,000 ASCII bytes. The held-out text does not use training-text context; longer corpora are slower.";
+    :"120–50,000 ASCII bytes, with at least five distinct paragraphs (blank-line separated), sentences, or lines. Entire sections are independently held out by a stable split; no training context crosses into validation.";
   countData();
 }
 function countData(){
@@ -183,7 +183,7 @@ function loadSchedule(){
     if(p && typeof p==="object"){
       if(typeof p.adaptiveLearningRate==="boolean")$("adaptiveTraining").checked=p.adaptiveLearningRate;
       if(typeof p.earlyStopping==="boolean")$("earlyStopping").checked=p.earlyStopping;
-      if(["0.001","0.003","0.005"].includes(p.learningRate))$("trainingRate").value=p.learningRate;
+      if(["0.0001","0.0003","0.001","0.003","0.005"].includes(p.learningRate))$("trainingRate").value=p.learningRate;
       if(typeof p.rehearsal==="boolean")$("rehearsalEnabled").checked=p.rehearsal;
       if(typeof p.protectPrevious==="boolean")$("retentionGuardEnabled").checked=p.protectPrevious;
       if([0.05,0.10,0.20].includes(p.retentionLossTolerance))
