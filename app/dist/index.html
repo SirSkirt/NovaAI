@@ -82,6 +82,17 @@
             <p class="muted">Validation uses held-out question groups; the trainer keeps the best joint checkpoint and may stop if validation stalls. Earlier independent checkpoints remain untouched. Validation is not proof of understanding.</p>
             <button type="button" id="resetBrain" class="danger">Reset unified brain</button>
           </details>
+          <details class="teacher-extra">
+            <summary>Tokenizer-only A/B investigation (no neural training)</summary>
+            <p class="muted">Test the currently loaded checkpoint against a temporary copy whose vocabulary grows using this lesson's <em>training split only</em>. Neither stage touches Nova's live weights or saved checkpoint. Run before the new lesson, then compare with results afterward.</p>
+            <label for="tokenizerProbePrompts">Fixed benchmark prompts — one per line, up to six</label>
+            <textarea id="tokenizerProbePrompts" rows="4" spellcheck="false">hello
+Hi
+good morning
+hey there</textarea>
+            <button type="button" class="secondary" id="runTokenizerProbe">Compare A/B without training</button>
+            <pre id="tokenizerProbeOutput" class="epoch-history" style="max-height:320px;overflow:auto;white-space:pre-wrap">No tokenizer probe run.</pre>
+          </details>
         </div>
       </div>
       <details class="card test-lab" id="testLab">
