@@ -35,7 +35,7 @@ pub struct QuestionResult{
 pub struct TestReport{
     pub id:String,pub test_id:String,pub name:String,pub started_at:u64,
     pub status:String,pub config:TestOptions,
-    pub questions:Vec<QuestionResult>,pub unseen:Vec<QuestionResult>,
+    pub checkpoint:String,pub questions:Vec<QuestionResult>,pub unseen:Vec<QuestionResult>,
     pub baseline_unseen_correct:Option<usize>,pub final_unseen_correct:Option<usize>,
     pub initial_correct:usize,pub final_correct:usize,pub corrected:usize,
     pub still_incorrect:usize,pub training_updates:u64,pub start_step:u64,pub end_step:u64,
