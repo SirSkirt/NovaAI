@@ -1,0 +1,29 @@
+name: Neural Nova - Rust Core Tests
+on:
+  push:
+    branches: [experimental/neural-nova]
+    paths:
+      - "neural-nova/**"
+      - ".github/workflows/neural-nova-ci.yml"
+  pull_request:
+    branches: [experimental/neural-nova]
+    paths:
+      - "neural-nova/**"
+      - ".github/workflows/neural-nova-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-neural-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test custom neural-network implementation
+        working-directory: neural-nova
+        run: cargo test --all-targets
+      - name: Compile release trainer
+        working-directory: neural-nova
+        run: cargo build --release --bin train_ascii

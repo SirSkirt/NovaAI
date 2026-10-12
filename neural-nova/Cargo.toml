@@ -1,0 +1,16 @@
+[package]
+name = "neural-nova"
+version = "0.1.0"
+edition = "2021"
+description = "Experimental Neural Nova brain: custom Rust neural network, no ML frameworks"
+license = "MIT"
+
+[lib]
+name = "neural_nova"
+path = "src/lib.rs"
+
+[[bin]]
+name = "train_ascii"
+path = "src/bin/train_ascii.rs"
+
+[dependencies]

@@ -1,0 +1,3 @@
+hello nova. hello nova. nova learns one letter at a time.
+this is a small experiment in neural networks.
+hello nova. neural nova is learning to predict the next character.
