@@ -277,6 +277,7 @@ pub struct HybridReply{
 pub async fn hybrid_chat(
     app:AppHandle,state:State<'_,HybridState>,message:String,max_chars:usize,temperature:f32,
     context_chars:Option<usize>,deterministic:Option<bool>,seed:Option<u64>,
+    commit:Option<bool>,
 )->Result<HybridReply,String>{
     if message.is_empty() || message.len()>180 || !message.is_ascii() || message.contains('\n') || message.contains('\r') {
         return Err("Use a single-line 1–180 character ASCII message".into());
@@ -315,14 +316,20 @@ pub async fn hybrid_chat(
         report.prompt_tokens=prompt_tokens;
         report.prompt_tokens_retained=prompt_tokens.saturating_sub(dropped);
         report.active_tokens=full_token_count.min(window);
+        // These fields describe the actual tokenized prompt, not the old
+        // character-only estimate. A learned word may occupy one position.
+        report.prompt_bytes_retained=prompt_bytes; // original message remains stored separately
+        report.first_prompt_truncation_char=None; // token-level cutoff supersedes this field
         report.memory_turns=memory.len();
         let next=ConversationTurn{user:message,assistant:response.clone()};
         let mut future=s.history.clone();
         future.push(next);
         if future.len()>HISTORY_LIMIT{future.remove(0);}
         let neural_trace=trace(&s.brain,&history,window,&memory)?;
-        save_conversation(&app,&future)?;
-        s.history=future;
+        if commit.unwrap_or(true){
+            save_conversation(&app,&future)?;
+            s.history=future;
+        }
         Ok(HybridReply{
             response,trace:neural_trace,status:status(&state,&s),
             context_report:report,
@@ -542,12 +549,13 @@ pub fn hybrid_stop(state:State<'_,HybridState>)->bool{
 pub fn hybrid_reset(app:AppHandle,state:State<'_,HybridState>)->Result<HybridStatus,String>{
     if state.inner.training.load(Ordering::Acquire){return Err("Stop training before resetting weights".into());}
     let mut s=lock(&state)?;
+    let retained_history=s.history.clone();
     *s=Session{
         brain:HybridBrain::new(),trained:false,epoch:0,epochs:0,completed:0,total:0,
         heldout_loss:None,heldout_accuracy:None,train_loss:None,error:None,
         best_heldout_loss:None,best_epoch:0,learning_rate:DEFAULT_LEARNING_RATE,
         train_lessons:0,validation_lessons:0,tokens_per_second:0.0,
-        stage:"Idle".into(),early_stopped:false,history:s.history.clone()
+        stage:"Idle".into(),early_stopped:false,history:retained_history
     };
     let file=path(&app)?;
     if file.exists(){fs::remove_file(&file).map_err(|e|e.to_string())?;}
