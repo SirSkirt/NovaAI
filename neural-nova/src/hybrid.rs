@@ -9,6 +9,7 @@ use std::path::Path;
 
 const MAGIC:&[u8;8]=b"NHYB0300";
 
+#[derive(Clone)]
 pub struct HybridBrain {
     pub transformer:Transformer,
     pub dense:Network,
