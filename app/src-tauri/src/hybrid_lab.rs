@@ -837,7 +837,7 @@ pub fn hybrid_train(
         // Keep training exclusive until teacher archive has been saved.
         match result{
             Ok((cancelled,early_stopped,best_epoch))=>{
-                if best_epoch>0 && !cancelled {
+                if best_epoch>0 {
                     // Advance the teacher archive only after the selected joint
                     // neural checkpoint is saved. No held-out examples enter replay.
                     let saved=(||->Result<(),String>{
@@ -856,6 +856,7 @@ pub fn hybrid_train(
                             format!("Neural checkpoint saved, but teacher rehearsal archive failed: {e}"));
                     }
                 }
+                state.inner.training.store(false,Ordering::Release);
                 let _=app.emit("hybrid-done",serde_json::json!({
                     "cancelled":cancelled,"earlyStopped":early_stopped,"bestEpoch":best_epoch
                 }));
@@ -864,10 +865,10 @@ pub fn hybrid_train(
                 diag::record(&app.state::<Diagnostics>(),"training_error",serde_json::json!({
                     "message":error,"mayHaveUnrestoredInMemoryWeights":true
                 }));
+                state.inner.training.store(false,Ordering::Release);
                 let _=app.emit("hybrid-error",error);
             }
         }
-        state.inner.training.store(false,Ordering::Release);
     });
     Ok(())
 }
@@ -1163,6 +1164,11 @@ fn train_inner(
             early_stopped=true;
             break;
         }
+    }
+    // If every candidate regressed earlier skills, restore the entire
+    // unmodified pre-lesson joint checkpoint (including tokenizer/optimizer).
+    if best_epoch==0 && initially_trained {
+        best_brain=HybridBrain::load(path(app)?)?;
     }
     let restored_retention=if retention.is_empty(){None}
         else{Some(retention_accuracy(&best_brain,retention)?)};
