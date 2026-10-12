@@ -43,6 +43,9 @@ const conversationSample=[
 "U: The tree is tall.","N: The tree is tall.","U: What did I say was tall?","N: The tree."
 ].join("\n");
 const datasets={dialogue:dialogueSample,text:textSample,conversation:conversationSample};
+const TOKENIZER_BASELINE_KEY="neural-nova-tokenizer-experiment-v1";
+let latestTokenizerProbe=null;
+
 let activeMode="dialogue", initialized=false,running=false,busy=false,latestStatus=null,latestTrace=null;
 let lastQuestion="",lastReply="";
 const debugEntries=[];let errorCount=0;
@@ -249,6 +252,11 @@ $("runTokenizerProbe").addEventListener("click",()=>safe(async()=>{
     probes:$("tokenizerProbePrompts").value,maxChars:48,
     contextChars:Number($("chatContext").value)
   });
+  latestTokenizerProbe={
+    mode:activeMode,lessonText:$("lessonData").value,
+    prompts:$("tokenizerProbePrompts").value,
+    window:Number($("chatContext").value),result,
+  };
   const rows=[
     "EXPERIMENT A vs B — ZERO GRADIENT UPDATES",
     "New word units: "+result.addedWordUnits,
@@ -274,6 +282,50 @@ $("runTokenizerProbe").addEventListener("click",()=>safe(async()=>{
   report("INFO","Tokenizer probe","Non-mutating A/B finished: "+result.addedWordUnits+
     " newly proposed units, "+result.samples.length/2+" prompts.");
 },"Tokenizer-only diagnosis"));
+$("saveTokenizerBaseline").addEventListener("click",()=>safe(async()=>{
+  if(!latestTokenizerProbe)throw Error("Run the A/B experiment before saving a baseline.");
+  const old=localStorage.getItem(TOKENIZER_BASELINE_KEY);
+  if(old&&!confirm("Replace the previously saved tokenizer A/B baseline?"))return;
+  localStorage.setItem(TOKENIZER_BASELINE_KEY,JSON.stringify({
+    ...latestTokenizerProbe,createdAt:new Date().toISOString()
+  }));
+  report("INFO","Tokenizer diagnosis","Preserved the A/B baseline for comparison with the post-training checkpoint.");
+},"Save tokenizer baseline"));
+$("compareTokenizerStageC").addEventListener("click",()=>safe(async()=>{
+  if(running||busy)throw Error("Finish training before measuring stage C.");
+  const baseline=JSON.parse(localStorage.getItem(TOKENIZER_BASELINE_KEY)||"null");
+  if(!baseline)throw Error("Save an A/B baseline BEFORE training a new lesson.");
+  if(baseline.mode!==activeMode || baseline.lessonText!==$("lessonData").value ||
+     baseline.prompts!==$("tokenizerProbePrompts").value ||
+     baseline.window!==Number($("chatContext").value)){
+    throw Error("Stage C requires the same lesson text, prompts, mode and window as the saved A/B baseline.");
+  }
+  const current=await invoke("hybrid_tokenizer_probe",{
+    mode:activeMode,lessonText:$("lessonData").value,
+    probes:baseline.prompts,maxChars:48,contextChars:baseline.window
+  });
+  const rows=["A / B / C CONTROLLED CHECKPOINT COMPARISON",
+    "Baseline saved: "+baseline.createdAt,
+    "A = original working model, B = extra tokenizer units only,",
+    "C = current model after subsequent neural training.",
+    "A/B both have zero additional gradient steps.",
+    "C must have a different optimizer step for a meaningful post-training comparison.",""];
+  for(let i=0;i<baseline.result.samples.length;i+=2){
+    const old=baseline.result.samples[i],extended=baseline.result.samples[i+1];
+    const now=current.samples[i];
+    const summary=(label,item)=>label+" step "+item.transformerStep+
+      ", vocabulary "+item.vocabulary+", IDs "+JSON.stringify(item.tokenIds)+
+      ", greedy "+JSON.stringify(item.response)+
+      ", first prediction "+(item.topPredictions[0]?String.fromCharCode(item.topPredictions[0].code)+" "+(item.topPredictions[0].probability*100).toFixed(2)+"%":"—");
+    rows.push("PROMPT "+old.prompt,
+      summary("A",old),summary("B",extended),summary("C",now),
+      "Token shift A→B: "+(JSON.stringify(old.tokenIds)!==JSON.stringify(extended.tokenIds))+
+      " | Answer A→B changed: "+(old.response!==extended.response)+
+      " | Answer A→C changed: "+(old.response!==now.response),"");
+  }
+  $("tokenizerProbeOutput").textContent=rows.join("\n");
+  report("INFO","Tokenizer diagnosis","Completed A/B/C comparison; baseline evidence remains saved.");
+},"Tokenizer stage C"));
 $("runBridgeProbe").addEventListener("click",()=>safe(async()=>{
   if(running||busy)throw Error("Finish training first.");
   const result=await invoke("hybrid_bridge_probe",{
