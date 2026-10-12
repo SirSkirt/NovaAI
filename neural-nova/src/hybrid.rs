@@ -10,18 +10,25 @@ use std::path::Path;
 
 const MAGIC:&[u8;8]=b"NHYB0300";
 
+#[derive(Clone,Debug)]
+pub struct BatchGradientDiagnostics{
+    pub transformer_norm:f32,pub dense_norm:f32,pub bridge_norm:f32,
+    pub transformer_clipped:bool,pub dense_clipped:bool,
+}
 #[derive(Clone)]
 pub struct HybridBrain {
     pub transformer:Transformer,
     pub dense:Network,
     pub dense_adam:Adam,
     pub tokenizer:Tokenizer,
+    pub last_batch_diagnostics:Option<BatchGradientDiagnostics>,
 }
 impl HybridBrain {
     pub fn new()->Self {
         let dense=Network::new(NetworkConfig::neural_nova_v1()).expect("valid hybrid dimensions");
         let dense_adam=Adam::new(&dense,0.001).expect("valid learning rate");
-        Self{transformer:Transformer::new(0x4e4f5641_0300),dense,dense_adam,tokenizer:Tokenizer::new()}
+        Self{transformer:Transformer::new(0x4e4f5641_0300),dense,dense_adam,
+            tokenizer:Tokenizer::new(),last_batch_diagnostics:None}
     }
     pub fn dense_adam_steps(&self)->u32 {self.dense_adam.step}
     /// Grow the lossless input vocabulary; existing token IDs never change.
@@ -96,6 +103,13 @@ impl HybridBrain {
         let inverse=1.0/samples.len() as f32;
         for value in &mut tf_grad{*value*=inverse;}
         dense_grad.scale(inverse);
+        let transformer_norm=(tf_grad.iter().map(|&g|(g as f64)*(g as f64)).sum::<f64>()).sqrt() as f32;
+        let dense_norm=dense_grad.global_norm();
+        let bridge_norm=self.transformer.bridge_gradient_norm(&tf_grad)?;
+        self.last_batch_diagnostics=Some(BatchGradientDiagnostics{
+            transformer_norm,dense_norm,bridge_norm,
+            transformer_clipped:transformer_norm>1.0,dense_clipped:dense_norm>1.0,
+        });
         dense_grad.clip_global_norm(1.0);
         self.transformer.apply_gradients(&mut tf_grad,lr)?;
         self.dense_adam.set_learning_rate(lr)?;
@@ -123,7 +137,15 @@ impl HybridBrain {
         }
         let inv=1.0/samples.len() as f32;
         for x in &mut tf_grad{*x*=inv;}
-        dense_grad.scale(inv);dense_grad.clip_global_norm(1.0);
+        dense_grad.scale(inv);
+        let transformer_norm=(tf_grad.iter().map(|&g|(g as f64)*(g as f64)).sum::<f64>()).sqrt() as f32;
+        let dense_norm=dense_grad.global_norm();
+        let bridge_norm=self.transformer.bridge_gradient_norm(&tf_grad)?;
+        self.last_batch_diagnostics=Some(BatchGradientDiagnostics{
+            transformer_norm,dense_norm,bridge_norm,
+            transformer_clipped:transformer_norm>1.0,dense_clipped:dense_norm>1.0,
+        });
+        dense_grad.clip_global_norm(1.0);
         self.transformer.apply_gradients(&mut tf_grad,lr)?;
         self.dense_adam.set_learning_rate(lr)?;
         self.dense_adam.apply(&mut self.dense,&dense_grad)?;
