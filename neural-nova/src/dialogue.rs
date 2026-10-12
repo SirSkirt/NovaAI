@@ -138,4 +138,29 @@ mod tests {
         assert!(loss.is_finite() && loss>0.0);
         assert!((0.0..=1.0).contains(&accuracy));
     }
+    #[test]
+    fn response_supervision_really_updates_neural_weights() {
+        use crate::Adam;
+        let pair=DialoguePair{user:"hello nova".into(),assistant:"Hi!".into()};
+        let samples=supervised_samples(&pair).unwrap();
+        let mut network=Network::new(NetworkConfig{
+            dimensions:vec![1024,24,128],seed:37
+        }).unwrap();
+        let mut optimizer=Adam::new(&network,0.008).unwrap();
+        let mut before=0.0f32;
+        for (feature,target) in &samples {
+            before+=-(network.predict(feature).unwrap()[*target].max(1e-30)).ln();
+        }
+        for _ in 0..95 {
+            let refs:Vec<(&[f32],usize)>=samples.iter()
+                .map(|(feature,target)|(feature.as_slice(),*target)).collect();
+            network.train_batch(&refs,&mut optimizer).unwrap();
+        }
+        let mut after=0.0f32;
+        for (feature,target) in &samples {
+            after+=-(network.predict(feature).unwrap()[*target].max(1e-30)).ln();
+        }
+        assert!(after<before*0.2,"Training loss should fall: {before} -> {after}");
+    }
+
 }
