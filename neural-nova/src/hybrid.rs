@@ -324,13 +324,17 @@ mod tests{
         let memory=vec!["U: My favorite fruit is apple.\nN: Apple is a fruit.".to_string()];
         let baseline=brain.predict_with_memory(&context,128,&memory).unwrap();
         let without=brain.predict_with_memory(&context,128,&[]).unwrap();
-        assert_ne!(baseline,without,"Memory must actually condition model output");
+        assert_eq!(baseline,without,"Untrained memory should not perturb migrated dialogue");
         let before=brain.transformer.weights.clone();
-        brain.train_memory_batch(&[(context,b'A',memory)],0.001).unwrap();
+        for _ in 0..3{
+            brain.train_memory_batch(&[(context.clone(),b'A',memory.clone())],0.001).unwrap();
+        }
         let after=&brain.transformer.weights;
-        // The appended word embeddings and both memory matrices precede the end
-        // of the vector; at least the final 2048 weights must receive gradients.
+        // End-to-end memory lessons update the trainable writer/read matrices.
         assert_ne!(&before[before.len()-2048..],&after[after.len()-2048..]);
+        let with_memory=brain.predict_with_memory(&context,128,&memory).unwrap();
+        let without_memory=brain.predict_with_memory(&context,128,&[]).unwrap();
+        assert_ne!(with_memory,without_memory,"Memory must condition output after learning");
     }
     #[test]
     fn learned_words_and_optimizer_survive_joint_checkpoint_round_trip(){
