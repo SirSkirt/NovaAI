@@ -10,6 +10,10 @@ on:
       - ".github/workflows/neural-nova-app.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -24,6 +28,7 @@ jobs:
           node-version: "22"
       - uses: dtolnay/rust-toolchain@stable
       - run: node --check app/dist/js/nova-ui.js
+      - run: node --check app/dist/js/test-ui.js
       - run: node --check app/dist/js/brain.js
       - run: node --check app/dist/js/transformer.js
       - run: cargo test --all-targets
