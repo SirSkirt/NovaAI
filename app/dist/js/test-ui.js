@@ -37,6 +37,21 @@ async function refresh(preserveSelection=true){
     selection.append(o);
   }
   if(archive.definitions.some(x=>x.id===previous))selection.value=previous;
+  const retained=document.getElementById("retentionBenchmark");
+  if(retained){
+    const previousBank=retained.value;
+    retained.replaceChildren();
+    const none=document.createElement("option");
+    none.value="";none.textContent="No prior-skill benchmark";
+    retained.append(none);
+    for(const def of archive.definitions){
+      const option=document.createElement("option");
+      option.value=def.id;
+      option.textContent=def.name+" (first "+Math.min(4,def.cases.length)+" questions)";
+      retained.append(option);
+    }
+    if(archive.definitions.some(x=>x.id===previousBank))retained.value=previousBank;
+  }
   if(!currentRun && archive.reports.length){
     currentRun=archive.reports[archive.reports.length-1];
     if(currentRun.status==="running"||currentRun.status==="paused")
