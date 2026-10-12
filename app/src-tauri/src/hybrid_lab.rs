@@ -684,6 +684,11 @@ mod schedule_tests {
 fn test_time()->u64{
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d|d.as_secs()).unwrap_or(0)
 }
+fn test_unique_id(prefix:&str)->String{
+    let nanos=SystemTime::now().duration_since(UNIX_EPOCH)
+        .map(|d|d.as_nanos()).unwrap_or(0);
+    format!("{prefix}-{nanos}")
+}
 fn test_archive(state:&HybridState)->Result<std::sync::MutexGuard<'_,TestArchive>,String>{
     state.inner.tests.lock().map_err(|_|"Teacher archive lock poisoned".into())
 }
@@ -717,7 +722,7 @@ pub fn hybrid_test_save(app:AppHandle,state:State<'_,HybridState>,
     if unseen.iter().any(|c|existing.contains(&key(&c.question))){
         return Err("Unseen evaluation contains a question also present in the corrective test".into());
     }
-    let id=format!("test-{}-{}",test_time(),cases.len());
+    let id=test_unique_id("test");
     let result=TestDefinition{id,name:name.to_string(),cases,unseen,created_at:test_time()};
     let mut archive=test_archive(&state)?;
     if archive.definitions.len()>=30{return Err("30 saved tests maximum; delete an older test first".into());}
@@ -943,7 +948,7 @@ pub fn hybrid_test_start(app:AppHandle,state:State<'_,HybridState>,
         Ok(s)=>s.brain.transformer.step,
         Err(e)=>{state.inner.training.store(false,Ordering::Release);return Err(e);}
     };
-    let id=format!("run-{}-{}",test_time(),steps);
+    let id=test_unique_id("run");
     let mut report=TestReport{
         id:id.clone(),test_id:test.id.clone(),name:test.name.clone(),started_at:test_time(),
         status:"running".into(),config:options.clone(),
