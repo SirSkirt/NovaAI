@@ -676,3 +676,340 @@ mod schedule_tests {
         }
     }
 }
+
+
+/* Experimental teacher-side test loop. This code is NOT part of Nova's
+ * inference or neural architecture. Expected answers are never passed into
+ * a generation call; they are only used after the response is captured. */
+fn test_time()->u64{
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d|d.as_secs()).unwrap_or(0)
+}
+fn test_archive(state:&HybridState)->Result<std::sync::MutexGuard<'_,TestArchive>,String>{
+    state.inner.tests.lock().map_err(|_|"Teacher archive lock poisoned".into())
+}
+fn test_record(app:&AppHandle,state:&HybridState,report:&TestReport)->Result<(),String>{
+    let mut data=test_archive(state)?;
+    let index=data.reports.iter().position(|r|r.id==report.id)
+        .ok_or("Test record was removed")?;
+    data.reports[index]=report.clone();
+    persist_archive(app,&data)
+}
+#[tauri::command]
+pub fn hybrid_test_archive(state:State<'_,HybridState>)->Result<TestArchive,String>{
+    Ok(test_archive(&state)?.clone())
+}
+#[tauri::command]
+pub fn hybrid_test_save(app:AppHandle,state:State<'_,HybridState>,
+    name:String,questions_text:String,answers_text:String,
+    unseen_questions_text:String,unseen_answers_text:String,
+)->Result<TestDefinition,String>{
+    if state.inner.training.load(Ordering::Acquire){return Err("Wait until the current training or test finishes".into());}
+    let name=name.trim();
+    if name.is_empty()||name.len()>80{return Err("Test name must be 1–80 characters".into());}
+    let cases=parse_cases(&questions_text,&answers_text)?;
+    let unseen=if unseen_questions_text.trim().is_empty()&&unseen_answers_text.trim().is_empty(){
+        Vec::new()
+    }else{parse_cases(&unseen_questions_text,&unseen_answers_text)?};
+    // Leakage guard: held-out prompts may not duplicate correction questions,
+    // including capitalization and harmless whitespace differences.
+    let key=|s:&str|s.split_ascii_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase();
+    let existing=cases.iter().map(|c|key(&c.question)).collect::<std::collections::BTreeSet<_>>();
+    if unseen.iter().any(|c|existing.contains(&key(&c.question))){
+        return Err("Unseen evaluation contains a question also present in the corrective test".into());
+    }
+    let id=format!("test-{}-{}",test_time(),cases.len());
+    let result=TestDefinition{id,name:name.to_string(),cases,unseen,created_at:test_time()};
+    let mut archive=test_archive(&state)?;
+    if archive.definitions.len()>=30{return Err("30 saved tests maximum; delete an older test first".into());}
+    if archive.definitions.iter().any(|x|x.id==result.id){
+        return Err("Save was requested twice in the same second; retry".into());
+    }
+    archive.definitions.push(result.clone());
+    persist_archive(&app,&archive)?;
+    Ok(result)
+}
+#[tauri::command]
+pub fn hybrid_test_delete(app:AppHandle,state:State<'_,HybridState>,test_id:String)->Result<(),String>{
+    if state.inner.training.load(Ordering::Acquire){return Err("Cannot delete a test during training".into());}
+    let mut archive=test_archive(&state)?;
+    let old=archive.definitions.len();
+    archive.definitions.retain(|x|x.id!=test_id);
+    if old==archive.definitions.len(){return Err("Test not found".into());}
+    // Reports remain immutable evidence of previous results.
+    persist_archive(&app,&archive)
+}
+#[tauri::command]
+pub fn hybrid_test_pause(state:State<'_,HybridState>)->Result<(),String>{
+    if !state.inner.training.load(Ordering::Acquire){return Err("No active training/test".into());}
+    state.inner.test_paused.store(true,Ordering::Release);
+    Ok(())
+}
+#[tauri::command]
+pub fn hybrid_test_resume(state:State<'_,HybridState>)->Result<(),String>{
+    state.inner.test_paused.store(false,Ordering::Release);Ok(())
+}
+#[tauri::command]
+pub fn hybrid_test_stop(state:State<'_,HybridState>)->Result<(),String>{
+    state.inner.stop.store(true,Ordering::Release);
+    state.inner.test_paused.store(false,Ordering::Release);
+    Ok(())
+}
+fn test_wait(state:&HybridState)->bool{
+    while state.inner.test_paused.load(Ordering::Acquire)
+        && !state.inner.stop.load(Ordering::Acquire){
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    !state.inner.stop.load(Ordering::Acquire)
+}
+/// Only accepts the question, a frozen brain, and generation settings.
+/// No answer key, grade, or teacher content is accessible in this function.
+fn test_inference(brain:&HybridBrain,question:&str,o:&TestOptions,
+    salt:u64,stop:&AtomicBool)->Result<Option<String>,String>{
+    let mut prefix=dialogue_prefix(question)?;
+    let mut result=Vec::new();
+    let mut rng=o.seed.unwrap_or(42).wrapping_add(salt).max(1);
+    for _ in 0..o.max_chars{
+        if stop.load(Ordering::Acquire){return Ok(None);}
+        // No chat-history or expected-answer memory: tests are isolated.
+        let prob=brain.predict_with_memory(&prefix,o.context_chars,&[])?;
+        let code=if o.deterministic {greedy_sample(&prob)}
+            else{sampled(&prob,0.6,random(&mut rng))};
+        if code==b'\n'{break;}
+        prefix.push(code);result.push(code);
+    }
+    Ok(Some(String::from_utf8(result).map_err(|e|e.to_string())?))
+}
+fn test_attempt(state:&HybridState,case:&TestCase,o:&TestOptions,
+    salt:u64)->Result<Option<Attempt>,String>{
+    if !test_wait(state){return Ok(None);}
+    // Use actual joint HybridBrain weights, copied once for each independent
+    // inference call. No answer-key data is included in the input or memory.
+    let (brain,step)={
+        let model=lock(state)?;
+        (model.brain.clone(),model.brain.transformer.step)
+    };
+    let response=match test_inference(&brain,&case.question,o,salt,&state.inner.stop)?{
+        Some(v)=>v,None=>return Ok(None),
+    };
+    Ok(Some(Attempt{
+        automatic:grade(&response,&case.expected).into(),response,
+        teacher_grade:None,correction_loss:None,gradient_steps:0,model_step:step,
+        sampling:if o.deterministic{"greedy".into()}
+                 else{format!("seeded:{}",o.seed.unwrap_or(42).wrapping_add(salt))},
+    }))
+}
+/// One supervised pass per incorrect attempt. The only entry point for
+/// expected answers into the model is the existing shared-loss train_batch.
+/// Roll back an interrupted/failed correction rather than saving half a batch.
+fn test_correction(app:&AppHandle,state:&HybridState,question:&str,
+    expected:&str,rate:f32)->Result<Option<(f32,u64)>,String>{
+    let before={
+        let model=lock(state)?;
+        model.brain.clone()
+    };
+    let first=dialogue_prefix(question)?;
+    let mut history=first;
+    let mut pairs=Vec::<(Vec<u8>,u8)>::new();
+    for target in expected.bytes().chain(std::iter::once(b'\n')){
+        pairs.push((history[history.len().saturating_sub(512)..].to_vec(),target));
+        history.push(target);
+    }
+    let mut total_loss=0f64;
+    let mut completed=0usize;
+    let mut updates=0u64;
+    let result=(||->Result<Option<(f32,u64)>,String>{
+        for batch in pairs.chunks(8){
+            if !test_wait(state){return Ok(None);}
+            let loss={
+                let mut s=lock(state)?;
+                let value=s.brain.train_batch(batch,rate)?;
+                if !value.is_finite(){return Err("Nonfinite corrective training loss".into());}
+                value
+            };
+            total_loss+=loss as f64*batch.len() as f64;
+            completed+=batch.len();
+            updates+=1;
+        }
+        let mut model=lock(state)?;
+        if state.inner.stop.load(Ordering::Acquire){return Ok(None);}
+        model.brain.save(path(app)?)?;
+        model.trained=true;
+        Ok(Some(((total_loss/completed as f64) as f32,updates)))
+    })();
+    if !matches!(result,Ok(Some(_))){
+        let mut s=lock(state)?;
+        s.brain=before;
+    }
+    result
+}
+fn test_emit(app:&AppHandle,report:&TestReport)->Result<(),String>{
+    app.emit("hybrid-test-progress",report.clone()).map_err(|e|e.to_string())
+}
+fn test_runner(app:&AppHandle,state:&HybridState,test:&TestDefinition,
+    o:&TestOptions,report:&mut TestReport)->Result<(),String>{
+    // Phase 1: ALL baseline questions must be answered before ANY correction.
+    // Otherwise Q2's "initial score" would already have benefited from Q1.
+    for index in 0..test.cases.len(){
+        if !test_wait(state){report.status="stopped".into();return Ok(());}
+        if let Some(answer)=test_attempt(state,&test.cases[index],o,index as u64)?{
+            report.questions[index].attempts.push(answer);
+            report.recalculate();
+            test_record(app,state,report)?;
+            test_emit(app,report)?;
+        }else{report.status="stopped".into();return Ok(());}
+    }
+    // Baseline unseen questions are never used for corrections or vocabulary growth.
+    if o.generalization {
+        for (index,case) in test.unseen.iter().enumerate(){
+            if !test_wait(state){report.status="stopped".into();return Ok(());}
+            if let Some(answer)=test_attempt(state,case,o,10_000+index as u64)?{
+                report.unseen[index].attempts.push(answer);
+                test_record(app,state,report)?;
+            }else{report.status="stopped".into();return Ok(());}
+        }
+        report.baseline_unseen_correct=Some(report.unseen.iter().filter(|r|
+            r.attempts.first().is_some_and(|a|a.automatic=="correct")).count());
+        test_emit(app,report)?;
+    }
+    // Phase 2: correct AFTER baseline, then make independent new inferences.
+    for (index,case) in test.cases.iter().enumerate(){
+        for attempt_no in 1..o.attempts {
+            if !test_wait(state){report.status="stopped".into();return Ok(());}
+            let previous=report.questions[index].attempts.last().unwrap().automatic.clone();
+            if o.corrections && previous=="incorrect" {
+                let correction=test_correction(app,state,&case.question,&case.expected,o.learning_rate)?;
+                if let Some((loss,steps))=correction{
+                    if let Some(prev)=report.questions[index].attempts.last_mut(){
+                        prev.correction_loss=Some(loss);prev.gradient_steps=steps;
+                    }
+                    report.training_updates+=steps;
+                    report.end_step=lock(state)?.brain.transformer.step;
+                    test_record(app,state,report)?;
+                }else{report.status="stopped".into();return Ok(());}
+            }
+            if !test_wait(state){report.status="stopped".into();return Ok(());}
+            if let Some(attempt)=test_attempt(state,case,o,
+                100_000+(index as u64)*16+attempt_no as u64)?{
+                report.questions[index].attempts.push(attempt);
+                report.recalculate();
+                test_record(app,state,report)?;
+                test_emit(app,report)?;
+            }else{report.status="stopped".into();return Ok(());}
+        }
+    }
+    // Phase 3: retention (independent inference; NEVER update weights).
+    if o.retention {
+        for (index,case) in test.cases.iter().enumerate(){
+            if !test_wait(state){report.status="stopped".into();return Ok(());}
+            if report.questions[index].attempts.iter().any(|a|a.gradient_steps>0){
+                if let Some(attempt)=test_attempt(state,case,o,200_000+index as u64)?{
+                    report.questions[index].retention=Some(attempt);
+                    test_record(app,state,report)?;
+                    test_emit(app,report)?;
+                }else{report.status="stopped".into();return Ok(());}
+            }
+        }
+    }
+    if o.generalization {
+        for (index,case) in test.unseen.iter().enumerate(){
+            if !test_wait(state){report.status="stopped".into();return Ok(());}
+            if let Some(a)=test_attempt(state,case,o,10_000+index as u64)?{
+                report.unseen[index].attempts.push(a);
+                test_record(app,state,report)?;
+            }else{report.status="stopped".into();return Ok(());}
+        }
+        report.final_unseen_correct=Some(report.unseen.iter().filter(|r|
+            r.attempts.last().is_some_and(|a|a.automatic=="correct")).count());
+    }
+    report.recalculate();
+    report.status="complete".into();
+    Ok(())
+}
+#[tauri::command]
+pub fn hybrid_test_start(app:AppHandle,state:State<'_,HybridState>,
+    test_id:String,options:TestOptions)->Result<String,String>{
+    validate_options(&options)?;
+    let test={
+        let data=test_archive(&state)?;
+        data.definitions.iter().find(|t|t.id==test_id).cloned()
+            .ok_or("Test not found")?
+    };
+    if state.inner.training.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err(){
+        return Err("Nova is already learning or taking a test".into());
+    }
+    state.inner.stop.store(false,Ordering::Release);
+    state.inner.test_paused.store(false,Ordering::Release);
+    let steps=match lock(&state){
+        Ok(s)=>s.brain.transformer.step,
+        Err(e)=>{state.inner.training.store(false,Ordering::Release);return Err(e);}
+    };
+    let id=format!("run-{}-{}",test_time(),steps);
+    let mut report=TestReport{
+        id:id.clone(),test_id:test.id.clone(),name:test.name.clone(),started_at:test_time(),
+        status:"running".into(),config:options.clone(),
+        questions:test.cases.iter().map(|c|QuestionResult{question:c.question.clone(),
+            expected:c.expected.clone(),attempts:Vec::new(),retention:None}).collect(),
+        unseen:test.unseen.iter().map(|c|QuestionResult{question:c.question.clone(),
+            expected:c.expected.clone(),attempts:Vec::new(),retention:None}).collect(),
+        baseline_unseen_correct:None,final_unseen_correct:None,
+        initial_correct:0,final_correct:0,corrected:0,still_incorrect:0,
+        training_updates:0,start_step:steps,end_step:steps,error:None
+    };
+    let registered=(||->Result<(),String>{
+        let mut data=test_archive(&state)?;
+        data.reports.push(report.clone());
+        if data.reports.len()>25{data.reports.remove(0);}
+        persist_archive(&app,&data)
+    })();
+    if let Err(e)=registered{
+        state.inner.training.store(false,Ordering::Release);
+        return Err(e);
+    }
+    let state=state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||{
+        let result=test_runner(&app,&state,&test,&options,&mut report);
+        if let Err(e)=result{
+            report.status="failed".into();
+            report.error=Some(e);
+        }
+        if report.status=="running"{report.status="complete".into();}
+        if let Ok(s)=lock(&state){report.end_step=s.brain.transformer.step;}
+        if let Err(e)=test_record(&app,&state,&report){eprintln!("Failed saving test overview: {e}");}
+        let _=test_emit(&app,&report);
+        state.inner.training.store(false,Ordering::Release);
+        state.inner.test_paused.store(false,Ordering::Release);
+        let _=app.emit("hybrid-test-done",report);
+    });
+    Ok(id)
+}
+#[tauri::command]
+pub fn hybrid_test_review(app:AppHandle,state:State<'_,HybridState>,
+    run_id:String,index:usize,attempt:usize,teacher_grade:String,
+)->Result<(),String>{
+    if state.inner.training.load(Ordering::Acquire){return Err("Wait for the test to finish before reviewing".into());}
+    if !["correct","incorrect","needsReview"].contains(&teacher_grade.as_str()){
+        return Err("Unsupported teacher assessment".into());
+    }
+    let mut data=test_archive(&state)?;
+    let report=data.reports.iter_mut().find(|r|r.id==run_id).ok_or("Run not found")?;
+    let answer=report.questions.get_mut(index)
+        .and_then(|q|q.attempts.get_mut(attempt)).ok_or("Attempt not found")?;
+    answer.teacher_grade=Some(teacher_grade);
+    report.recalculate();
+    persist_archive(&app,&data)
+}
+#[cfg(test)]
+mod test_runner_tests{
+    use super::*;
+    #[test]
+    fn pure_generator_receives_no_expected_answer_and_is_repeatable(){
+        let brain=HybridBrain::new();
+        let options=TestOptions{attempts:3,corrections:false,learning_rate:0.001,
+            max_chars:12,context_chars:128,deterministic:true,seed:None,
+            retention:false,generalization:false};
+        let stop=AtomicBool::new(false);
+        let a=test_inference(&brain,"hello",&options,1,&stop).unwrap();
+        let b=test_inference(&brain,"hello",&options,2,&stop).unwrap();
+        assert_eq!(a,b);
+    }
+}
