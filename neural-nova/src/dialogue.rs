@@ -4,7 +4,7 @@ use crate::{encode_ascii_context, Network};
 
 pub const MAX_DIALOGUE_PAIRS: usize = 1024;
 pub const MAX_QUESTION_BYTES: usize = 180;
-pub const MAX_ANSWER_BYTES: usize = 128;
+pub const MAX_ANSWER_BYTES: usize = 384;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DialoguePair {
