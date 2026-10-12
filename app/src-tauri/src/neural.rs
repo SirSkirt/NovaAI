@@ -1,4 +1,5 @@
 use neural_nova::{encode_ascii_context, Adam, Network, NetworkConfig, CONTEXT_CHARS};
+use neural_nova::dialogue::{dialogue_prefix, parse_dialogues, supervised_samples, evaluate_dialogues, DialoguePair};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering as CompareOrdering;
 use std::fs;
@@ -494,6 +495,195 @@ fn train_inner(app: &AppHandle, state: &NeuralState, corpus: &[u8], epochs: u32)
     Ok(cancelled)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DialogueTrainingRequest {
+    text: String,
+    epochs: u32,
+}
+
+/// Teach paired questions and ideal responses; only the assistant's response
+/// characters carry supervised loss. No answer lookup is used during inference.
+#[tauri::command]
+pub fn neural_train_dialogues(
+    app: AppHandle,
+    state: State<'_, NeuralState>,
+    request: DialogueTrainingRequest,
+) -> Result<(), String> {
+    if !(1..=25).contains(&request.epochs) {
+        return Err("Dialogue training requires 1–25 epochs".into());
+    }
+    let pairs = parse_dialogues(&request.text)?;
+    // Reserve complete, unseen user/response pairs as evaluation examples
+    // when at least five examples are available.
+    let held_out = if pairs.len() >= 5 { (pairs.len()/5).max(1) } else { 0 };
+    let train_size = pairs.len() - held_out;
+    let per_epoch: usize = pairs[..train_size]
+        .iter().map(|pair| pair.assistant.len() + 1).sum();
+    if per_epoch > 14_000 {
+        return Err("This dialogue session has too many response characters; split it into lessons".into());
+    }
+    if state.shared.training.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err() {
+        return Err("Another Neural Nova training session is already running".into());
+    }
+    let setup = (|| -> Result<(),String> {
+        let mut session = lock_session(&state)?;
+        session.completed_examples = 0;
+        session.total_examples = per_epoch * request.epochs as usize;
+        session.current_epoch = 1;
+        session.total_epochs = request.epochs;
+        session.last_error = None;
+        session.validation_loss = None;
+        session.validation_accuracy = None;
+        Ok(())
+    })();
+    if let Err(error) = setup {
+        state.shared.training.store(false,Ordering::Release);
+        return Err(error);
+    }
+    state.shared.cancel.store(false,Ordering::Release);
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = dialogue_train_inner(&app,&state,&pairs,train_size,request.epochs);
+        if let Err(ref message) = result {
+            if let Ok(mut brain) = lock_session(&state) {
+                brain.last_error = Some(message.clone());
+            }
+            eprintln!("Neural Nova dialogue training error: {message}");
+        }
+        state.shared.training.store(false,Ordering::Release);
+        match result {
+            Ok(cancelled) => {
+                let _ = app.emit("neural-done",serde_json::json!({"cancelled":cancelled}));
+            }
+            Err(error) => {
+                let _ = app.emit("neural-error",error);
+            }
+        }
+    });
+    Ok(())
+}
+
+fn dialogue_train_inner(
+    app:&AppHandle,
+    state:&NeuralState,
+    pairs:&[DialoguePair],
+    train_size:usize,
+    epochs:u32,
+) -> Result<bool,String> {
+    let training = &pairs[..train_size];
+    let validation = &pairs[train_size..];
+    // Compute teacher-forced examples in advance: 1024 features each.
+    // A cap limits the memory and compute load of this first experiment.
+    let mut samples = Vec::new();
+    for pair in training { samples.extend(supervised_samples(pair)?); }
+    let total_examples = samples.len() * epochs as usize;
+    let preview = dialogue_prefix(&training[0].user)?;
+    let mut completed = 0usize;
+    let mut cancelled = false;
+    for epoch in 1..=epochs {
+        let order = randomized_positions(samples.len(),epoch);
+        let mut epoch_loss = 0.0f64;
+        let mut batch_count = 0usize;
+        for indices in order.chunks(BATCH) {
+            if state.shared.cancel.load(Ordering::Acquire) {
+                cancelled = true;
+                break;
+            }
+            let refs: Vec<(&[f32],usize)> = indices.iter()
+                .map(|&idx| (samples[idx].0.as_slice(), samples[idx].1)).collect();
+            let (loss,steps,activity) = {
+                let mut session = lock_session(state)?;
+                let brain = &mut *session;
+                let loss = brain.network.train_batch(&refs,&mut brain.optimizer)?;
+                brain.steps += 1;
+                brain.examples += refs.len() as u64;
+                brain.completed_examples = completed + refs.len();
+                brain.current_epoch = epoch;
+                brain.last_loss = Some(loss);
+                brain.trained = true;
+                let activity = if batch_count % 8 == 0 {
+                    Some(trace(&brain.network,&preview)?)
+                } else {None};
+                (loss,brain.steps,activity)
+            };
+            completed += refs.len();
+            batch_count += 1;
+            epoch_loss += (loss as f64) * refs.len() as f64;
+            if let Some(activity) = activity {
+                let _ = app.emit("neural-progress",TrainingProgress {
+                    epoch, epochs, completed_examples: completed,
+                    total_examples, loss, steps, trace:activity,
+                });
+            }
+        }
+        let (val_loss,val_accuracy) = {
+            let mut brain = lock_session(state)?;
+            let metrics = if !validation.is_empty() {
+                let (loss,accuracy) = evaluate_dialogues(&brain.network,validation)?;
+                brain.validation_loss = Some(loss);
+                brain.validation_accuracy = Some(accuracy);
+                (Some(loss),Some(accuracy))
+            } else {
+                brain.validation_loss = None;
+                brain.validation_accuracy = None;
+                (None,None)
+            };
+            brain.network.save(checkpoint_path(app)?)?;
+            metrics
+        };
+        let _ = app.emit("neural-epoch",serde_json::json!({
+            "epoch":epoch,"epochs":epochs,
+            "loss": epoch_loss / (completed.min(samples.len()).max(1) as f64),
+            "validationLoss":val_loss,
+            "validationAccuracy":val_accuracy,
+            "completedExamples":completed,"totalExamples":total_examples,
+            "mode":"dialogue",
+            "heldOutPairs":validation.len(),
+        }));
+        if cancelled {break;}
+    }
+    Ok(cancelled)
+}
+
+#[tauri::command]
+pub async fn neural_chat(
+    state:State<'_,NeuralState>,
+    message:String,
+    length:usize,
+    temperature:f32,
+) -> Result<GeneratedText,String> {
+    if !(1..=128).contains(&length) {return Err("Response limit must be 1–128 characters".into());}
+    if !temperature.is_finite() || !(0.2..=2.0).contains(&temperature) {
+        return Err("Temperature must be 0.2–2.0".into());
+    }
+    let mut prompt = dialogue_prefix(&message)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let session = lock_session(&state)?;
+        let mut generated = Vec::new();
+        let mut seed = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map(|t|t.as_nanos() as u64).unwrap_or(42);
+        for _ in 0..length {
+            let probabilities = session.network.predict(&encode_ascii_context(&prompt)?)?;
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let random = (seed >> 40) as f32 / (1u32 << 24) as f32;
+            let token = sample_code(&probabilities,temperature,random);
+            if token == b'\n' { break; }
+            generated.push(token);
+            prompt.push(token);
+        }
+        let context = &prompt[prompt.len().saturating_sub(CONTEXT_CHARS)..];
+        Ok(GeneratedText {
+            text:String::from_utf8(generated).map_err(|e|e.to_string())?,
+            trace:trace(&session.network,context)?,
+            status:status(&state,&session),
+        })
+    }).await.map_err(|e|e.to_string())?
+}
+
 #[tauri::command]
 pub fn neural_stop(state: State<'_, NeuralState>) -> bool {
     let running = state.shared.training.load(Ordering::Acquire);
@@ -541,6 +731,16 @@ mod tests {
         assert!(trace.links.iter().all(|link|
             session.network.connection_weight(link.transition,link.from,link.to) == Some(link.weight)
         ));
+    }
+
+    #[test]
+    fn dialogue_examples_are_answer_only_and_honestly_held_out() {
+        let curriculum=parse_dialogues("Hi\tHello!\nBye\tGoodbye.\nHow are you?\tFine.\nWhat is this?\tA test.\nAre you Nova?\tYes.\n").unwrap();
+        let train=curriculum.len()-curriculum.len()/5;
+        assert_eq!(train,4);
+        let inputs=supervised_samples(&curriculum[0]).unwrap();
+        assert_eq!(inputs.len(),7); // "Hello!" + newline
+        assert!(!curriculum[..train].iter().any(|x|x==&curriculum[train]));
     }
 
     #[test]
