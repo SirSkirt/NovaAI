@@ -66,10 +66,25 @@ fn save_conversation(app:&AppHandle,history:&[ConversationTurn])->Result<(),Stri
     let target=conversation_path(app)?;
     let tmp=target.with_extension("tmp");
     let contents=serde_json::to_vec(history).map_err(|e|e.to_string())?;
-    fs::write(&tmp,contents).map_err(|e|e.to_string())?;
-    // Windows rename can't overwrite an existing destination.
-    if target.exists(){fs::remove_file(&target).map_err(|e|e.to_string())?;}
-    fs::rename(tmp,target).map_err(|e|e.to_string())
+    {
+        use std::io::Write;
+        let mut file=fs::File::create(&tmp).map_err(|e|e.to_string())?;
+        file.write_all(&contents).map_err(|e|e.to_string())?;
+        file.sync_all().map_err(|e|e.to_string())?;
+    }
+    let backup=target.with_extension("bak");
+    if backup.exists(){fs::remove_file(&backup).map_err(|e|e.to_string())?;}
+    if target.exists(){fs::rename(&target,&backup).map_err(|e|e.to_string())?;}
+    match fs::rename(&tmp,&target){
+        Ok(())=>{
+            if backup.exists(){fs::remove_file(&backup).map_err(|e|e.to_string())?;}
+            Ok(())
+        },
+        Err(error)=>{
+            if backup.exists(){let _=fs::rename(&backup,&target);}
+            Err(error.to_string())
+        }
+    }
 }
 fn memory_turns(history:&[ConversationTurn])->Vec<String>{
     history.iter().rev().take(MEMORY_SLOTS).rev().map(|t|
@@ -318,8 +333,11 @@ pub async fn hybrid_chat(
         report.active_tokens=full_token_count.min(window);
         // These fields describe the actual tokenized prompt, not the old
         // character-only estimate. A learned word may occupy one position.
-        report.prompt_bytes_retained=prompt_bytes; // original message remains stored separately
-        report.first_prompt_truncation_char=None; // token-level cutoff supersedes this field
+        let full_tokens=s.brain.tokenizer.encode(
+            std::str::from_utf8(&history).map_err(|e|e.to_string())?)?;
+        let dropped_text=s.brain.tokenizer.decode(&full_tokens[..dropped])?;
+        report.prompt_bytes_retained=prompt_bytes.saturating_sub(dropped_text.len());
+        report.first_prompt_truncation_char=None; // exact token-level cutoff supplied instead
         report.memory_turns=memory.len();
         let next=ConversationTurn{user:message,assistant:response.clone()};
         let mut future=s.history.clone();
