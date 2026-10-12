@@ -27,6 +27,17 @@ async function act(fn){
 $("startDeepLog").addEventListener("click",()=>act(async()=>{
   if(state.path&&!confirm("Start a NEW JSONL recording? The previous log stays on disk, but the log viewer switches to the new file."))return;
   status(await invoke("nova_log_start"));
+  // Capture the untouched starting checkpoint immediately; it cannot learn
+  // during the probe and cannot access the answer key.
+  try{
+    await invoke("hybrid_diagnostic_probe",{
+      prompts:$("deepProbePrompts").value,contextChars:Number($("chatContext").value),
+      useConversationMemory:$("deepProbeMemory").checked
+    });
+    status(await invoke("nova_log_status"));
+  }catch(error){
+    $("deepLogStatus").textContent+=" · Initial probe skipped: "+String(error);
+  }
 }));
 $("stopDeepLog").addEventListener("click",()=>act(async()=>status(await invoke("nova_log_stop"))));
 $("copyDeepLog").addEventListener("click",()=>act(async()=>{
@@ -97,4 +108,14 @@ async function ready(){
   status(await invoke("nova_log_status"));
 }
 document.addEventListener("neural-nova-booted",()=>act(ready),{once:true});
+if(window.__TAURI__?.event?.listen){
+  // No interval and no additional inference: just reflect recorder status
+  // after existing native training milestones or completion.
+  for(const event of ["hybrid-epoch","hybrid-done","hybrid-error","hybrid-test-done"]){
+    void window.__TAURI__.event.listen(event,()=>act(async()=>{
+      const current=await invoke("nova_log_status");
+      if(current.enabled || current.lastError)status(current);
+    }));
+  }
+}
 })();
