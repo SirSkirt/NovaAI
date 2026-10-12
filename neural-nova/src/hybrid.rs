@@ -275,7 +275,7 @@ mod tests{
         trained.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.001).unwrap();
         let prompt=b"U: hello\nN: ";
         let before=trained.predict_window(prompt,128).unwrap();
-        let old_count=trained.transformer.weights.len()-128*32;
+        let old_count=24800;
         let path=std::env::temp_dir().join(format!("nova-migrate-{}-{}.nhyb",
             std::process::id(),trained.transformer.step));
         let mut file=File::create(&path).unwrap();
