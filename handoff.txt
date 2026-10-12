@@ -1,3 +1,36 @@
+TRAINER V0.3.2 — INDEPENDENT LEARNING CONTROLS (2026-10-12)
+=================================================================
+Owner specifically requested separate toggles so early stopping may remain
+enabled while adaptive learning rate is disabled. Preferred default:
+  Learning rate: Gentle 0.001
+  Adaptive learning rate: OFF (fixed rate for the whole run)
+  Early stopping: ON (patience 6 held-out epochs)
+The Teach tab has two independent checkboxes. Their selections persist
+locally across restarts. Editing is disabled during an active session.
+Backward compatibility: an old client providing options.adaptive still
+controls both flags unless the new explicit flags are provided.
+
+Teacher implementation:
+  neural-nova/src/trainer.rs: ScheduleConfig and ScheduleState independently
+  implement adaptive learning-rate reductions and early stopping. Four
+  regression tests cover independent combinations and never-increasing rate.
+  app/src-tauri/src/hybrid_lab.rs: accepts options.adaptiveLearningRate
+  and options.earlyStopping separately. Fixed 0.001 stays 0.001 across
+  every epoch while early stop remains operational.
+  app/dist/index.html and app/dist/js/nova-ui.js: two controls, descriptive
+  text, optional preference storage, and independent flags sent to Rust.
+
+IMPORTANT CORRECTION: v0.3.1 adaptive learning rate did not INCREASE the rate:
+it only halved the selected value after stalled validation (min 0.0003).
+If training worsened, cause is not established from the screenshots alone;
+different rates, sampling randomness, variation in lessons, and tiny
+model capacity can all affect results. No inference/code-generated answers
+are changed. One model, two jointly trainable pathways, one output.
+
+Package version v0.3.2; original main branch and older checkpoint data remain
+separate. CI/native result must be verified before declaring build success.
+
+===============================================================================
 TRAINER V0.3.1 HANDOFF (2026-10-12)
 ================================
 User confirmed: lessons are being improved separately; screenshots showing
