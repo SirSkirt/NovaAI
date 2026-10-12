@@ -1018,6 +1018,21 @@ pub fn hybrid_test_review(app:AppHandle,state:State<'_,HybridState>,
 mod test_runner_tests{
     use super::*;
     #[test]
+    fn small_corrective_example_improves_target_probability_in_one_joint_brain(){
+        let mut brain=HybridBrain::new();
+        let prompt=dialogue_prefix("hello").unwrap();
+        let initial=brain.predict_window(&prompt,128).unwrap()[b'H' as usize];
+        for _ in 0..6{
+            let loss=brain.train_batch(&[(prompt.clone(),b'H')],0.001).unwrap();
+            assert!(loss.is_finite());
+        }
+        let after=brain.predict_window(&prompt,128).unwrap()[b'H' as usize];
+        assert!(after>initial,
+            "Six real joint gradient updates should improve this controlled target");
+        assert_eq!(brain.transformer.step,6);
+        assert_eq!(brain.dense_adam_steps(),6);
+    }
+    #[test]
     fn pure_generator_receives_no_expected_answer_and_is_repeatable(){
         let brain=HybridBrain::new();
         let options=TestOptions{attempts:3,corrections:false,learning_rate:0.001,
