@@ -102,7 +102,7 @@ footer{padding:32px 0 35px;color:#697991;text-align:center;font-size:12px}
 .dialogue-school>.section-heading h2{margin:0 0 9px;font-size:25px}
 .dialogue-workspace{margin-top:12px}
 .dialogue-workspace .section-heading h2{font-size:20px}
-.dialogue-workspace input[type=text]{width:100%;padding:11px 12px;border-radius:10px;background:#0e1420;color:var(--text);border:1px solid #3a455b;outline:none;min-width:0;font:13px/1.3 inherit}
+.dialogue-workspace input[type=text]{width:100%;padding:11px 12px;border-radius:10px;background:#0e1420;color:var(--text);border:1px solid #3a455b;outline:none;min-width:0;font-size:13px;line-height:1.3}
 .dialogue-workspace input[type=text]:focus{border-color:#869bfa}
 .dialogue-workspace textarea{font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
 .dialogue-workspace .mini-note{font-size:11px;color:var(--muted);text-align:right}
