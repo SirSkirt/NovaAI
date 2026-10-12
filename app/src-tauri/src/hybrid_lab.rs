@@ -4,6 +4,7 @@ use neural_nova::dialogue::dialogue_prefix;
 use neural_nova::transformer::VOCAB;
 use neural_nova::trainer::{prepare,training_order,Example,PreparedLessons,ScheduleConfig,ScheduleState};
 use crate::transformer_lab::Lesson;
+use crate::test_lab::{TestArchive,TestDefinition,TestReport,TestOptions,TestCase,QuestionResult,Attempt,parse_cases,grade,validate_options};
 use serde::{Deserialize,Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -39,6 +40,8 @@ struct Shared{
     session:Mutex<Session>,
     training:AtomicBool,
     stop:AtomicBool,
+    test_paused:AtomicBool,
+    tests:Mutex<TestArchive>,
 }
 #[derive(Clone)]
 pub struct HybridState{inner:Arc<Shared>}
@@ -52,12 +55,40 @@ impl Default for HybridState{
                 train_lessons:0,validation_lessons:0,tokens_per_second:0.0,
                 stage:"Idle".into(),early_stopped:false,history:Vec::new()
             }),
-            training:AtomicBool::new(false),stop:AtomicBool::new(false)
+            training:AtomicBool::new(false),stop:AtomicBool::new(false),
+            test_paused:AtomicBool::new(false),tests:Mutex::new(TestArchive::default())
         })}
     }
 }
 fn lock(state:&HybridState)->Result<std::sync::MutexGuard<'_,Session>,String>{
     state.inner.session.lock().map_err(|_|"Hybrid model lock poisoned".into())
+}
+fn test_archive_path(app:&AppHandle)->Result<PathBuf,String>{
+    Ok(path(app)?.with_file_name("neural-nova-tests-v0.6.json"))
+}
+fn persist_archive(app:&AppHandle,data:&TestArchive)->Result<(),String>{
+    let path=test_archive_path(app)?;
+    let tmp=path.with_extension("tmp");
+    let serialized=serde_json::to_vec_pretty(data).map_err(|e|e.to_string())?;
+    {
+        use std::io::Write;
+        let mut file=fs::File::create(&tmp).map_err(|e|e.to_string())?;
+        file.write_all(&serialized).map_err(|e|e.to_string())?;
+        file.sync_all().map_err(|e|e.to_string())?;
+    }
+    let backup=path.with_extension("bak");
+    if backup.exists(){fs::remove_file(&backup).map_err(|e|e.to_string())?;}
+    if path.exists(){fs::rename(&path,&backup).map_err(|e|e.to_string())?;}
+    match fs::rename(&tmp,&path){
+        Ok(())=>{
+            if backup.exists(){fs::remove_file(&backup).map_err(|e|e.to_string())?;}
+            Ok(())
+        },
+        Err(e)=>{
+            if backup.exists(){let _=fs::rename(&backup,&path);}
+            Err(e.to_string())
+        }
+    }
 }
 fn conversation_path(app:&AppHandle)->Result<PathBuf,String>{
     Ok(path(app)?.with_file_name(CHAT_FILE))
@@ -156,6 +187,18 @@ pub fn hybrid_boot(app:AppHandle,state:State<'_,HybridState>)->Result<HybridStat
             return Err("Invalid persisted conversation data".into());
         }
         s.history=turns;
+    }
+    // A terminated native process cannot have a still-running test.
+    let archive_path=test_archive_path(&app)?;
+    if archive_path.exists(){
+        let data=fs::read(&archive_path).map_err(|e|e.to_string())?;
+        let mut archive:TestArchive=serde_json::from_slice(&data).map_err(|e|e.to_string())?;
+        for report in &mut archive.reports{
+            if report.status=="running" || report.status=="paused"{
+                report.status="interrupted".into();
+            }
+        }
+        *state.inner.tests.lock().map_err(|_|"Test archive lock poisoned")?=archive;
     }
     Ok(status(&state,&s))
 }
