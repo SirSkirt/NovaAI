@@ -239,7 +239,7 @@ function saveChatOptions(){
   $("chatTemperature").disabled=running||busy||mode==="greedy";
   $("chatExperimentNote").textContent=(context===256
     ?"Transformer: 256-character context (extra positions need training). Dense pathway: 64 characters. Compare using the same seed."
-    :"Original 128-character context. The model can lose prompt characters during long replies.")+
+    :"Transformer: original 128-character context; dense pathway: 64 characters. The question can fall out during long replies.")+
     (mode==="greedy"?" Most likely: temperature does not affect results.":
      mode==="fixed"?" Seeded sampling (42) allows repeatable A/B comparisons.":
      " Random sampling can produce different replies without any new learning.");
