@@ -254,13 +254,13 @@ fn train_inner(
     let train:&[Example]=&lessons.train;
     let valid:&[Example]=&lessons.validation;
     let started=Instant::now();
-    let (mut best_brain,mut best_loss,initially_trained)={
+    let (mut best_brain,mut best_loss,mut best_accuracy,initially_trained)={
         let mut s=lock(state)?;
         let (loss,accuracy)=s.brain.evaluate(valid)?;
         if !loss.is_finite(){return Err("Non-finite baseline validation loss".into());}
         s.heldout_loss=Some(loss);s.heldout_accuracy=Some(accuracy);
         s.best_heldout_loss=Some(loss);
-        (s.brain.clone(),loss,s.trained)
+        (s.brain.clone(),loss,accuracy,s.trained)
     };
     let mut best_epoch=0u32;
     let mut learning_rate=starting_lr;
@@ -311,7 +311,7 @@ fn train_inner(
             if !loss.is_finite(){return Err("Non-finite validation loss".into());}
             let improved=loss + MIN_IMPROVEMENT < best_loss;
             if improved{
-                best_loss=loss;best_epoch=epoch;
+                best_loss=loss;best_accuracy=accuracy;best_epoch=epoch;
                 best_brain=s.brain.clone();
                 s.brain.save(path(app)?)?;
             }
@@ -352,6 +352,7 @@ fn train_inner(
         s.best_epoch=best_epoch;
         s.best_heldout_loss=Some(best_loss);
         s.heldout_loss=Some(best_loss);
+        s.heldout_accuracy=Some(best_accuracy);
         s.learning_rate=learning_rate;
         s.early_stopped=early_stopped;
         s.tokens_per_second=(completed as f64/started.elapsed().as_secs_f64().max(0.001)) as f32;
