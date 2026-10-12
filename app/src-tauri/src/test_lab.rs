@@ -52,8 +52,8 @@ pub struct TestArchive{
 pub fn grade(generated:&str,expected:&str)->&'static str{
     if generated.trim()==expected.trim(){"correct"}
     else if generated.trim().eq_ignore_ascii_case(expected.trim()) ||
-        generated.trim().trim_end_matches(['.','!','?']) ==
-        expected.trim().trim_end_matches(['.','!','?']){"needsReview"}
+        generated.trim().trim_end_matches(&['.','!','?'][..]) ==
+        expected.trim().trim_end_matches(&['.','!','?'][..]){"needsReview"}
     else{"incorrect"}
 }
 fn valid_line(value:&str,limit:usize)->bool{
