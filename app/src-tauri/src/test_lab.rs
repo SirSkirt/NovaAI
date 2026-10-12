@@ -111,6 +111,7 @@ impl TestReport {
             q.attempts.last().is_some_and(|a|a.teacher_grade.as_deref().unwrap_or(&a.automatic)=="correct")).count();
         self.corrected=self.questions.iter().filter(|q|
             q.attempts.first().is_some_and(|a|a.automatic!="correct")&&
+            q.attempts.iter().any(|a|a.gradient_steps>0)&&
             q.attempts.last().is_some_and(|a|a.teacher_grade.as_deref().unwrap_or(&a.automatic)=="correct")).count();
         self.still_incorrect=self.questions.iter().filter(|q|
             q.attempts.last().is_some_and(|a|a.teacher_grade.as_deref().unwrap_or(&a.automatic)=="incorrect")).count();
