@@ -263,8 +263,20 @@ impl Transformer {
             for &w in array {file.write_all(&w.to_le_bytes()).map_err(|e|e.to_string())?;}
         }
         file.sync_all().map_err(|e|e.to_string())?;
-        if path.exists(){std::fs::remove_file(path).map_err(|e|e.to_string())?;}
-        std::fs::rename(tmp,path).map_err(|e|e.to_string())
+        drop(file); // Windows cannot reliably rename a still-open checkpoint.
+        let backup=path.with_extension("bak");
+        if backup.exists(){std::fs::remove_file(&backup).map_err(|e|e.to_string())?;}
+        if path.exists(){std::fs::rename(path,&backup).map_err(|e|e.to_string())?;}
+        match std::fs::rename(&tmp,path){
+            Ok(())=>{
+                if backup.exists(){std::fs::remove_file(&backup).map_err(|e|e.to_string())?;}
+                Ok(())
+            },
+            Err(e)=>{
+                if backup.exists(){let _=std::fs::rename(&backup,path);}
+                Err(format!("Unable to install Transformer checkpoint: {e}"))
+            }
+        }
     }
     pub fn load(path:impl AsRef<Path>)->Result<Self,String> {
         let mut file=File::open(path).map_err(|e|e.to_string())?;
