@@ -268,6 +268,29 @@ $("runTokenizerProbe").addEventListener("click",()=>safe(async()=>{
   report("INFO","Tokenizer probe","Non-mutating A/B finished: "+result.addedWordUnits+
     " newly proposed units, "+result.samples.length/2+" prompts.");
 },"Tokenizer-only diagnosis"));
+$("runBridgeProbe").addEventListener("click",()=>safe(async()=>{
+  if(running||busy)throw Error("Finish training first.");
+  const result=await invoke("hybrid_bridge_probe",{
+    message:$("bridgeProbeMessage").value,
+    contextChars:Number($("chatContext").value)
+  });
+  const formatted=(x)=>Number(x).toFixed(6);
+  $("bridgeProbeOutput").textContent=[
+    "READ-ONLY BRIDGE DIAGNOSTICS",
+    "Transformer step: "+result.transformerStep+" · dense step: "+result.denseStep,
+    "Transformer hidden norm (before bridge): "+formatted(result.transformerNorm),
+    "Dense feature norm: "+formatted(result.denseNorm),
+    "Projected bridge norm: "+formatted(result.projectedBridgeNorm),
+    "Combined hidden norm: "+formatted(result.combinedNorm),
+    "Bridge / Transformer norm ratio: "+formatted(result.bridgeToTransformerRatio),
+    "Next-character distribution change (bridge ablation): "+
+      (100*result.nextCharacterTotalVariation).toFixed(3)+"% total variation",
+    "",
+    "The ablation only zeroes the bridge input for a measurement. It does not",
+    "train or edit Nova. A large ratio is a clue, not proof of a faulty bridge."
+  ].join("\n");
+  report("INFO","Bridge probe","Measured actual learned bridge magnitude and no-weight-change ablation.");
+},"Neural bridge measurement"));
 $("stopTraining").addEventListener("click",()=>safe(async()=>{
   if(await invoke("hybrid_stop"))report("INFO","Training","Stop requested; the current epoch checkpoint will be saved.");
 },"Training"));
