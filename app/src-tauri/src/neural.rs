@@ -1,4 +1,4 @@
-use neural_nova::{Adam, Network, NetworkConfig};
+use neural_nova::{encode_ascii_context, Adam, Network, NetworkConfig, CONTEXT_CHARS};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering as CompareOrdering;
 use std::fs;
@@ -8,11 +8,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-const WINDOW: usize = 8;
+const WINDOW: usize = CONTEXT_CHARS;
 const ALPHABET: usize = 128;
 const BATCH: usize = 8;
-const MAX_TRAIN_BYTES: usize = 100_000;
-const CHECKPOINT: &str = "neural-nova-v1.nnov";
+const MAX_TRAIN_BYTES: usize = 250_000;
+// New context encoding must not silently interpret legacy eight-char weights.
+const CHECKPOINT: &str = "neural-nova-v0.1.2.nnov";
 
 pub struct BrainSession {
     network: Network,
@@ -26,6 +27,8 @@ pub struct BrainSession {
     current_epoch: u32,
     total_epochs: u32,
     last_error: Option<String>,
+    validation_loss: Option<f32>,
+    validation_accuracy: Option<f32>,
 }
 
 struct Shared {
@@ -53,6 +56,8 @@ impl Default for NeuralState {
                     current_epoch: 0,
                     total_epochs: 0,
                     last_error: None,
+                    validation_loss: None,
+                    validation_accuracy: None,
                 }),
                 training: AtomicBool::new(false),
                 cancel: AtomicBool::new(false),
@@ -76,6 +81,8 @@ pub struct BrainStatus {
     current_epoch: u32,
     total_epochs: u32,
     last_error: Option<String>,
+    validation_loss: Option<f32>,
+    validation_accuracy: Option<f32>,
 }
 
 #[derive(Serialize, Clone)]
@@ -157,26 +164,53 @@ fn status(state: &NeuralState, session: &BrainSession) -> BrainStatus {
         current_epoch: session.current_epoch,
         total_epochs: session.total_epochs,
         last_error: session.last_error.clone(),
+        validation_loss: session.validation_loss,
+        validation_accuracy: session.validation_accuracy,
     }
 }
 
-fn encode(context: &[u8; WINDOW]) -> Vec<f32> {
-    let mut v = vec![0.0; WINDOW * ALPHABET];
-    for (position, &byte) in context.iter().enumerate() {
-        v[position * ALPHABET + byte as usize] = 1.0;
-    }
-    v
-}
-
-fn context_bytes(input: &str) -> Result<[u8; WINDOW], String> {
+fn context_bytes(input: &str) -> Result<Vec<u8>, String> {
     if !input.is_ascii() {
-        return Err("This first character model supports ASCII only. Unicode will come later.".into());
+        return Err("This 128-output character model currently supports ASCII only".into());
     }
-    let mut value = [b' '; WINDOW];
     let bytes = input.as_bytes();
-    let count = bytes.len().min(WINDOW);
-    value[WINDOW - count..].copy_from_slice(&bytes[bytes.len() - count..]);
-    Ok(value)
+    Ok(bytes[bytes.len().saturating_sub(WINDOW)..].to_vec())
+}
+
+/// Every example has a real preceding context, optionally shortened for
+/// prefix generalization. Training and inference use the same feature encoder.
+fn features_for(corpus: &[u8], position: usize, window: usize) -> Result<Vec<f32>, String> {
+    let start = position.saturating_sub(window.min(WINDOW));
+    encode_ascii_context(&corpus[start..position])
+}
+
+fn validation_metrics(network: &Network, corpus: &[u8], start: usize) -> Result<(f32, f32), String> {
+    let mut loss = 0.0f64;
+    let mut correct = 0usize;
+    let count = corpus.len() - start;
+    for index in start..corpus.len() {
+        let probabilities = network.predict(&features_for(corpus, index, WINDOW)?)?;
+        let target = corpus[index] as usize;
+        loss += -(probabilities[target].max(1e-30) as f64).ln();
+        let predicted = probabilities.iter().enumerate().max_by(|a,b|
+            a.1.partial_cmp(b.1).unwrap_or(CompareOrdering::Equal)
+        ).map(|v|v.0).unwrap_or(0);
+        correct += usize::from(predicted == target);
+    }
+    Ok(((loss / count as f64) as f32, correct as f32 / count as f32))
+}
+
+fn randomized_positions(length: usize, epoch: u32) -> Vec<usize> {
+    let mut positions: Vec<usize> = (0..length).collect();
+    let mut seed = 0x4e4f_5641_2026_1002u64 ^ (epoch as u64).wrapping_mul(0x9e3779b97f4a7c15);
+    for i in (1..length).rev() {
+        seed ^= seed >> 12;
+        seed ^= seed << 25;
+        seed ^= seed >> 27;
+        let random = seed.wrapping_mul(2685821657736338717);
+        positions.swap(i, (random % (i as u64 + 1)) as usize);
+    }
+    positions
 }
 
 fn best_indices(values: &[f32], count: usize) -> Vec<usize> {
@@ -188,8 +222,8 @@ fn best_indices(values: &[f32], count: usize) -> Vec<usize> {
     ids
 }
 
-fn trace(network: &Network, context: &[u8; WINDOW]) -> Result<BrainTrace, String> {
-    let layers = network.activations(&encode(context))?;
+fn trace(network: &Network, context: &[u8]) -> Result<BrainTrace, String> {
+    let layers = network.activations(&encode_ascii_context(context)?)?;
     let mut links = Vec::new();
     for transition in 0..network.layers.len() {
         let sources = best_indices(&layers[transition], 12);
@@ -290,7 +324,7 @@ pub async fn neural_generate(
             .map(|d| d.as_nanos() as u64).unwrap_or(53);
         for _ in 0..length {
             let context = context_bytes(std::str::from_utf8(&all).map_err(|e| e.to_string())?)?;
-            let probabilities = session.network.predict(&encode(&context))?;
+            let probabilities = session.network.predict(&encode_ascii_context(&context)?)?;
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
@@ -315,8 +349,8 @@ pub fn neural_train(
     if !request.text.is_ascii() {
         return Err("Training currently supports ASCII text only".into());
     }
-    if request.text.len() <= WINDOW || request.text.len() > MAX_TRAIN_BYTES {
-        return Err(format!("Training text must be 9 to {MAX_TRAIN_BYTES} ASCII bytes"));
+    if request.text.len() < 40 || request.text.len() > MAX_TRAIN_BYTES {
+        return Err(format!("Training text must be 40 to {MAX_TRAIN_BYTES} ASCII bytes"));
     }
     if !(1..=25).contains(&request.epochs) {
         return Err("Epoch count must be between 1 and 25".into());
@@ -327,7 +361,9 @@ pub fn neural_train(
         return Err("Neural Nova is already training".into());
     }
     state.shared.cancel.store(false, Ordering::Release);
-    let total_examples = (request.text.len() - WINDOW) * request.epochs as usize;
+    // Hold out the final 10% of the corpus to report generalization, not just memorization.
+    let train_count = ((request.text.len() * 9) / 10).max(1);
+    let total_examples = train_count * request.epochs as usize;
     {
         let setup = (|| -> Result<(), String> {
             let mut session = lock_session(&state)?;
@@ -336,6 +372,8 @@ pub fn neural_train(
             session.current_epoch = 1;
             session.total_epochs = request.epochs;
             session.last_error = None;
+            session.validation_loss = None;
+            session.validation_accuracy = None;
             Ok(())
         })();
         if let Err(error) = setup {
@@ -371,65 +409,86 @@ pub fn neural_train(
 }
 
 fn train_inner(app: &AppHandle, state: &NeuralState, corpus: &[u8], epochs: u32) -> Result<bool, String> {
-    let total = (corpus.len() - WINDOW) * epochs as usize;
+    let training_count = corpus.len() * 9 / 10;
+    let total = training_count * epochs as usize;
     let mut completed = 0usize;
     let mut cancelled = false;
     for epoch in 1..=epochs {
-        let mut position = 0usize;
+        let positions = randomized_positions(training_count, epoch);
         let mut batch_counter = 0usize;
-        let mut total_epoch_loss = 0.0_f32;
-        while position + WINDOW < corpus.len() {
+        let mut total_epoch_loss = 0.0_f64;
+        for batch_indices in positions.chunks(BATCH) {
             if state.shared.cancel.load(Ordering::Acquire) {
                 cancelled = true;
                 break;
             }
-            let mut storage = Vec::with_capacity(BATCH);
-            for _ in 0..BATCH {
-                if position + WINDOW >= corpus.len() { break; }
-                let mut context = [0u8; WINDOW];
-                context.copy_from_slice(&corpus[position..position + WINDOW]);
-                storage.push((encode(&context), corpus[position + WINDOW] as usize));
-                position += 1;
+            let mut storage = Vec::with_capacity(batch_indices.len());
+            for &index in batch_indices {
+                // Some training examples deliberately contain only a short prefix.
+                // Others include the full 64 characters. This makes short prompts
+                // and longer sentence contexts both useful with the same weights.
+                let length = match (index.wrapping_mul(13) + epoch as usize) % 5 {
+                    0 => 8,
+                    1 => 16,
+                    2 => 32,
+                    _ => WINDOW,
+                };
+                storage.push((features_for(corpus, index, length)?, corpus[index] as usize));
             }
             let batch: Vec<(&[f32], usize)> = storage.iter()
                 .map(|(features, target)| (features.as_slice(), *target)).collect();
             let (loss, steps, observation) = {
                 let mut session = lock_session(state)?;
-                let s = &mut *session;
-                let loss = s.network.train_batch(&batch, &mut s.optimizer)?;
-                s.steps += 1;
-                s.examples += batch.len() as u64;
-                s.completed_examples = completed + batch.len();
-                s.current_epoch = epoch;
-                s.trained = true;
-                s.last_loss = Some(loss);
-                let context = &corpus[position - 1..position - 1 + WINDOW];
-                let mut bytes = [0u8; WINDOW];
-                bytes.copy_from_slice(context);
+                let brain = &mut *session;
+                let loss = brain.network.train_batch(&batch, &mut brain.optimizer)?;
+                brain.steps += 1;
+                brain.examples += batch.len() as u64;
+                brain.completed_examples = completed + batch.len();
+                brain.current_epoch = epoch;
+                brain.trained = true;
+                brain.last_loss = Some(loss);
+                // Visualize a representative training sample rather than an
+                // assumption that shuffled sample indices are contiguous.
                 let observation = if batch_counter % 8 == 0 {
-                    Some(trace(&s.network, &bytes)?)
+                    let index = batch_indices[0];
+                    Some(trace(&brain.network, &corpus[index.saturating_sub(WINDOW)..index])?)
                 } else { None };
-                (loss, s.steps, observation)
+                (loss, brain.steps, observation)
             };
             batch_counter += 1;
             completed += batch.len();
-            total_epoch_loss += loss;
+            total_epoch_loss += loss as f64;
             if let Some(trace) = observation {
-                let _ = app.emit("neural-progress", TrainingProgress {
+                if let Err(error) = app.emit("neural-progress", TrainingProgress {
                     epoch, epochs, completed_examples: completed,
                     total_examples: total, loss, steps, trace,
-                });
+                }) {
+                    eprintln!("Unable to emit neural-progress: {error}");
+                }
             }
         }
-        {
-            let session = lock_session(state)?;
+        // Save only the new encoding's weights. The original v0.1 checkpoint
+        // remains untouched for reproducibility of earlier experiments.
+        let (heldout_loss, heldout_accuracy, mean_loss) = {
+            let mut session = lock_session(state)?;
+            let (heldout_loss, heldout_accuracy) =
+                validation_metrics(&session.network, corpus, training_count)?;
+            session.validation_loss = Some(heldout_loss);
+            session.validation_accuracy = Some(heldout_accuracy);
             session.network.save(checkpoint_path(app)?)?;
-        }
-        let _ = app.emit("neural-epoch", serde_json::json!({
+            (
+                heldout_loss,
+                heldout_accuracy,
+                total_epoch_loss / batch_counter.max(1) as f64,
+            )
+        };
+        if let Err(error) = app.emit("neural-epoch", serde_json::json!({
             "epoch":epoch,"epochs":epochs,
-            "loss": total_epoch_loss / (batch_counter.max(1) as f32),
+            "loss":mean_loss,
+            "validationLoss":heldout_loss,
+            "validationAccuracy":heldout_accuracy,
             "completedExamples":completed,"totalExamples":total
-        }));
+        })) { eprintln!("Unable to emit neural-epoch: {error}"); }
         if cancelled { break; }
     }
     Ok(cancelled)
@@ -460,6 +519,8 @@ pub fn neural_reset(app: AppHandle, state: State<'_, NeuralState>) -> Result<Bra
     session.current_epoch = 0;
     session.total_epochs = 0;
     session.last_error = None;
+    session.validation_loss = None;
+    session.validation_accuracy = None;
     let path = checkpoint_path(&app)?;
     if path.exists() { fs::remove_file(path).map_err(|e| e.to_string())?; }
     Ok(status(&state, &session))
@@ -469,17 +530,28 @@ pub fn neural_reset(app: AppHandle, state: State<'_, NeuralState>) -> Result<Bra
 mod tests {
     use super::*;
     #[test]
-    fn exact_ascii_architecture_input_encoding() {
+    fn long_context_uses_exact_dimensions_and_real_weights() {
         let state = NeuralState::default();
         let session = lock_session(&state).unwrap();
         assert_eq!(session.network.dimensions(), vec![1024,512,512,128]);
-        let v = encode(b"abcdefgh");
+        let v = encode_ascii_context(b"the curious little cat followed the mouse").unwrap();
         assert_eq!(v.len(), 1024);
-        assert_eq!(v.iter().filter(|&&x| x == 1.0).count(), 8);
-        let t = trace(&session.network, b"abcdefgh").unwrap();
-        assert_eq!(t.layers.iter().map(Vec::len).collect::<Vec<_>>(), vec![1024,512,512,128]);
-        assert!(t.links.iter().all(|link|
+        let trace = trace(&session.network, b"the curious little cat followed the mouse").unwrap();
+        assert_eq!(trace.layers.iter().map(Vec::len).collect::<Vec<_>>(), vec![1024,512,512,128]);
+        assert!(trace.links.iter().all(|link|
             session.network.connection_weight(link.transition,link.from,link.to) == Some(link.weight)
         ));
+    }
+
+    #[test]
+    fn deterministic_holdout_is_never_in_training_indices() {
+        let corpus = b"The quick brown fox jumped over the old wooden fence. A fox can run quickly.";
+        let split = corpus.len()*9/10;
+        let indices = randomized_positions(split, 4);
+        assert_eq!(indices.len(), split);
+        assert!(indices.iter().all(|&i|i<split));
+        let model = Network::new(NetworkConfig { dimensions: vec![1024,16,128], seed:5 }).unwrap();
+        let (loss,accuracy) = validation_metrics(&model,corpus,split).unwrap();
+        assert!(loss.is_finite() && (0.0..=1.0).contains(&accuracy));
     }
 }
