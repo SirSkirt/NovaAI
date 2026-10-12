@@ -89,6 +89,7 @@ struct Cache {
     hidden:Vec<f32>, probabilities:Vec<f32>,
     memory_sources:Vec<Vec<u16>>, memory_means:Vec<Vec<f32>>,
     memory_activations:Vec<Vec<f32>>, memory_context:Vec<f32>,
+    memory_query:Vec<f32>, memory_attention:Vec<f32>,
 }
 #[derive(Clone,Debug)]
 pub struct Attention {
@@ -180,6 +181,7 @@ impl Transformer {
         let mut memory_means=Vec::new();
         let mut memory_activations=Vec::new();
         let mut memory_context=vec![0.0;D];
+        let memory_query=hidden.clone();
         for source in memory.iter().skip(memory.len().saturating_sub(12)){
             if source.is_empty() {continue;}
             let mut mean=vec![0.0;D];
@@ -190,13 +192,19 @@ impl Transformer {
                 for j in 0..D{mean[j]+=self.weights[offset+j]/source.len() as f32;}
             }
             let raw=mv(&self.weights,&l.memory_write,D,D,&mean);
-            let activation=raw.iter().map(|v|v.tanh()).collect::<Vec<_>>();
-            for j in 0..D{memory_context[j]+=activation[j];}
             memory_means.push(mean);
-            memory_activations.push(activation);
+            memory_activations.push(raw.iter().map(|v|v.tanh()).collect::<Vec<_>>());
         }
-        if !memory_activations.is_empty(){
-            for v in &mut memory_context{*v/=memory_activations.len() as f32;}
+        let memory_attention=if memory_activations.is_empty(){Vec::new()}
+            else {
+                let scale=(D as f32).sqrt().recip();
+                stable_softmax(&memory_activations.iter().map(|slot|
+                    dot(&memory_query,slot)*scale).collect::<Vec<_>>())
+            };
+        for (weight,slot) in memory_attention.iter().zip(&memory_activations){
+            for j in 0..D{memory_context[j]+=weight*slot[j];}
+        }
+        if !memory_attention.is_empty(){
             let added=mv(&self.weights,&l.memory_read,D,D,&memory_context);
             for j in 0..D{hidden[j]+=added[j];}
         }
@@ -205,7 +213,7 @@ impl Transformer {
         let probabilities=stable_softmax(&logits);
         Ok(Cache{tokens,inputs,query,keys,values,attention,context,mid,pre,act,hidden,probabilities,
             memory_sources:memory.iter().skip(memory.len().saturating_sub(12)).cloned().collect(),
-            memory_means,memory_activations,memory_context})
+            memory_means,memory_activations,memory_context,memory_query,memory_attention})
     }
     pub fn predict(&self,context:&[u8])->Result<Vec<f32>,String> {
         Ok(self.forward(context)?.probabilities)
@@ -237,11 +245,21 @@ impl Transformer {
             back_mv(&self.weights,&l.bridge,D,VOCAB,features,&dh,&mut grad)
         } else {vec![0.0;VOCAB]};
         if !c.memory_activations.is_empty(){
-            let dmean=back_mv(&self.weights,&l.memory_read,D,D,&c.memory_context,&dh,&mut grad);
-            let count=c.memory_activations.len() as f32;
-            for ((ids,mean),activated) in c.memory_sources.iter().zip(&c.memory_means).zip(&c.memory_activations){
-                let da=(0..D).map(|i|dmean[i]*(1.0-activated[i]*activated[i])/count)
-                    .collect::<Vec<_>>();
+            let dcontext=back_mv(&self.weights,&l.memory_read,D,D,&c.memory_context,&dh,&mut grad);
+            let scores=c.memory_activations.iter().map(|slot|dot(&dcontext,slot))
+                .collect::<Vec<_>>();
+            let weighted:f32=scores.iter().zip(&c.memory_attention)
+                .map(|(value,weight)|value*weight).sum();
+            let mut dquery=vec![0.0;D];
+            let scale=(D as f32).sqrt().recip();
+            for (i,((ids,mean),activated)) in c.memory_sources.iter()
+                .zip(&c.memory_means).zip(&c.memory_activations).enumerate(){
+                let dp=c.memory_attention[i]*(scores[i]-weighted)*scale;
+                let da=(0..D).map(|j|{
+                    dquery[j]+=dp*activated[j];
+                    (c.memory_attention[i]*dcontext[j]+dp*c.memory_query[j])
+                        *(1.0-activated[j]*activated[j])
+                }).collect::<Vec<_>>();
                 let dsource=back_mv(&self.weights,&l.memory_write,D,D,mean,&da,&mut grad);
                 for &id in ids{
                     let start=if (id as usize)<BASE {l.tok.start+id as usize*D}
@@ -249,6 +267,7 @@ impl Transformer {
                     for j in 0..D{grad[start+j]+=dsource[j]/ids.len() as f32;}
                 }
             }
+            for j in 0..D{dh[j]+=dquery[j];}
         }
         let dact=back_mv(&self.weights,&l.f2,D,FF,&c.act,&dh,&mut grad);
         for j in 0..D {grad[l.b2.start+j]+=dh[j];}
