@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b0e16">
-  <meta name="description" content="Neural Nova v0.1.2 experimental sentence-pattern learning laboratory">
+  <meta name="description" content="Neural Nova v0.1.3 experimental sentence-pattern learning laboratory">
   <title>Neural Nova v0.1.2 — Experimental Brain Lab</title>
   <link rel="stylesheet" href="./styles.css">
   <script src="./js/brain.js" defer></script>
@@ -116,6 +116,86 @@ Because the library was quiet, Maya could finish her long novel.</textarea>
           <p class="note">This model sees up to 64 characters of context and predicts one of 128 ASCII characters. It is still a feed-forward character model—not a Transformer or conversational LLM. More varied sentences are learnable patterns, not proof of comprehension.</p>
         </section>
       </div>
+
+      <section class="dialogue-school" aria-label="Neural Nova Dialogue School">
+        <div class="section-heading" style="padding:8px 2px 13px"><div>
+          <p class="eyebrow">03 / TEACH CONVERSATION</p><h2>Dialogue School <span class="alpha">Experimental</span></h2>
+        </div></div>
+        <p class="section-copy">A new kind of lesson: supply a user message and a desired Nova reply. Rust trains the neural weights to predict <strong>only the reply</strong>, using the question as context. There is no hardcoded answer lookup.</p>
+        <div class="workspace dialogue-workspace">
+          <section class="panel">
+            <div class="section-heading"><h2>Teach Nova to reply</h2><span class="mini-note">TAB-separated question / reply</span></div>
+            <label for="dialogueData">Dialogue curriculum</label>
+            <textarea id="dialogueData" rows="12" spellcheck="false" aria-describedby="dialogueFormat">hello nova	Hello!
+hi nova	Hi there!
+good morning	Good morning!
+good night	Sleep well!
+how are you	I am learning.
+what is your name	My name is Nova.
+who are you	I am Neural Nova.
+what can you do	I can practice language.
+thank you	You are welcome.
+thanks	No problem.
+what is a cat	A cat is an animal.
+what is a dog	A dog is an animal.
+what is a tree	A tree is a plant.
+what is an apple	An apple is a fruit.
+what is a grape	A grape is a fruit.
+what is rain	Rain is falling water.
+what is snow	Snow is frozen water.
+what color is the sky	The sky is often blue.
+what comes after one	Two comes after one.
+what comes after two	Three comes after two.
+what is two plus two	Four.
+what is three plus three	Six.
+say hello	Hello!
+say goodbye	Goodbye!
+bye nova	Goodbye!
+see you later	See you soon.
+are you learning	Yes, I am practicing.
+can you learn	I learn from examples.
+what is learning	Learning is improving with practice.
+what are words	Words help people communicate.</textarea>
+            <p id="dialogueFormat" class="note">One example per line: <code>question [TAB] ideal response</code>. Whole examples, not individual characters, are held out for validation. ASCII only; maximum 96 pairs.</p>
+            <div class="teacher-inputs">
+              <div><label for="teacherQuestion">User message</label><input id="teacherQuestion" type="text" maxlength="180" placeholder="What is your name?"></div>
+              <div><label for="teacherAnswer">Desired reply / correction</label><input id="teacherAnswer" type="text" maxlength="128" placeholder="My name is Nova."></div>
+            </div>
+            <div class="actions">
+              <button id="addDialoguePair" type="button">＋ Add lesson</button>
+              <button id="restoreDialogueSample" type="button">Restore example lessons</button>
+            </div>
+            <div class="settings-row">
+              <div><label for="dialogueEpochs">Dialogue epochs</label><input id="dialogueEpochs" type="number" min="1" max="25" value="3"></div>
+              <div class="hint">Start with 3 epochs. This CPU-only dense network still has a 64-character context and limited conversational capability.</div>
+            </div>
+            <div class="actions">
+              <button id="trainDialogues" class="primary" type="button">▶ Train dialogue lessons</button>
+              <span class="muted" id="dialogueStatus">No dialogue lesson running.</span>
+            </div>
+            <div class="validation-metrics">
+              <div><span>Held-out reply loss</span><strong id="dialogueValidationLoss">—</strong></div>
+              <div><span>Held-out char accuracy</span><strong id="dialogueValidationAccuracy">—</strong></div>
+            </div>
+            <p class="note">The last 20% of distinct question/reply pairs are reserved when at least five are provided. Low training loss means imitation; accuracy on unseen examples is a better (but still limited) signal.</p>
+          </section>
+          <section class="panel">
+            <div class="section-heading"><h2>Talk to Nova</h2><span class="mini-note">Neural output only</span></div>
+            <p class="section-copy">Chat with the trained model. Each message is supplied as a single user turn; this version does not retain earlier dialogue inside its 64-character model context. Correct bad responses in the Teacher fields.</p>
+            <div id="dialogueTranscript" class="dialogue-transcript" role="log" aria-live="polite">
+              <div class="chat-placeholder">Start by training the dialogue lessons, then ask Nova something it has practiced—or a new question to test generalization.</div>
+            </div>
+            <label for="dialogueMessage">Your message</label>
+            <input id="dialogueMessage" type="text" maxlength="180" placeholder="hello nova">
+            <div class="actions">
+              <button id="sendDialogue" class="primary" type="button">Send to Nova</button>
+              <button id="correctDialogue" type="button" disabled>Correct last answer</button>
+              <button id="clearDialogue" type="button">Clear chat</button>
+            </div>
+            <p class="note">Answers are generated character by character from the same trainable Rust network. This is a dialogue-learning prototype, not proof of language understanding or reliable reasoning.</p>
+          </section>
+        </div>
+      </section>
 
       <section class="panel bottom">
         <div><p class="eyebrow">CONTROL / EXPERIMENTAL ONLY</p><h2>Reset neural weights</h2><p>Reinitializes the model and deletes its experimental checkpoint. This cannot change original Nova or its data.</p></div>
