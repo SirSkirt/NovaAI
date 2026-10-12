@@ -66,6 +66,13 @@
             </div>
             <div><label for="trainingRate">Learning rate</label><select id="trainingRate"><option value="0.001" selected>Gentle · 0.001</option><option value="0.003">Balanced · 0.003</option><option value="0.005">Faster · 0.005</option></select></div>
           </div>
+          <div class="field-row" style="margin-top:10px">
+            <div class="wide-field">
+              <label for="retentionBenchmark">Earlier-skill benchmark (optional; diagnostics only)</label>
+              <select id="retentionBenchmark"><option value="">No prior-skill benchmark</option></select>
+            </div>
+          </div>
+          <p class="muted" id="retentionStatus">Save a test in Tests &amp; Corrections to monitor up to four earlier questions after each training epoch. It does not affect learning or checkpoint selection.</p>
           <p class="trainer-explainer" id="trainingScheduleHelp">Gentle stays fixed at 0.001; early stopping independently watches validation loss.</p>
           <div class="row wrap actions"><button type="button" class="primary" id="startTraining">▶ Start training</button><button type="button" id="stopTraining" disabled>Stop</button></div>
           <div class="progress-head"><span id="trainingProgress">No active training</span><strong id="trainingPercent">0%</strong></div>
