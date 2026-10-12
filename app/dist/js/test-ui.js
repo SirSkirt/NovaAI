@@ -231,7 +231,8 @@ function render(report){
     cell("Correct after correction",report.corrected),
     cell("Still incorrect",report.stillIncorrect),
     cell("Corrective updates",report.trainingUpdates),
-    cell("Model steps",report.startStep+" → "+report.endStep)
+    cell("Model steps",report.startStep+" → "+report.endStep),
+    cell("Neural checkpoint",report.checkpoint||"Unknown")
   );
   if(report.config.generalization){
     stats.append(cell("Unseen baseline",report.baselineUnseenCorrect===null?"Pending":
