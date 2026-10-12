@@ -117,6 +117,10 @@ impl Transformer {
                 *w=(random(&mut seed)*2.0-1.0)*radius;
             }
         }
+        // New episodic memory is neutral until multi-turn lessons teach the
+        // read projection. This protects migrated dialogue weights from
+        // random memory output when users reopen an existing conversation.
+        weights[l.memory_read.clone()].fill(0.0);
         Self {
             weights, momentum:vec![0.0;l.len],variance:vec![0.0;l.len],step:0
         }
