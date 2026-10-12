@@ -1,14 +1,17 @@
 mod neural;
 mod transformer_lab;
+mod hybrid_lab;
 
 use neural::NeuralState;
 use transformer_lab::TransformerState;
+use hybrid_lab::HybridState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(NeuralState::default())
         .manage(TransformerState::default())
+        .manage(HybridState::default())
         .invoke_handler(tauri::generate_handler![
             neural::neural_boot,
             neural::neural_status,
@@ -25,6 +28,13 @@ pub fn run() {
             transformer_lab::transformer_stop,
             transformer_lab::transformer_chat,
             transformer_lab::transformer_reset,
+            hybrid_lab::hybrid_boot,
+            hybrid_lab::hybrid_status,
+            hybrid_lab::hybrid_train,
+            hybrid_lab::hybrid_stop,
+            hybrid_lab::hybrid_chat,
+            hybrid_lab::hybrid_inspect,
+            hybrid_lab::hybrid_reset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Neural Nova");
