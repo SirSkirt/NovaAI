@@ -79,8 +79,8 @@ function clearDiagnostics(){
 }
 $("clearDiagnostics").addEventListener("click",clearDiagnostics);
 $("copyDiagnostics").addEventListener("click",()=>safeRun(async()=>{
-  const report="Neural Nova diagnostic report\n"+
-    "Architecture: 1024 → 512 → 512 → 128\n"+
+  const report="Neural Nova v0.1.2 diagnostic report\n"+
+    "Architecture: 1024 → 512 → 512 → 128 / 64-character context\n"+
     "Status: "+JSON.stringify(latestStatus)+"\n"+
     diagnosticEntries.map(item=>"["+item.time+"] ["+item.severity+"] ["+item.source+"] "+item.message).join("\n\n");
   await navigator.clipboard.writeText(report);
@@ -94,6 +94,8 @@ function updateStatus(status){
   $("neuronTotal").textContent=status.dimensions.reduce((a,b)=>a+b,0).toLocaleString();
   $("stepCount").textContent=status.steps.toLocaleString();
   $("lossValue").textContent=Number.isFinite(status.lastLoss)?status.lastLoss.toFixed(4):"—";
+  $("validationLoss").textContent=Number.isFinite(status.validationLoss)?status.validationLoss.toFixed(4):"—";
+  $("validationAccuracy").textContent=Number.isFinite(status.validationAccuracy)?(status.validationAccuracy*100).toFixed(1)+"%":"—";
   if(!training) setState(status.trained?"Weights loaded":"Untrained");
 }
 function charLabel(code){
@@ -310,22 +312,44 @@ function appendLog(message){
 $("corpusFile").addEventListener("change",()=>safeRun(async()=>{
   const file=$("corpusFile").files[0];
   if(!file)return;
-  if(file.size>100000){throw new Error("Corpus file exceeds 100,000 bytes. Use a smaller selection for this first experiment.");}
+  if(file.size>250000){throw new Error("Corpus file exceeds 250,000 bytes. Try a smaller selection.");}
   const text=await file.text();
   if(!/^[\x00-\x7F]*$/.test(text))throw new Error("This version accepts ASCII only. Convert Unicode punctuation before training.");
   $("trainingText").value=text;
   updateCorpusSize();
 }));
 function updateCorpusSize(){
-  $("corpusSize").textContent=$("trainingText").value.length.toLocaleString()+" ASCII bytes";
+  const text=$("trainingText").value;
+  const ascii=/^[\x00-\x7F]*$/.test(text);
+  $("corpusSize").textContent=text.length.toLocaleString()+(ascii?" ASCII bytes":" characters (contains non-ASCII)");
 }
+const lesson=[
+  "A fox wandered into the forest, searching for a warm place to sleep.",
+  "Although the weather was cold, the children enjoyed their walk to school.",
+  "When the clock struck midnight, every window in the old house lit up.",
+  "The scientist compared two experiments before writing her conclusion.",
+  "If the power goes out, the emergency generator starts automatically.",
+  "The musician practiced every morning because she wanted to improve.",
+  "After the storm passed, a bright rainbow appeared over the mountains.",
+  "Nova reads each character and predicts what character should come next.",
+  "The baker opened the shop early, while the town was still sleeping.",
+  "Because the bridge was closed, the driver chose another route.",
+  "A small robot carried supplies from the workshop to the laboratory.",
+  "Whenever Maya found a new book, she shared the story with her friends."
+];
+$("loadLesson").addEventListener("click",()=>{
+  if(training)return;
+  $("trainingText").value=lesson.join("\n");
+  updateCorpusSize();
+  logDiagnostic("INFO","Training data","Loaded a varied sentence-pattern lesson for the 64-character model.");
+});
 $("trainingText").addEventListener("input",updateCorpusSize);
 $("startTrain").addEventListener("click",()=>safeRun(async()=>{
   clearError();
   const text=$("trainingText").value;
   const epochs=Number($("epochInput").value);
-  if(!/^[\x00-\x7F]*$/.test(text))throw new Error("Corpus must be ASCII text for v0.1.");
-  if(text.length<9||text.length>100000)throw new Error("Training text must have between 9 and 100,000 bytes.");
+  if(!/^[\x00-\x7F]*$/.test(text))throw new Error("Corpus must be ASCII text for v0.1.2.");
+  if(text.length<40||text.length>250000)throw new Error("Training text must have between 40 and 250,000 bytes.");
   if(!Number.isInteger(epochs)||epochs<1||epochs>25)throw new Error("Choose 1–25 epochs.");
   $("trainingLog").textContent="";
   $("progressText").textContent="Submitting training request to Rust…";
@@ -370,8 +394,13 @@ async function registerTrainingEvents(){
     },"Training progress event"));
     await events.listen("neural-epoch",event=>safeRun(async()=>{
       const p=event.payload;
-      appendLog("Epoch "+p.epoch+"/"+p.epochs+" complete · mean loss "+p.loss.toFixed(4));
-      logDiagnostic("INFO","Training","Epoch "+p.epoch+"/"+p.epochs+" completed; mean loss "+p.loss.toFixed(4));
+      const message="Epoch "+p.epoch+"/"+p.epochs+" · training loss "+p.loss.toFixed(4)+
+        " · validation loss "+p.validationLoss.toFixed(4)+
+        " · validation accuracy "+(p.validationAccuracy*100).toFixed(1)+"%";
+      appendLog(message);
+      $("validationLoss").textContent=p.validationLoss.toFixed(4);
+      $("validationAccuracy").textContent=(p.validationAccuracy*100).toFixed(1)+"%";
+      logDiagnostic("INFO","Training",message);
     },"Training epoch event"));
     await events.listen("neural-done",event=>safeRun(async()=>{
       setTraining(false);
@@ -405,7 +434,7 @@ async function boot(){
     setError("Open Neural Nova as an installed Windows or Android app to use its native Rust network.","Startup");
     return;
   }
-  logDiagnostic("INFO","Startup","Neural Nova v0.1 diagnostics initialized.");
+  logDiagnostic("INFO","Startup","Neural Nova v0.1.2 diagnostics initialized. Extended context: 64 characters.");
   // Start the status fallback independently of event permissions; stalled event delivery
   // must never prevent backend state updates or hide an error.
   setInterval(()=>{if(training||latestStatus?.training)void pollBrainStatus();},1000);
