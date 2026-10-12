@@ -951,7 +951,7 @@ pub fn hybrid_test_start(app:AppHandle,state:State<'_,HybridState>,
     let id=test_unique_id("run");
     let mut report=TestReport{
         id:id.clone(),test_id:test.id.clone(),name:test.name.clone(),started_at:test_time(),
-        status:"running".into(),config:options.clone(),
+        status:"running".into(),config:options.clone(),checkpoint:CHECKPOINT.into(),
         questions:test.cases.iter().map(|c|QuestionResult{question:c.question.clone(),
             expected:c.expected.clone(),teacher_answer:None,attempts:Vec::new(),retention:None}).collect(),
         unseen:test.unseen.iter().map(|c|QuestionResult{question:c.question.clone(),
