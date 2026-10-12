@@ -31,15 +31,21 @@ impl HybridBrain {
         Ok((features,logits))
     }
     pub fn predict(&self,context:&[u8])->Result<Vec<f32>,String>{
+        self.predict_window(context,crate::transformer::CONTEXT)
+    }
+    pub fn predict_window(&self,context:&[u8],window:usize)->Result<Vec<f32>,String>{
         let (_,dense)=self.dense_input(context)?;
-        self.transformer.predict_hybrid(context,&dense)
+        self.transformer.predict_hybrid_window(context,&dense,window)
     }
     pub fn inspect(&self,context:&[u8])->Result<(Vec<Vec<f32>>,Vec<Attention>,Vec<f32>,Vec<f32>),String>{
+        self.inspect_window(context,crate::transformer::CONTEXT)
+    }
+    pub fn inspect_window(&self,context:&[u8],window:usize)->Result<(Vec<Vec<f32>>,Vec<Attention>,Vec<f32>,Vec<f32>),String>{
         let (features,dense)=self.dense_input(context)?;
         let layers=self.dense.activations(&features)?;
-        let attention=self.transformer.attention_hybrid(context,&dense)?;
+        let attention=self.transformer.attention_hybrid_window(context,&dense,window)?;
         let signal=self.transformer.bridge_signal(&dense)?;
-        let probabilities=self.transformer.predict_hybrid(context,&dense)?;
+        let probabilities=self.transformer.predict_hybrid_window(context,&dense,window)?;
         Ok((layers,attention,signal,probabilities))
     }
     pub fn train_batch(&mut self,samples:&[(Vec<u8>,u8)],lr:f32)->Result<f32,String>{
@@ -117,14 +123,17 @@ impl HybridBrain {
         let mut magic=[0u8;8];file.read_exact(&mut magic).map_err(|e|e.to_string())?;
         if &magic!=MAGIC{return Err("Incompatible hybrid checkpoint".into());}
         let mut brain=Self::new();
-        if read_u32(&mut file)? as usize!=brain.transformer.weights.len(){
+        let old_count=read_u32(&mut file)? as usize;
+        // v0.3 checkpoints had 128 positional embeddings; new checkpoints have
+        // 256. Remap weights AND Adam moments without clearing learned state.
+        if old_count!=brain.transformer.weights.len() && old_count!=24800{
             return Err("Hybrid Transformer parameter count mismatch".into());
         }
         let mut step=[0u8;8];file.read_exact(&mut step).map_err(|e|e.to_string())?;
         brain.transformer.step=u64::from_le_bytes(step);
-        for data in [&mut brain.transformer.weights,&mut brain.transformer.momentum,&mut brain.transformer.variance]{
-            read_floats(&mut file,data)?;
-        }
+        let mut arrays=[vec![0.0;old_count],vec![0.0;old_count],vec![0.0;old_count]];
+        for data in &mut arrays{read_floats(&mut file,data)?;}
+        brain.transformer.import_compatible_arrays(&arrays[0],&arrays[1],&arrays[2])?;
         let num_dims=read_u32(&mut file)? as usize;
         if num_dims!=brain.dense.dimensions().len(){return Err("Dense topology mismatch".into());}
         let mut dims=Vec::new();
@@ -182,6 +191,14 @@ mod tests{
         assert!(after<initial,"combined loss did not improve: {initial} -> {after}");
         assert_ne!(brain.transformer.weights,before_t,"Transformer did not learn");
         assert_ne!(brain.dense.layers[0].weights,before_d,"Dense network did not learn");
+    }
+    #[test]
+    fn old_short_context_predictions_are_identical_in_new_window(){
+        let model=HybridBrain::new();
+        let q=b"U: hello\nN: ";
+        let original=model.predict_window(q,128).unwrap();
+        let extended=model.predict_window(q,256).unwrap();
+        assert_eq!(original,extended);
     }
     #[test]
     fn saves_and_restores_entire_joint_optimizer_state(){
