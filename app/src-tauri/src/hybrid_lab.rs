@@ -280,7 +280,7 @@ fn context_report(window:usize,prompt_bytes:usize,generated_bytes:usize,
         };
     ContextReport{window,prompt_bytes,generated_bytes,prompt_bytes_retained,
         first_prompt_truncation_char,termination,deterministic,temperature,seed_used,
-        prompt_tokens:prompt_bytes,prompt_tokens_retained,memory_turns:0,
+        prompt_tokens:prompt_bytes,prompt_tokens_retained:prompt_bytes_retained,memory_turns:0,
         active_tokens:(prompt_bytes+generated_bytes).min(window)}
 }
 #[derive(Serialize)]
