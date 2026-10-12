@@ -238,7 +238,8 @@ fn datasets(lesson:&Lesson)->Result<(Vec<(Vec<u8>,u8)>,Vec<(Vec<u8>,u8)>,usize),
             let pivot=(corpus.len()*9/10).max(2);
             let train=corpus_samples(corpus,1..pivot);
             let valid=corpus_samples(corpus,pivot..corpus.len());
-            Ok((train,valid,valid.len()))
+            let held_out=valid.len();
+            Ok((train,valid,held_out))
         },
         _=>Err("Training mode must be text or dialogue".into())
     }

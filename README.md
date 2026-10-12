@@ -1,23 +1,7 @@
-# Neural Nova Experimental
+# Neural Nova 0.2.0 — experimental Transformer Language Engine
 
-**Isolation:** This is the experimental neural-network fork of Nova on branch `experimental/neural-nova`. The original Nova application remains on `main`, unmodified.
+See [app/README.md](app/README.md) and [the custom Rust Transformer](neural-nova/src/transformer.rs).
 
-The full legacy Nova project was first unpacked into the branch. Its old Rust-authoritative mind, rule-based cognition, memory, learning, and JavaScript brain were then removed from the experimental app. The experimental application now uses its own **from-scratch Rust neural network** (1024 → 512 → 512 → 128), with live per-neuron visualization, training, next-character generation, checkpointing, cancellation and resetting.
+Neural Nova 0.2.0 adds a **from-scratch trainable causal Transformer** alongside the preserved legacy dense model, with a new language pretraining/dialogue panel and real attention inspection. The Transformer uses learned parameters, not hard-coded responses.
 
-- [Neural Nova experimental application](app/)
-- [Neural math library and tests](neural-nova/)
-- [Windows/Android experimental build workflow](.github/workflows/neural-nova-app.yml)
-- [Original legacy source archive](releases/) (historical only; not built or executed)
-
-**Warning:** v0.1.3 is a 64-character-context ASCII next-character predictor, not a general conversational LLM. This is the first learning-system experiment before tackling embeddings and Transformers.
-
-The original Nova package ID was `com.qtech.nova`. Neural Nova uses `com.qtech.neuralnova.experimental` and saves its checkpoints in its own app-data location. Builds here never publish or replace original Nova releases.
-
-## Experimental 0.1.3 — Dialogue School
-
-- Native Rust answer-supervised learning: `neural-nova/src/dialogue.rs`.
-- Tauri command `neural_train_dialogues` trains question/reply examples without hardcoded responses.
-- Tauri command `neural_chat` generates the response through neural weights.
-- Teacher interface can collect corrections as new examples.
-- Whole-example validation with response next-character loss/accuracy.
-- Original `main` remains unchanged. This is not a reasoning AI or even a reliable chatbot yet; dialogue fine-tuning is an early teaching experiment.
+Original Nova remains **untouched** on `main`. All experiments and installers are isolated to `experimental/neural-nova`. This is a language-learning prototype, not yet a capable conversational or reasoning AI.

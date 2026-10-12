@@ -115,3 +115,26 @@ footer{padding:32px 0 35px;color:#697991;text-align:center;font-size:12px}
 .dialogue-line.from-nova{align-self:flex-start;background:#22352f;border:1px solid #3b6051}
 .dialogue-line strong{font-size:11px;display:block;opacity:.78;margin-bottom:5px}
 @media(max-width:600px){.teacher-inputs{grid-template-columns:1fr}.dialogue-school{margin-top:15px}.dialogue-transcript{height:270px}.dialogue-workspace .section-heading{align-items:flex-start;flex-direction:column}}
+
+/* Neural Nova 0.2.0: native Rust causal Transformer Language Engine */
+.language-engine{border:1px solid #3a5264;background:linear-gradient(160deg,#0f2328,#111925);border-radius:19px;padding:22px;margin-bottom:20px;box-shadow:0 0 28px rgba(23,145,128,.06)}
+.engine-heading{display:flex;justify-content:space-between;align-items:start;gap:16px;margin-bottom:18px}
+.engine-heading h2{font-size:clamp(23px,3vw,31px);margin:0 0 10px;letter-spacing:-.02em}
+.engine-heading p:not(.eyebrow){font-size:13px;line-height:1.55;color:#a2b9ba;margin:0;max-width:710px}
+.engine-status{border:1px solid #40685c;border-radius:20px;background:#17342e;padding:8px 12px;color:#91e0bb;font-size:12px;white-space:nowrap}
+.engine-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.engine-summary>div{border:1px solid #38524f;background:rgba(10,28,31,.8);padding:12px;border-radius:12px;min-width:0}
+.engine-summary span{display:block;color:#92b1ae;font-size:11px;margin-bottom:7px}
+.engine-summary strong{font-size:13px;overflow-wrap:anywhere;font-weight:700;color:#e1fff2}
+.engine-panel{border-color:#37534e}
+.engine-panel .section-heading h2{font-size:20px}
+.engine-mode{margin:14px 0}
+.engine-mode select{width:100%;border:1px solid #475b65;border-radius:11px;padding:10px;background:#0e1821;color:#e4eeff;font:13px system-ui}
+.engine-metrics{margin-top:18px;margin-bottom:0}
+.transformer-chat{height:340px}
+.engine-attention{border-top:1px solid #385057;margin-top:20px;padding-top:15px}
+.engine-attention h3{font-size:14px;margin:0}
+.attention-tiles{display:flex;gap:3px;flex-wrap:wrap;align-items:start;background:#0a161b;border:1px solid #264843;border-radius:11px;padding:10px;margin-top:11px;min-height:76px;max-height:192px;overflow:auto}
+.attention-token{display:inline-grid;place-items:center;border:1px solid rgba(86,194,175,.25);min-width:15px;height:22px;border-radius:4px;padding:0 3px;font:11px/1.1 ui-monospace,monospace;color:#f1fff7}
+@media(max-width:850px){.engine-summary{grid-template-columns:repeat(2,1fr)}.engine-heading{flex-direction:column}.language-engine{padding:15px}}
+@media(max-width:600px){.engine-summary strong{font-size:12px}.engine-panel .actions{gap:7px}.engine-status{white-space:normal}}
