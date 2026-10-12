@@ -60,3 +60,13 @@ button.danger{color:#ffadb9;border-color:#7a4858;background:#422631}
 footer{padding:11px 0 25px;color:#7286a6;text-align:center;font-size:11px}
 @media(max-width:1050px){.teach-grid,.visualize-grid{grid-template-columns:1fr}.card{padding:16px}.training-card{min-height:0}.brain-stage{min-height:0}}
 @media(max-width:660px){.app-shell{padding:0 11px}.app-header{padding:13px 0}.brand h1{font-size:17px}.brand p{font-size:10px}.brand-symbol{width:31px;height:31px}.status-pill{font-size:10px;padding:7px}.nav-tab{flex:1;padding:11px 3px}.quick-stats{grid-template-columns:1fr 1fr;gap:7px;margin:10px 0}.stat{padding:9px 11px}.stat strong{font-size:17px}.pane-title h2{font-size:21px}.pane-title>.subtle{max-width:150px;text-align:right}.correction-fields{grid-template-columns:1fr}.chat-transcript{height:48vh;padding:10px}.chat-line{max-width:96%}.brain-legend{font-size:10px}.brain-stage{min-height:205px}.metric-grid strong{font-size:18px}.composer button{padding:10px}}
+
+/* Teacher-only trainer controls; preserve the compact tab design. */
+.schedule-settings{display:grid;grid-template-columns:minmax(0,1fr) 155px;align-items:center;gap:12px;margin:14px 0 2px}
+label.checkbox-line{display:flex;align-items:center;gap:9px;color:#c8d8ee;font-size:12px;font-weight:600;margin:0;line-height:1.35}
+.checkbox-line input[type=checkbox]{width:17px;min-width:17px;height:17px;accent-color:#7898fa}
+.schedule-settings>div label{margin-bottom:5px}
+.schedule-settings select{padding:8px 10px;font-size:12px}
+.trainer-stage{font-size:12px;color:#9fc3e1;margin:9px 0 1px;min-height:15px}
+.trainer-details{display:flex;flex-wrap:wrap;justify-content:space-between;gap:7px 15px;font-size:11px;color:#a2b9d6;padding:7px 0}
+@media(max-width:660px){.schedule-settings{grid-template-columns:1fr}.schedule-settings>div{max-width:220px}}
