@@ -74,7 +74,11 @@ function setRunning(value){
   $("stopTraining").disabled=!running;
   $("resetBrain").disabled=running||!initialized;
   $("sendMessage").disabled=running||!initialized||busy;
-  $("inspectBrain").disabled=running||!initialized;
+  $("inspectBrain").disabled=running||!initialized||busy;
+  $("compareContext").disabled=running||!initialized||busy;
+  for(const id of ["chatLength","chatTemperature","chatContext","chatSampling"]){
+    $(id).disabled=running||busy;
+  }
   for(const id of ["adaptiveTraining","earlyStopping","trainingRate","trainingEpochs"]){
     $(id).disabled=running;
   }
@@ -218,6 +222,89 @@ $("resetBrain").addEventListener("click",()=>safe(async()=>{
   latestTrace=null;clearVisual();
   report("INFO","Brain","Reset unified model weights and optimizer.");
 },"Reset"));
+const CHAT_PREFS_KEY="neural-nova-0.4-chat-controls";
+function chatOptions(){
+  const maxChars=Number($("chatLength").value);
+  const temperature=Number($("chatTemperature").value);
+  const contextChars=Number($("chatContext").value);
+  const mode=$("chatSampling").value;
+  return {maxChars,temperature,contextChars,
+    deterministic:mode==="greedy",
+    seed:mode==="fixed"?42:null};
+}
+function saveChatOptions(){
+  const mode=$("chatSampling").value;
+  const context=Number($("chatContext").value);
+  $("chatTempValue").textContent=Number($("chatTemperature").value).toFixed(1);
+  $("chatTemperature").disabled=running||busy||mode==="greedy";
+  $("chatExperimentNote").textContent=(context===256
+    ?"Extended 256-character context. Positions beyond the original 128 need training; compare using the same seed."
+    :"Original 128-character context. The model can lose prompt characters during long replies.")+
+    (mode==="greedy"?" Most likely: temperature does not affect results.":
+     mode==="fixed"?" Seeded sampling (42) allows repeatable A/B comparisons.":
+     " Random sampling can produce different replies without any new learning.");
+  try{localStorage.setItem(CHAT_PREFS_KEY,JSON.stringify({
+    maxChars:Number($("chatLength").value),temperature:Number($("chatTemperature").value),
+    contextChars:context,mode
+  }));}catch(_){}
+}
+function restoreChatOptions(){
+  try{
+    const data=JSON.parse(localStorage.getItem(CHAT_PREFS_KEY)||"null");
+    if(data){
+      if([32,64,128,192,256].includes(data.maxChars))$("chatLength").value=String(data.maxChars);
+      if([128,256].includes(data.contextChars))$("chatContext").value=String(data.contextChars);
+      if(typeof data.temperature==="number" && data.temperature>=0.2&&data.temperature<=2)
+        $("chatTemperature").value=String(data.temperature);
+      if(["random","fixed","greedy"].includes(data.mode))$("chatSampling").value=data.mode;
+    }
+  }catch(_){}
+  saveChatOptions();
+}
+for(const id of ["chatLength","chatTemperature","chatContext","chatSampling"]){
+  $(id).addEventListener(id==="chatTemperature"?"input":"change",saveChatOptions);
+}
+function explainContext(r){
+  if(!r)return "No prompt retention information.";
+  const info=r.promptBytesRetained+"/"+r.promptBytes+" original prompt characters retained";
+  const cutoff=r.firstPromptTruncationChar===null
+    ?"No original prompt characters were truncated during this response."
+    :r.firstPromptTruncationChar===0
+      ?"The original prompt was already truncated before generation."
+      :"Original prompt began truncating after generated character "+r.firstPromptTruncationChar+".";
+  return "Context "+r.window+" · "+r.generatedBytes+" generated · "+info+
+    " · "+(r.termination==="learned-end"?"model predicted end":"reached reply length limit")+
+    " · "+cutoff;
+}
+function comparePanel(a,b){
+  const root=$("chatComparison");
+  root.hidden=false;
+  root.replaceChildren();
+  const heading=document.createElement("strong");
+  heading.textContent="Same question · same weights · same sampling sequence";
+  const grid=document.createElement("div");
+  grid.className="comparison-grid";
+  for(const [window,reply] of [[128,a],[256,b]]){
+    const card=document.createElement("article");card.className="comparison-card";
+    const label=document.createElement("strong");
+    label.textContent=window+"-character window";
+    const output=document.createElement("pre");
+    output.textContent=reply.response||"(Predicted end of reply)";
+    const detail=document.createElement("small");
+    detail.textContent=explainContext(reply.contextReport);
+    card.append(label,output,detail);grid.append(card);
+  }
+  const first=a.response,second=b.response;
+  let matching=0;
+  while(matching<first.length && matching<second.length&&first[matching]===second[matching])matching++;
+  const summary=document.createElement("p");
+  summary.className="muted";
+  summary.textContent="Identical first "+matching+" characters. "+
+    (first===second?"Both responses match exactly for this test. ":
+     "Responses diverge at generated character "+(matching+1)+". ")+
+    "Changing context length alone cannot diagnose language learning without accounting for newly initialized positional weights.";
+  root.append(heading,grid,summary);
+}
 const transcript=$("chatTranscript");
 function bubble(role,message){
   transcript.querySelector(".chat-placeholder")?.remove();
@@ -236,15 +323,35 @@ $("sendMessage").addEventListener("click",()=>safe(async()=>{
   bubble("user",message);
   $("chatMessage").value="";
   try{
-    const reply=await invoke("hybrid_chat",{message,maxChars:128,temperature:0.6});
+    const reply=await invoke("hybrid_chat",{message,...chatOptions()});
     bubble("nova",reply.response);
     lastReply=reply.response;
     $("correctReply").disabled=false;
     status(reply.status);
     showVisual(reply.trace);
     $("inspectMessage").value=message;
+    $("chatContextReport").textContent=explainContext(reply.contextReport);
+    report("INFO","Context",explainContext(reply.contextReport));
   }finally{busy=false;setRunning(running);}
 },"Chat"));
+$("compareContext").addEventListener("click",()=>safe(async()=>{
+  const message=$("chatMessage").value.trim()||lastQuestion;
+  if(!/^[\\x20-\\x7e]{1,180}$/.test(message))throw Error("Enter a printable ASCII message to compare.");
+  if(running||busy)return;
+  busy=true;setRunning(running);
+  $("chatComparison").hidden=false;
+  $("chatComparison").textContent="Comparing both context windows with matching sampling settings…";
+  try{
+    const settings=chatOptions();
+    // Both calls use an identical pseudorandom seed; greedy ignores temperature.
+    // Do not train or alter Nova's weights during the comparison.
+    const base={...settings,seed:42};
+    const old=await invoke("hybrid_chat",{message,...base,contextChars:128});
+    const extended=await invoke("hybrid_chat",{message,...base,contextChars:256});
+    comparePanel(old,extended);
+    report("INFO","A/B context","Compared 128 and 256 character windows with fixed seed 42.");
+  }finally{busy=false;setRunning(running);}
+},"Context comparison"));
 $("chatMessage").addEventListener("keydown",e=>{
   if(e.key==="Enter"){e.preventDefault();$("sendMessage").click();}
 });
@@ -348,11 +455,11 @@ function showVisual(trace){
 $("inspectBrain").addEventListener("click",()=>safe(async()=>{
   const message=$("inspectMessage").value.trim();
   if(!message)throw Error("Enter a message to inspect.");
-  showVisual(await invoke("hybrid_inspect",{message}));
+  showVisual(await invoke("hybrid_inspect",{message,contextChars:Number($("chatContext").value)}));
 },"Brain inspection"));
 $("inspectMessage").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("inspectBrain").click();}});
 $("copyDiagnostics").addEventListener("click",()=>safe(async()=>{
-  const text="Neural Nova hybrid v0.3.2\n"+JSON.stringify(latestStatus)+"\n"+
+  const text="Neural Nova hybrid v0.4.0\n"+JSON.stringify(latestStatus)+"\n"+
     debugEntries.map(e=>"["+e.time+"] ["+e.level+"] ["+e.source+"] "+e.message).join("\n\n");
   await navigator.clipboard.writeText(text);
   report("INFO","Debugger","Copied diagnostic report.");
@@ -405,6 +512,7 @@ async function boot(){
     try{const v=localStorage.getItem("nova-hybrid-"+mode);if(v!==null)datasets[mode]=v;}catch(_){}
   }
   loadSchedule();
+  restoreChatOptions();
   modeChanged("dialogue");setRunning(false);
   if(!window.__TAURI__?.core?.invoke){setState("Installed app required","error");report("ERROR","Startup","Run the installed Windows or Android app for Rust neural learning.");return;}
   await listen();
