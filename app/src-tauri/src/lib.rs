@@ -33,6 +33,8 @@ pub fn run() {
             hybrid_lab::hybrid_train,
             hybrid_lab::hybrid_stop,
             hybrid_lab::hybrid_chat,
+            hybrid_lab::hybrid_conversation,
+            hybrid_lab::hybrid_new_chat,
             hybrid_lab::hybrid_inspect,
             hybrid_lab::hybrid_reset,
         ])
