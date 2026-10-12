@@ -1,5 +1,48 @@
+TRAINER V0.3.1 HANDOFF (2026-10-12)
+================================
+User confirmed: lessons are being improved separately; screenshots showing
+fragmented/gibberish chat and 1,386 shared steps are OLD-LESSON baseline
+results, NOT results of the upcoming curriculum. Do not attribute those
+results to the new lesson set. Training code teaches; Nova itself continues
+to compute every reply with one combined trainable neural brain. No grammar
+patches, prompt lookups, canned answers, or inference rule changes.
+
+Trainer improvements:
+- neural-nova/src/trainer.rs prepares text/dialogue samples independently
+  of cognition. Dialogue questions are grouped after ASCII case, punctuation
+  and whitespace normalization ONLY FOR EVALUATION SPLITTING, not inference.
+  All variants of the same normalized question remain in one split. Stable
+  deterministic hash makes split insensitive to curriculum line order.
+- Held-out text contexts are reset at the training/validation boundary
+  to avoid including training bytes in validation contexts.
+- Epoch 1 teaches shorter dialogue contexts before longer ones; later
+  epochs shuffle all training characters deterministically. No replies
+  are changed or hard-coded.
+- Dialogues accept up to 1,024 unique pairs and 384 ASCII characters per
+  ideal reply; 50,000 training tokens and text bytes per CPU session.
+- app/src-tauri/src/hybrid_lab.rs now computes a held-out baseline,
+  supports up to 60 epochs, adaptive learning-rate reductions after
+  plateaus, early stopping (default patience 6), keeps the best joint
+  validation checkpoint, emits training speed, phase and held-out counts.
+  Fixed-rate mode remains selectable. Prior v0.3.0 hybrid checkpoints
+  are read by the same checkpoint format, not reset automatically.
+- neural-nova/src/lib.rs and neural-nova/src/hybrid.rs now accumulate
+  dense gradients into a reusable batch buffer instead of allocating
+  a full dense gradient array per character; mathematical semantics
+  are unchanged. A regression test compares the results.
+- Teach tab UI includes learning-rate and adaptive options, best epoch,
+  training throughput, lesson split and epoch logs. Chat and Visualize
+  remain a single hybrid brain; debugger stays accessible on all tabs.
+- Package / native / visible version: 0.3.1.
+
+IMPORTANT: Rust core/Tauri build, CI and native runtime have NOT been
+verified by this update session. Static frontend JS checks were run.
+If CI fails, inspect actual logs and fix. Successful build alone is not
+proof that training or dialogue generalization works in production.
+
+================================================================================
 NEURAL NOVA — DEVELOPMENT HANDOFF
-Version: 0.3.0 (experimental unified-brain update)
+Version: 0.3.1 (trainer update; previous architecture notes below)
 Updated: 2026-10-12
 Repository: https://github.com/SirSkirt/NovaAI
 Branch: experimental/neural-nova
