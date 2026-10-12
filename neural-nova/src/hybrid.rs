@@ -320,6 +320,25 @@ mod tests{
         assert_eq!(recovered.dense_adam.m.layers[0].weights,trained.dense_adam.m.layers[0].weights);
     }
     #[test]
+    fn tokenizer_growth_is_a_no_weight_update_representation_change(){
+        let brain=HybridBrain::new();
+        let mut other=brain.clone();
+        let prompt=b"U: hello\nN: ";
+        let tokens_before=brain.tokenizer.encode(std::str::from_utf8(prompt).unwrap()).unwrap();
+        let original=brain.predict_window(prompt,128).unwrap();
+        let added=other.learn_token_units("hello hello planet planet");
+        let tokens_after=other.tokenizer.encode(std::str::from_utf8(prompt).unwrap()).unwrap();
+        let changed=other.predict_window(prompt,128).unwrap();
+        assert_eq!(added,2);
+        assert_ne!(tokens_before,tokens_after,
+            "Introducing a learned whole word replaces previously used character inputs");
+        assert_eq!(brain.transformer.weights,other.transformer.weights,
+            "Vocabulary growth alone must not secretly train or alter neural weights");
+        assert_eq!(brain.transformer.step,other.transformer.step);
+        assert_ne!(original,changed,
+            "New tokenization must be tracked because it can perturb next-character probabilities");
+    }
+    #[test]
     fn both_hemispheres_honor_the_selected_learning_rate(){
         let mut brain=HybridBrain::new();
         brain.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.003).unwrap();
