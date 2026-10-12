@@ -119,9 +119,9 @@ function status(s){
   $("trainingSpeed").textContent=s.tokensPerSecond>0?"Throughput: "+s.tokensPerSecond.toFixed(1)+" tokens/s":"Throughput: —";
   $("retentionStatus").textContent=Number.isFinite(s.retentionAccuracy)
     ?"Earlier-skill greedy accuracy: "+(100*s.retentionAccuracy).toFixed(1)+
-      "% (baseline after vocabulary expansion: "+(100*s.retentionBaseline).toFixed(1)+
-      "%). Diagnostic only; checkpoint selection is unchanged."
-    :"Optional prior-skill benchmark: select a saved test to monitor earlier answers after each epoch. No influence on training.";
+      "% (baseline "+(100*s.retentionBaseline).toFixed(1)+
+      "%). When protection is on, any decline prevents selection of that checkpoint."
+    :"Choose a saved teacher benchmark to protect specific earlier answers (optional).";
   $("bestEpoch").textContent=(s.bestEpoch>0?"Best epoch: "+s.bestEpoch:"Best epoch: baseline")+
     (Number.isFinite(s.bestHeldoutLoss)?" · loss "+s.bestHeldoutLoss.toFixed(4):"");
 
@@ -170,7 +170,10 @@ function saveSchedule(){
     localStorage.setItem(TRAINER_SETTINGS_KEY,JSON.stringify({
       adaptiveLearningRate:$("adaptiveTraining").checked,
       earlyStopping:$("earlyStopping").checked,
-      learningRate:$("trainingRate").value
+      learningRate:$("trainingRate").value,
+      rehearsal:$("rehearsalEnabled").checked,
+      protectPrevious:$("retentionGuardEnabled").checked,
+      retentionLossTolerance:Number($("retentionTolerance").value)
     }));
   }catch(_){}
 }
@@ -181,13 +184,48 @@ function loadSchedule(){
       if(typeof p.adaptiveLearningRate==="boolean")$("adaptiveTraining").checked=p.adaptiveLearningRate;
       if(typeof p.earlyStopping==="boolean")$("earlyStopping").checked=p.earlyStopping;
       if(["0.001","0.003","0.005"].includes(p.learningRate))$("trainingRate").value=p.learningRate;
+      if(typeof p.rehearsal==="boolean")$("rehearsalEnabled").checked=p.rehearsal;
+      if(typeof p.protectPrevious==="boolean")$("retentionGuardEnabled").checked=p.protectPrevious;
+      if([0.05,0.10,0.20].includes(p.retentionLossTolerance))
+        $("retentionTolerance").value=String(p.retentionLossTolerance);
     }
   }catch(_){}
   describeSchedule();
 }
-for(const id of ["adaptiveTraining","earlyStopping","trainingRate"]){
+for(const id of ["adaptiveTraining","earlyStopping","trainingRate",
+  "rehearsalEnabled","retentionGuardEnabled","retentionTolerance"]){
   $(id).addEventListener("change",saveSchedule);
 }
+async function updateRehearsalBank(){
+  const bank=await invoke("hybrid_rehearsal_info");
+  $("rehearsalBankStatus").textContent=bank.names.length
+    ?"Saved past lessons: "+bank.names.map((n,i)=>n+" ("+bank.modes[i]+")").join(" · ")
+    :"No previous lessons saved for these weights. Future accepted lessons will be archived automatically.";
+}
+$("priorLessonFile").addEventListener("change",()=>safe(async()=>{
+  const f=$("priorLessonFile").files[0];if(!f)return;
+  const data=await f.text();
+  if(data.length>50000||!/^[\x00-\x7f]*$/.test(data))throw Error("Prior TXT must be ASCII and at most 50 KB");
+  $("priorLessonData").value=data;
+  if(!$("priorLessonName").value)$("priorLessonName").value=f.name.replace(/\.txt$/i,"");
+},"Prior lesson import"));
+$("archivePriorLesson").addEventListener("click",()=>safe(async()=>{
+  if(running)return;
+  if(!confirm("Archive this previously taught lesson as neural rehearsal? Only its own training split will be replayed. The model is not trained by archiving."))return;
+  await invoke("hybrid_rehearsal_add",{
+    mode:$("priorLessonMode").value,
+    text:$("priorLessonData").value,
+    name:$("priorLessonName").value.trim()
+  });
+  await updateRehearsalBank();
+  report("INFO","Rehearsal","Added previous lesson to teacher replay bank; no neural changes.");
+},"Previous lesson"));
+$("clearRehearsal").addEventListener("click",()=>safe(async()=>{
+  if(running)return;
+  if(!confirm("Clear past lesson replay data for Nova? Neural weights are NOT reset."))return;
+  await invoke("hybrid_rehearsal_clear");
+  await updateRehearsalBank();
+},"Clear rehearsal"));
 $("lessonMode").addEventListener("change",e=>{rememberDataset();modeChanged(e.target.value);});
 $("lessonData").addEventListener("input",()=>{rememberDataset();countData();});
 $("lessonFile").addEventListener("change",()=>safe(async()=>{
@@ -235,7 +273,10 @@ $("startTraining").addEventListener("click",()=>safe(async()=>{
     await invoke("hybrid_train",{
       lesson:{mode:activeMode,text,epochs},
       options:{adaptiveLearningRate,earlyStopping,learningRate,patience:6,
-        retentionTestId:$("retentionBenchmark").value||null}
+        retentionTestId:$("retentionBenchmark").value||null,
+        rehearsal:$("rehearsalEnabled").checked,
+        protectPrevious:$("retentionGuardEnabled").checked,
+        retentionLossTolerance:Number($("retentionTolerance").value)}
     });
     report("INFO","Training","Joint training started: "+activeMode+" · max "+epochs+
       " epochs · "+(adaptiveLearningRate?"adaptive":"fixed")+" LR "+learningRate+
@@ -635,7 +676,11 @@ async function listen(){
       history("Epoch "+p.epoch+"/"+p.epochs+" | train "+p.trainLoss.toFixed(4)+
         " | held-out "+p.validationLoss.toFixed(4)+" | accuracy "+(100*p.validationAccuracy).toFixed(1)+
         "% | "+(p.improved?"NEW BEST":"no improvement")+" | LR "+p.learningRate.toFixed(5)+
-        (Number.isFinite(p.retentionAccuracy)?" | earlier skill "+(100*p.retentionAccuracy).toFixed(1)+"%":""));
+        (Number.isFinite(p.retentionAccuracy)?" | teacher skill "+(100*p.retentionAccuracy).toFixed(1)+"%":"")+
+        (Number.isFinite(p.previousHeldoutLoss)?" | prior heldout "+
+            p.previousHeldoutLoss.toFixed(4)+" (baseline "+p.previousBaselineLoss.toFixed(4)+")":"")+
+        (p.guardAccepted===false?" | REJECTED for retention":"")+
+        (p.rehearsalBatches?" | old batches "+p.rehearsalBatches:""));
       if(Number.isFinite(p.transformerGradientNorm)){
         history("Gradient norms (before clipping): Transformer "+
           p.transformerGradientNorm.toFixed(4)+" · Dense "+
@@ -651,6 +696,7 @@ async function listen(){
     });
     await events.listen("hybrid-done",({payload:p})=>{
       setRunning(false);
+      void updateRehearsalBank().catch(e=>report("WARN","Rehearsal archive",e));
       report("INFO","Training",p.cancelled?"Training stopped; best joint checkpoint restored.":
         p.earlyStopped?"Validation stalled; early stopped at best epoch "+p.bestEpoch+".":
         "Shared training finished; best validation checkpoint restored (epoch "+p.bestEpoch+").");
@@ -675,6 +721,7 @@ async function boot(){
     for(const turn of turns){bubble("user",turn.user);bubble("nova",turn.assistant);}
     report("INFO","Brain","Unified hybrid brain, trainable word units and persisted multi-turn neural memory loaded. "+turns.length+" stored turns.");
     document.dispatchEvent(new Event("neural-nova-booted"));
+    void updateRehearsalBank().catch(e=>report("WARN","Rehearsal archive",e));
   }catch(e){setState("Startup error","error");report("ERROR","Startup",e);}
   setInterval(()=>{if(running)void poll();},1000);
 }
