@@ -9,6 +9,15 @@ The full legacy Nova project was first unpacked into the branch. Its old Rust-au
 - [Windows/Android experimental build workflow](.github/workflows/neural-nova-app.yml)
 - [Original legacy source archive](releases/) (historical only; not built or executed)
 
-**Warning:** v0.1.2 is a 64-character-context ASCII next-character predictor, not a general conversational LLM. This is the first learning-system experiment before tackling embeddings and Transformers.
+**Warning:** v0.1.3 is a 64-character-context ASCII next-character predictor, not a general conversational LLM. This is the first learning-system experiment before tackling embeddings and Transformers.
 
 The original Nova package ID was `com.qtech.nova`. Neural Nova uses `com.qtech.neuralnova.experimental` and saves its checkpoints in its own app-data location. Builds here never publish or replace original Nova releases.
+
+## Experimental 0.1.3 — Dialogue School
+
+- Native Rust answer-supervised learning: `neural-nova/src/dialogue.rs`.
+- Tauri command `neural_train_dialogues` trains question/reply examples without hardcoded responses.
+- Tauri command `neural_chat` generates the response through neural weights.
+- Teacher interface can collect corrections as new examples.
+- Whole-example validation with response next-character loss/accuracy.
+- Original `main` remains unchanged. This is not a reasoning AI or even a reliable chatbot yet; dialogue fine-tuning is an early teaching experiment.
