@@ -336,7 +336,7 @@ $("sendMessage").addEventListener("click",()=>safe(async()=>{
 },"Chat"));
 $("compareContext").addEventListener("click",()=>safe(async()=>{
   const message=$("chatMessage").value.trim()||lastQuestion;
-  if(!/^[\\x20-\\x7e]{1,180}$/.test(message))throw Error("Enter a printable ASCII message to compare.");
+  if(!/^[\x20-\x7e]{1,180}$/.test(message))throw Error("Enter a printable ASCII message to compare.");
   if(running||busy)return;
   busy=true;setRunning(running);
   $("chatComparison").hidden=false;
