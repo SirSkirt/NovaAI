@@ -146,7 +146,7 @@ fn sampled(p:&[f32],temperature:f32,random:f32)->u8{
 pub struct HybridReply{response:String,trace:HybridTrace,status:HybridStatus}
 #[tauri::command]
 pub async fn hybrid_chat(state:State<'_,HybridState>,message:String,max_chars:usize,temperature:f32)->Result<HybridReply,String>{
-    if message.is_empty() || message.len()>180 || !message.is_ascii() || message.contains(['\n','\r']) {
+    if message.is_empty() || message.len()>180 || !message.is_ascii() || message.contains('\n') || message.contains('\r') {
         return Err("Use a single-line 1–180 character ASCII message".into());
     }
     if !(1..=160).contains(&max_chars) || !temperature.is_finite() || !(0.2..=2.0).contains(&temperature) {
