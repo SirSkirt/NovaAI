@@ -80,6 +80,9 @@ async function saveDefinition(){
   });
   await refresh(false);
   $("testSaved").value=definition.id;
+  // Normalize combined TAB import into the separate question and key boxes
+  // after save, so Start doesn't accidentally duplicate the saved definition.
+  definitionContents(definition);
   state("Saved "+definition.cases.length+" questions and "+definition.unseen.length+
     " untouched generalization questions.");
   return definition;
@@ -219,11 +222,12 @@ function render(report){
   const first=report.questions.length;
   const accuracy=(n,d)=>d?(100*n/d).toFixed(1)+"%":"—";
   $("testOverview").open=true;
-  $("testOverviewSummary").textContent=report.name+" · "+report.status+
+  $("testOverviewSummary").textContent=report.name+" · "+
+    new Date(report.startedAt*1000).toLocaleDateString()+" · "+report.status+
     " · "+report.questions.filter(q=>q.attempts.length).length+"/"+first+" questions started";
   const stats=$("testOverviewStats");stats.replaceChildren(
-    cell("Initial, untouched",accuracy(report.initialCorrect,first)),
-    cell("Latest post-correction",accuracy(report.finalCorrect,first)),
+    cell("Initial, untouched",report.initialCorrect+"/"+first+" · "+accuracy(report.initialCorrect,first)),
+    cell("Latest post-correction",report.finalCorrect+"/"+first+" · "+accuracy(report.finalCorrect,first)),
     cell("Correct after correction",report.corrected),
     cell("Still incorrect",report.stillIncorrect),
     cell("Corrective updates",report.trainingUpdates),
