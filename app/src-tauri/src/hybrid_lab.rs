@@ -374,7 +374,10 @@ pub fn hybrid_reset(app:AppHandle,state:State<'_,HybridState>)->Result<HybridSta
     let mut s=lock(&state)?;
     *s=Session{
         brain:HybridBrain::new(),trained:false,epoch:0,epochs:0,completed:0,total:0,
-        heldout_loss:None,heldout_accuracy:None,train_loss:None,error:None
+        heldout_loss:None,heldout_accuracy:None,train_loss:None,error:None,
+        best_heldout_loss:None,best_epoch:0,learning_rate:DEFAULT_LEARNING_RATE,
+        train_lessons:0,validation_lessons:0,tokens_per_second:0.0,
+        stage:"Idle".into(),early_stopped:false
     };
     let file=path(&app)?;
     if file.exists(){fs::remove_file(file).map_err(|e|e.to_string())?;}
