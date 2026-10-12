@@ -2,24 +2,30 @@
 use neural_nova::hybrid::HybridBrain;
 use neural_nova::dialogue::dialogue_prefix;
 use neural_nova::transformer::VOCAB;
-use crate::transformer_lab::{datasets,Lesson};
-use serde::Serialize;
+use neural_nova::trainer::{prepare,training_order,Example,PreparedLessons};
+use crate::transformer_lab::Lesson;
+use serde::{Deserialize,Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool,Ordering};
 use std::sync::{Arc,Mutex};
-use std::time::{SystemTime,UNIX_EPOCH};
+use std::time::{Instant,SystemTime,UNIX_EPOCH};
 use tauri::{AppHandle,Emitter,Manager,State};
 
 const CHECKPOINT:&str="neural-nova-hybrid-0.3.nhyb";
 const BATCH:usize=8;
-const LEARNING_RATE:f32=0.003;
+const DEFAULT_LEARNING_RATE:f32=0.003;
+const MIN_IMPROVEMENT:f32=0.0005;
+const MIN_LEARNING_RATE:f32=0.0003;
 
 struct Session{
     brain:HybridBrain,trained:bool,
     epoch:u32,epochs:u32,completed:usize,total:usize,
     heldout_loss:Option<f32>,heldout_accuracy:Option<f32>,
     train_loss:Option<f32>,error:Option<String>,
+    best_heldout_loss:Option<f32>,best_epoch:u32,learning_rate:f32,
+    train_lessons:usize,validation_lessons:usize,
+    tokens_per_second:f32,stage:String,early_stopped:bool,
 }
 struct Shared{
     session:Mutex<Session>,
@@ -33,7 +39,10 @@ impl Default for HybridState{
         Self{inner:Arc::new(Shared{
             session:Mutex::new(Session{
                 brain:HybridBrain::new(),trained:false,epoch:0,epochs:0,completed:0,total:0,
-                heldout_loss:None,heldout_accuracy:None,train_loss:None,error:None
+                heldout_loss:None,heldout_accuracy:None,train_loss:None,error:None,
+                best_heldout_loss:None,best_epoch:0,learning_rate:DEFAULT_LEARNING_RATE,
+                train_lessons:0,validation_lessons:0,tokens_per_second:0.0,
+                stage:"Idle".into(),early_stopped:false
             }),
             training:AtomicBool::new(false),stop:AtomicBool::new(false)
         })}
@@ -56,6 +65,9 @@ pub struct HybridStatus{
     epoch:u32,epochs:u32,completed:usize,total:usize,
     heldout_loss:Option<f32>,heldout_accuracy:Option<f32>,
     train_loss:Option<f32>,error:Option<String>,
+    best_heldout_loss:Option<f32>,best_epoch:u32,learning_rate:f32,
+    train_lessons:usize,validation_lessons:usize,
+    tokens_per_second:f32,stage:String,early_stopped:bool,
 }
 fn status(state:&HybridState,s:&Session)->HybridStatus{
     HybridStatus{
@@ -66,7 +78,11 @@ fn status(state:&HybridState,s:&Session)->HybridStatus{
         transformer_step:s.brain.transformer.step,dense_step:s.brain.dense_adam_steps(),
         context:128,epoch:s.epoch,epochs:s.epochs,completed:s.completed,total:s.total,
         heldout_loss:s.heldout_loss,heldout_accuracy:s.heldout_accuracy,
-        train_loss:s.train_loss,error:s.error.clone()
+        train_loss:s.train_loss,error:s.error.clone(),
+        best_heldout_loss:s.best_heldout_loss,best_epoch:s.best_epoch,
+        learning_rate:s.learning_rate,
+        train_lessons:s.train_lessons,validation_lessons:s.validation_lessons,
+        tokens_per_second:s.tokens_per_second,stage:s.stage.clone(),early_stopped:s.early_stopped
     }
 }
 #[tauri::command]
@@ -173,86 +189,178 @@ pub async fn hybrid_chat(state:State<'_,HybridState>,message:String,max_chars:us
         })
     }).await.map_err(|e|e.to_string())?
 }
+#[derive(Clone,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct TrainOptions {
+    adaptive:Option<bool>,
+    learning_rate:Option<f32>,
+    patience:Option<u32>,
+}
 #[tauri::command]
-pub fn hybrid_train(app:AppHandle,state:State<'_,HybridState>,lesson:Lesson)->Result<(),String>{
-    if !(1..=20).contains(&lesson.epochs){return Err("Choose 1–20 epochs".into());}
-    let (train,valid,_heldout)=datasets(&lesson)?;
+pub fn hybrid_train(
+    app:AppHandle,state:State<'_,HybridState>,lesson:Lesson,
+    options:Option<TrainOptions>,
+)->Result<(),String>{
+    if !(1..=60).contains(&lesson.epochs){return Err("Choose 1–60 epochs".into());}
+    let plan=prepare(&lesson.mode,&lesson.text)?;
+    let adaptive=options.as_ref().and_then(|o|o.adaptive).unwrap_or(true);
+    let starting_lr=options.as_ref().and_then(|o|o.learning_rate).unwrap_or(DEFAULT_LEARNING_RATE);
+    let patience=options.as_ref().and_then(|o|o.patience).unwrap_or(6);
+    if !starting_lr.is_finite() || !(0.0003..=0.006).contains(&starting_lr){
+        return Err("Learning rate must be between 0.0003 and 0.006".into());
+    }
+    if !(3..=15).contains(&patience){return Err("Patience must be 3–15 epochs".into());}
     if state.inner.training.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err(){
         return Err("Nova is already training".into());
     }
     let state=state.inner().clone();
     let ready=(||->Result<(),String>{
         let mut s=lock(&state)?;
-        s.epoch=1;s.epochs=lesson.epochs;s.completed=0;
-        s.total=train.len()*lesson.epochs as usize;
+        s.epoch=0;s.epochs=lesson.epochs;s.completed=0;
+        s.total=plan.train.len()*lesson.epochs as usize;
         s.heldout_loss=None;s.heldout_accuracy=None;s.train_loss=None;s.error=None;
+        s.best_heldout_loss=None;s.best_epoch=0;s.learning_rate=starting_lr;
+        s.train_lessons=plan.train_lessons;s.validation_lessons=plan.validation_lessons;
+        s.tokens_per_second=0.0;s.stage="Preparing held-out baseline".into();
+        s.early_stopped=false;
         Ok(())
     })();
-    if let Err(e)=ready{state.inner.training.store(false,Ordering::Release);return Err(e);}
+    if let Err(error)=ready{state.inner.training.store(false,Ordering::Release);return Err(error);}
     state.inner.stop.store(false,Ordering::Release);
     tauri::async_runtime::spawn_blocking(move||{
-        let result=train_inner(&app,&state,&train,&valid,lesson.epochs);
+        let result=train_inner(&app,&state,&plan,lesson.epochs,adaptive,starting_lr,patience);
         if let Err(ref e)=result{
-            if let Ok(mut s)=lock(&state){s.error=Some(e.clone());}
-            eprintln!("Neural Nova hybrid training error: {e}");
+            if let Ok(mut s)=lock(&state){s.error=Some(e.clone());s.stage="Training failed".into();}
+            eprintln!("Neural Nova hybrid trainer error: {e}");
         }
         state.inner.training.store(false,Ordering::Release);
         match result{
-            Ok(cancelled)=>{let _=app.emit("hybrid-done",serde_json::json!({"cancelled":cancelled}));},
+            Ok((cancelled,early_stopped,best_epoch))=>{
+                let _=app.emit("hybrid-done",serde_json::json!({
+                    "cancelled":cancelled,"earlyStopped":early_stopped,"bestEpoch":best_epoch
+                }));
+            },
             Err(error)=>{let _=app.emit("hybrid-error",error);}
         }
     });
     Ok(())
 }
+/// Curriculum, validation and optimizer scheduling ONLY. The hybrid brain
+/// still computes all cognition, predictions and shared gradients itself.
 fn train_inner(
-    app:&AppHandle,state:&HybridState,training:&[(Vec<u8>,u8)],
-    validation:&[(Vec<u8>,u8)],epochs:u32,
-)->Result<bool,String>{
+    app:&AppHandle,state:&HybridState,lessons:&PreparedLessons,
+    epochs:u32,adaptive:bool,starting_lr:f32,patience:u32,
+)->Result<(bool,bool,u32),String>{
+    let train:&[Example]=&lessons.train;
+    let valid:&[Example]=&lessons.validation;
+    let started=Instant::now();
+    let (mut best_brain,mut best_loss,initially_trained)={
+        let mut s=lock(state)?;
+        let (loss,accuracy)=s.brain.evaluate(valid)?;
+        if !loss.is_finite(){return Err("Non-finite baseline validation loss".into());}
+        s.heldout_loss=Some(loss);s.heldout_accuracy=Some(accuracy);
+        s.best_heldout_loss=Some(loss);
+        (s.brain.clone(),loss,s.trained)
+    };
+    let mut best_epoch=0u32;
+    let mut learning_rate=starting_lr;
+    let mut stale_epochs=0u32;
     let mut completed=0usize;
     let mut cancelled=false;
+    let mut early_stopped=false;
     for epoch in 1..=epochs{
-        let mut epoch_loss=0f64;
+        if state.inner.stop.load(Ordering::Acquire){cancelled=true;break;}
+        let stage=if epoch==1&&lessons.mode=="dialogue"{
+            "Warm-up: short contexts first"
+        }else{"Practice: shuffled examples"};
+        let order=training_order(train,epoch,&lessons.mode);
+        let mut epoch_loss=0.0f64;
         let mut trained_count=0usize;
-        // Deterministic shuffle, preserving whole held-out dialogue pairs.
-        let mut order:Vec<usize>=(0..training.len()).collect();
-        let mut seed=(epoch as u64).wrapping_mul(0x9e3779b97f4a7c15)^0x4e4f5641;
-        for i in (1..order.len()).rev(){
-            seed^=seed>>12;seed^=seed<<25;seed^=seed>>27;
-            order.swap(i,((seed.wrapping_mul(2685821657736338717))%(i as u64+1)) as usize);
+        {
+            let mut s=lock(state)?;
+            s.epoch=epoch;s.stage=stage.into();s.learning_rate=learning_rate;
         }
         for ids in order.chunks(BATCH){
             if state.inner.stop.load(Ordering::Acquire){cancelled=true;break;}
-            let batch=ids.iter().map(|&i|training[i].clone()).collect::<Vec<_>>();
+            let batch:Vec<Example>=ids.iter().map(|&i|train[i].clone()).collect();
             let (loss,step)={
                 let mut s=lock(state)?;
-                let loss=s.brain.train_batch(&batch,LEARNING_RATE)?;
-                s.trained=true;s.epoch=epoch;s.completed=completed+batch.len();s.train_loss=Some(loss);
+                let loss=s.brain.train_batch(&batch,learning_rate)?;
+                if !loss.is_finite(){return Err("Training loss is non-finite".into());}
+                s.trained=true;s.completed=completed+batch.len();s.train_loss=Some(loss);
+                s.tokens_per_second=(s.completed as f64/started.elapsed().as_secs_f64().max(0.001)) as f32;
                 (loss,s.brain.transformer.step)
             };
-            completed+=batch.len();trained_count+=batch.len();
+            trained_count+=batch.len();
+            completed+=batch.len();
             epoch_loss+=loss as f64*batch.len() as f64;
             if completed%64<batch.len(){
                 let _=app.emit("hybrid-progress",serde_json::json!({
-                    "completed":completed,"total":training.len()*epochs as usize,
-                    "epoch":epoch,"epochs":epochs,"loss":loss,"step":step
+                    "completed":completed,"total":train.len()*epochs as usize,
+                    "epoch":epoch,"epochs":epochs,"loss":loss,"step":step,
+                    "stage":stage,"learningRate":learning_rate,
+                    "tokensPerSecond":completed as f64/started.elapsed().as_secs_f64().max(0.001)
                 }));
             }
         }
-        let (validation_loss,validation_accuracy)={
+        if trained_count==0 {break;}
+        let (validation_loss,validation_accuracy,improved)={
             let mut s=lock(state)?;
-            let metrics=s.brain.evaluate(validation)?;
-            s.heldout_loss=Some(metrics.0);s.heldout_accuracy=Some(metrics.1);
-            s.brain.save(path(app)?)?;
-            metrics
+            s.stage="Evaluating held-out lessons".into();
+            let (loss,accuracy)=s.brain.evaluate(valid)?;
+            if !loss.is_finite(){return Err("Non-finite validation loss".into());}
+            let improved=loss + MIN_IMPROVEMENT < best_loss;
+            if improved{
+                best_loss=loss;best_epoch=epoch;
+                best_brain=s.brain.clone();
+                s.brain.save(path(app)?)?;
+            }
+            s.best_epoch=best_epoch;
+            s.best_heldout_loss=Some(best_loss);
+            s.heldout_loss=Some(loss);
+            s.heldout_accuracy=Some(accuracy);
+            (loss,accuracy,improved)
         };
+        if improved {stale_epochs=0;}
+        else{stale_epochs+=1;}
         let _=app.emit("hybrid-epoch",serde_json::json!({
             "epoch":epoch,"epochs":epochs,
-            "trainLoss":epoch_loss/trained_count.max(1) as f64,
-            "validationLoss":validation_loss,"validationAccuracy":validation_accuracy
+            "trainLoss":epoch_loss/trained_count as f64,
+            "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
+            "bestLoss":best_loss,"bestEpoch":best_epoch,"improved":improved,
+            "learningRate":learning_rate,"tokensPerSecond":completed as f64/started.elapsed().as_secs_f64().max(0.001),
+            "trainLessons":lessons.train_lessons,"validationLessons":lessons.validation_lessons
         }));
         if cancelled{break;}
+        if adaptive{
+            if stale_epochs>=patience {
+                early_stopped=true;
+                break;
+            }
+            if stale_epochs>0 && stale_epochs%2==0{
+                learning_rate=(learning_rate*0.5).max(MIN_LEARNING_RATE);
+            }
+        }
     }
-    Ok(cancelled)
+    {
+        let mut s=lock(state)?;
+        // Last training steps may overfit. Only the best held-out joint
+        // checkpoint is kept, never selected between two independently
+        // answering models.
+        s.brain=best_brain;
+        s.trained=initially_trained || best_epoch>0;
+        s.best_epoch=best_epoch;
+        s.best_heldout_loss=Some(best_loss);
+        s.heldout_loss=Some(best_loss);
+        s.learning_rate=learning_rate;
+        s.early_stopped=early_stopped;
+        s.tokens_per_second=(completed as f64/started.elapsed().as_secs_f64().max(0.001)) as f32;
+        s.stage=if cancelled{"Stopped; best checkpoint restored"}
+                else if early_stopped{"Early stop; best checkpoint restored"}
+                else{"Complete; best checkpoint restored"}.into();
+        if s.trained{s.brain.save(path(app)?)?;}
+    }
+    Ok((cancelled,early_stopped,best_epoch))
 }
 #[tauri::command]
 pub fn hybrid_stop(state:State<'_,HybridState>)->bool{
