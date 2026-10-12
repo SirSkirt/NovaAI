@@ -170,10 +170,9 @@ pub async fn transformer_chat(
     }
     let state=state.inner().clone();
     tauri::async_runtime::spawn_blocking(move||{
-        if state.training.load(Ordering::Acquire) {
+        if state.inner.training.load(Ordering::Acquire) {
             return Err("Finish training before generating a reply".into());
         }
-        let state=TransformerState{inner:state};
         let brain=lock(&state)?;
         let mut history=dialogue_prefix(&message)?;
         let mut result=Vec::new();
@@ -257,7 +256,6 @@ pub fn transformer_train(
     }
     let state=state.inner().clone();
     let ready=(||->Result<(),String>{
-        let state=TransformerState{inner:state.clone()};
         let mut brain=lock(&state)?;
         brain.current_epoch=1;
         brain.total_epochs=lesson.epochs;
@@ -268,10 +266,9 @@ pub fn transformer_train(
         brain.heldout_accuracy=None;
         Ok(())
     })();
-    if let Err(e)=ready {state.training.store(false,Ordering::Release);return Err(e);}
-    state.stop.store(false,Ordering::Release);
+    if let Err(e)=ready {state.inner.training.store(false,Ordering::Release);return Err(e);}
+    state.inner.stop.store(false,Ordering::Release);
     tauri::async_runtime::spawn_blocking(move||{
-        let state=TransformerState{inner:state};
         let output=train_inner(&app,&state,&train,&valid,heldout,lesson.epochs);
         if let Err(ref e)=output {
             if let Ok(mut brain)=lock(&state){brain.error=Some(e.clone());}
