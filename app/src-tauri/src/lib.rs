@@ -2,10 +2,12 @@ mod neural;
 mod transformer_lab;
 mod hybrid_lab;
 mod test_lab;
+mod diagnostic_log;
 
 use neural::NeuralState;
 use transformer_lab::TransformerState;
 use hybrid_lab::HybridState;
+use diagnostic_log::Diagnostics;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -13,6 +15,7 @@ pub fn run() {
         .manage(NeuralState::default())
         .manage(TransformerState::default())
         .manage(HybridState::default())
+        .manage(Diagnostics::default())
         .invoke_handler(tauri::generate_handler![
             neural::neural_boot,
             neural::neural_status,
@@ -31,6 +34,10 @@ pub fn run() {
             transformer_lab::transformer_reset,
             hybrid_lab::hybrid_boot,
             hybrid_lab::hybrid_status,
+            diagnostic_log::nova_log_status,
+            diagnostic_log::nova_log_start,
+            diagnostic_log::nova_log_stop,
+            diagnostic_log::nova_log_read,
             hybrid_lab::hybrid_train,
             hybrid_lab::hybrid_stop,
             hybrid_lab::hybrid_chat,
