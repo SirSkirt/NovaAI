@@ -152,7 +152,7 @@ impl Transformer {
         // Right-aligned positions: the last token always occupies position CONTEXT-1.
         let inputs:Vec<Vec<f32>>=tokens.iter().enumerate().map(|(i,&token)|{
             let mut x=vec![0.0;D];
-            let ti=if token as usize<BASE{l.tok.start+token as usize*D}
+            let ti=if (token as usize)<BASE{l.tok.start+token as usize*D}
                 else{l.words.start+(token as usize-BASE)*D};
             let pi=l.pos.start+(CONTEXT-count+i)*D;
             for j in 0..D {x[j]=self.weights[ti+j]+self.weights[pi+j];}
@@ -335,7 +335,8 @@ impl Transformer {
     pub fn attention_hybrid_window(&self,context:&[u8],dense:&[f32],window:usize)->Result<Vec<Attention>,String> {
         let cache=self.forward_with_dense_window(context,Some(dense),window)?;
         Ok(cache.tokens.iter().enumerate().map(|(i,&code)|Attention{
-            index:i,code,probability:cache.attention[i]
+            index:i,code:if (code as usize)<BASE{code as u8}else{b'?'},
+            token_id:code,probability:cache.attention[i]
         }).collect())
     }
     pub fn bridge_signal(&self,dense:&[f32])->Result<Vec<f32>,String> {
