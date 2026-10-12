@@ -12,7 +12,8 @@ use std::sync::{Arc,Mutex};
 use std::time::{Instant,SystemTime,UNIX_EPOCH};
 use tauri::{AppHandle,Emitter,Manager,State};
 
-const CHECKPOINT:&str="neural-nova-hybrid-0.3.nhyb";
+const CHECKPOINT:&str="neural-nova-hybrid-0.4.nhyb";
+const OLD_CHECKPOINT:&str="neural-nova-hybrid-0.3.nhyb";
 const BATCH:usize=8;
 const DEFAULT_LEARNING_RATE:f32=0.001;
 const MIN_IMPROVEMENT:f32=0.0005;
@@ -75,7 +76,7 @@ fn status(state:&HybridState,s:&Session)->HybridStatus{
         transformer_parameters:s.brain.transformer.parameter_count(),
         dense_parameters:s.brain.dense.parameter_count(),
         transformer_step:s.brain.transformer.step,dense_step:s.brain.dense_adam_steps(),
-        context:128,epoch:s.epoch,epochs:s.epochs,completed:s.completed,total:s.total,
+        context:256,epoch:s.epoch,epochs:s.epochs,completed:s.completed,total:s.total,
         heldout_loss:s.heldout_loss,heldout_accuracy:s.heldout_accuracy,
         train_loss:s.train_loss,error:s.error.clone(),
         best_heldout_loss:s.best_heldout_loss,best_epoch:s.best_epoch,
@@ -89,7 +90,22 @@ pub fn hybrid_boot(app:AppHandle,state:State<'_,HybridState>)->Result<HybridStat
     if state.inner.training.load(Ordering::Acquire){return Err("Cannot boot while Nova is training".into());}
     let mut s=lock(&state)?;
     let file=path(&app)?;
-    if file.exists(){s.brain=HybridBrain::load(file)?;s.trained=true;}
+    if file.exists(){
+        s.brain=HybridBrain::load(file)?;
+        s.trained=true;
+    }else{
+        // Migrate once, do not overwrite/remove the v0.3 checkpoint.
+        // An explicit reset writes a sentinel so old weights do not silently
+        // return after the next launch.
+        let sentinel=file.with_extension("no-import");
+        let legacy=file.with_file_name(OLD_CHECKPOINT);
+        if !sentinel.exists() && legacy.exists(){
+            let migrated=HybridBrain::load(legacy)?;
+            migrated.save(&file)?;
+            s.brain=migrated;
+            s.trained=true;
+        }
+    }
     Ok(status(&state,&s))
 }
 #[tauri::command]
@@ -109,8 +125,8 @@ pub struct HybridTrace{
 }
 #[derive(Serialize)]
 struct TokenProbability{code:usize,probability:f32}
-fn trace(brain:&HybridBrain,history:&[u8])->Result<HybridTrace,String>{
-    let (layers,attention,bridge,p)=brain.inspect(history)?;
+fn trace(brain:&HybridBrain,history:&[u8],window:usize)->Result<HybridTrace,String>{
+    let (layers,attention,bridge,p)=brain.inspect_window(history,window)?;
     let mut sorted=(0..p.len()).collect::<Vec<usize>>();
     sorted.sort_by(|&a,&b|p[b].total_cmp(&p[a]));
     Ok(HybridTrace{
@@ -123,17 +139,30 @@ fn trace(brain:&HybridBrain,history:&[u8])->Result<HybridTrace,String>{
     })
 }
 #[tauri::command]
-pub async fn hybrid_inspect(state:State<'_,HybridState>,message:String)->Result<HybridTrace,String>{
+pub async fn hybrid_inspect(
+    state:State<'_,HybridState>,message:String,context_chars:Option<usize>,
+)->Result<HybridTrace,String>{
     if message.is_empty() || !message.is_ascii() || message.len()>180{
         return Err("Inspect 1–180 ASCII characters".into());
     }
+    let window=valid_window(context_chars)?;
     let state=state.inner().clone();
     tauri::async_runtime::spawn_blocking(move||{
         if state.inner.training.load(Ordering::Acquire){return Err("Wait for training to finish".into());}
         let s=lock(&state)?;
         let context=dialogue_prefix(&message)?;
-        trace(&s.brain,&context)
+        trace(&s.brain,&context,window)
     }).await.map_err(|e|e.to_string())?
+}
+fn valid_window(input:Option<usize>)->Result<usize,String>{
+    let window=input.unwrap_or(128);
+    if window==128 || window==256{Ok(window)}
+    else{Err("Context length must be 128 or 256 characters".into())}
+}
+fn greedy_sample(p:&[f32])->u8{
+    (0..VOCAB).filter(|&i|i==10 || (32..127).contains(&i))
+        .max_by(|&i,&j|p[i].total_cmp(&p[j]))
+        .unwrap_or(10) as u8
 }
 fn random(seed:&mut u64)->f32{
     *seed ^= *seed<<13;*seed ^= *seed>>7;*seed ^= *seed<<17;
@@ -158,33 +187,74 @@ fn sampled(p:&[f32],temperature:f32,random:f32)->u8{
 }
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
-pub struct HybridReply{response:String,trace:HybridTrace,status:HybridStatus}
+pub struct ContextReport {
+    window:usize,
+    prompt_bytes:usize,
+    generated_bytes:usize,
+    prompt_bytes_retained:usize,
+    first_prompt_truncation_char:Option<usize>,
+    termination:&'static str,
+    deterministic:bool,
+    temperature:f32,
+    seed_used:Option<u64>,
+}
+fn context_report(window:usize,prompt_bytes:usize,generated_bytes:usize,
+    termination:&'static str,deterministic:bool,temperature:f32,seed_used:Option<u64>
+)->ContextReport{
+    // The oldest bytes fall out first. Record when the original prompt
+    // started disappearing, not just whether the context window is full.
+    let overflow=prompt_bytes.saturating_add(generated_bytes).saturating_sub(window);
+    let prompt_bytes_retained=prompt_bytes.saturating_sub(overflow);
+    let first_prompt_truncation_char=if prompt_bytes>window{Some(0)}
+        else{
+            let threshold=window-prompt_bytes+1;
+            if generated_bytes>=threshold{Some(threshold)}else{None}
+        };
+    ContextReport{window,prompt_bytes,generated_bytes,prompt_bytes_retained,
+        first_prompt_truncation_char,termination,deterministic,temperature,seed_used}
+}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct HybridReply{
+    response:String,trace:HybridTrace,status:HybridStatus,context_report:ContextReport,
+}
 #[tauri::command]
-pub async fn hybrid_chat(state:State<'_,HybridState>,message:String,max_chars:usize,temperature:f32)->Result<HybridReply,String>{
+pub async fn hybrid_chat(
+    state:State<'_,HybridState>,message:String,max_chars:usize,temperature:f32,
+    context_chars:Option<usize>,deterministic:Option<bool>,seed:Option<u64>,
+)->Result<HybridReply,String>{
     if message.is_empty() || message.len()>180 || !message.is_ascii() || message.contains('\n') || message.contains('\r') {
         return Err("Use a single-line 1–180 character ASCII message".into());
     }
-    if !(1..=160).contains(&max_chars) || !temperature.is_finite() || !(0.2..=2.0).contains(&temperature) {
+    if !(1..=256).contains(&max_chars) || !temperature.is_finite() || !(0.2..=2.0).contains(&temperature) {
         return Err("Invalid generation length or temperature".into());
     }
+    let window=valid_window(context_chars)?;
+    let deterministic=deterministic.unwrap_or(false);
     let state=state.inner().clone();
     tauri::async_runtime::spawn_blocking(move||{
         if state.inner.training.load(Ordering::Acquire){return Err("Wait for training to finish".into());}
         let s=lock(&state)?;
         let mut history=dialogue_prefix(&message)?;
+        let prompt_bytes=history.len();
         let mut result=Vec::<u8>::new();
-        let mut seed=SystemTime::now().duration_since(UNIX_EPOCH)
-            .map(|v|v.as_nanos() as u64).unwrap_or(41).max(1);
+        let seed_used=if deterministic{None}else{seed};
+        let mut rng=seed.unwrap_or_else(||SystemTime::now().duration_since(UNIX_EPOCH)
+            .map(|v|v.as_nanos() as u64).unwrap_or(41)).max(1);
+        let mut termination="length-limit";
         for _ in 0..max_chars{
-            let p=s.brain.predict(&history)?;
-            let token=sampled(&p,temperature,random(&mut seed));
-            if token==b'\n'{break;}
+            let p=s.brain.predict_window(&history,window)?;
+            let token=if deterministic{greedy_sample(&p)}else{sampled(&p,temperature,random(&mut rng))};
+            if token==b'\n'{termination="learned-end";break;}
             history.push(token);
             result.push(token);
         }
+        let report=context_report(window,prompt_bytes,result.len(),termination,
+            deterministic,temperature,seed_used);
         Ok(HybridReply{
             response:String::from_utf8(result).map_err(|e|e.to_string())?,
-            trace:trace(&s.brain,&history)?,status:status(&state,&s)
+            trace:trace(&s.brain,&history,window)?,status:status(&state,&s),
+            context_report:report,
         })
     }).await.map_err(|e|e.to_string())?
 }
@@ -389,13 +459,40 @@ pub fn hybrid_reset(app:AppHandle,state:State<'_,HybridState>)->Result<HybridSta
         stage:"Idle".into(),early_stopped:false
     };
     let file=path(&app)?;
-    if file.exists(){fs::remove_file(file).map_err(|e|e.to_string())?;}
+    if file.exists(){fs::remove_file(&file).map_err(|e|e.to_string())?;}
+    // Preserve the old checkpoint, but prevent reset weights from
+    // automatically re-importing them on subsequent launches.
+    fs::write(file.with_extension("no-import"),b"explicit reset; do not auto-import v0.3") 
+        .map_err(|e|e.to_string())?;
     Ok(status(&state,&s))
 }
 
 #[cfg(test)]
 mod schedule_tests {
     use super::*;
+    #[test]
+    fn context_report_tracks_original_prompt_cutoff_exactly(){
+        let a=context_report(128,12,116,"length-limit",false,0.6,Some(1));
+        assert_eq!(a.prompt_bytes_retained,12);
+        assert_eq!(a.first_prompt_truncation_char,None);
+        let b=context_report(128,12,117,"length-limit",false,0.6,Some(1));
+        assert_eq!(b.prompt_bytes_retained,11);
+        assert_eq!(b.first_prompt_truncation_char,Some(117));
+        let c=context_report(256,12,128,"length-limit",true,0.6,None);
+        assert_eq!(c.prompt_bytes_retained,12);
+        assert_eq!(c.first_prompt_truncation_char,None);
+        let d=context_report(128,150,2,"learned-end",false,0.6,None);
+        assert_eq!(d.first_prompt_truncation_char,Some(0));
+        assert_eq!(d.prompt_bytes_retained,126);
+    }
+    #[test]
+    fn extended_context_and_greedy_sampling_are_deterministic(){
+        assert_eq!(valid_window(Some(128)).unwrap(),128);
+        assert_eq!(valid_window(Some(256)).unwrap(),256);
+        assert!(valid_window(Some(384)).is_err());
+        let mut p=vec![0.0;VOCAB];p[b'Y' as usize]=0.9;p[b'A' as usize]=0.8;
+        assert_eq!(greedy_sample(&p),b'Y');
+    }
     #[test]
     fn native_options_decode_two_independent_toggles(){
         for &(adaptive,stop) in &[(false,false),(false,true),(true,false),(true,true)]{
