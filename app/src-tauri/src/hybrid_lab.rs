@@ -198,6 +198,14 @@ pub struct TrainOptions {
     learning_rate:Option<f32>,
     patience:Option<u32>,
 }
+fn resolved_switches(options:Option<&TrainOptions>)->(bool,bool){
+    let legacy=options.and_then(|o|o.adaptive);
+    let adaptive_learning_rate=options.and_then(|o|o.adaptive_learning_rate)
+        .or(legacy).unwrap_or(false);
+    let early_stopping=options.and_then(|o|o.early_stopping)
+        .or(legacy).unwrap_or(true);
+    (adaptive_learning_rate,early_stopping)
+}
 #[tauri::command]
 pub fn hybrid_train(
     app:AppHandle,state:State<'_,HybridState>,lesson:Lesson,
@@ -205,11 +213,7 @@ pub fn hybrid_train(
 )->Result<(),String>{
     if !(1..=60).contains(&lesson.epochs){return Err("Choose 1–60 epochs".into());}
     let plan=prepare(&lesson.mode,&lesson.text)?;
-    let legacy=options.as_ref().and_then(|o|o.adaptive);
-    let adaptive_learning_rate=options.as_ref().and_then(|o|o.adaptive_learning_rate)
-        .or(legacy).unwrap_or(false);
-    let early_stopping=options.as_ref().and_then(|o|o.early_stopping)
-        .or(legacy).unwrap_or(true);
+    let (adaptive_learning_rate,early_stopping)=resolved_switches(options.as_ref());
     let starting_lr=options.as_ref().and_then(|o|o.learning_rate).unwrap_or(DEFAULT_LEARNING_RATE);
     let patience=options.as_ref().and_then(|o|o.patience).unwrap_or(6);
     if !starting_lr.is_finite() || !(0.0003..=0.006).contains(&starting_lr){
@@ -387,4 +391,31 @@ pub fn hybrid_reset(app:AppHandle,state:State<'_,HybridState>)->Result<HybridSta
     let file=path(&app)?;
     if file.exists(){fs::remove_file(file).map_err(|e|e.to_string())?;}
     Ok(status(&state,&s))
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+    #[test]
+    fn native_options_decode_two_independent_toggles(){
+        for &(adaptive,stop) in &[(false,false),(false,true),(true,false),(true,true)]{
+            let json=serde_json::json!({
+                "adaptiveLearningRate":adaptive,"earlyStopping":stop,
+                "learningRate":0.001,"patience":6
+            });
+            let options:TrainOptions=serde_json::from_value(json).unwrap();
+            assert_eq!(resolved_switches(Some(&options)),(adaptive,stop));
+        }
+    }
+    #[test]
+    fn default_gentle_fixed_schedule_and_backward_compatible_clients(){
+        assert_eq!(resolved_switches(None),(false,true));
+        assert_eq!(DEFAULT_LEARNING_RATE,0.001);
+        for enabled in [false,true]{
+            let option:TrainOptions=serde_json::from_value(serde_json::json!({
+                "adaptive":enabled
+            })).unwrap();
+            assert_eq!(resolved_switches(Some(&option)),(enabled,enabled));
+        }
+    }
 }
