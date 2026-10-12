@@ -416,7 +416,7 @@ mod tests {
     fn selecting_128_or_256_matches_on_short_context(){
         let model=Transformer::new(7);
         let dense=vec![0.2;VOCAB];
-        let a=model.predict_hybrid_window(b"U: hello\\nN: ",&dense,128).unwrap();
+        let a=model.predict_hybrid_window(b"U: hello\nN: ",&dense,128).unwrap();
         let b=model.predict_hybrid_window(b"U: hello\\nN: ",&dense,256).unwrap();
         assert_eq!(a,b);
         let long=vec![b'a';175];
@@ -454,7 +454,7 @@ mod tests {
                    migrated.predict_hybrid_window(b"U: hello\\nN: ",&dense,128).unwrap());
         assert_eq!(&migrated.momentum[current.pos.end-D*128..current.pos.end],
                    &learned.momentum[current.pos.end-D*128..current.pos.end]);
-        assert_eq!(&migrated.variance[current.bridge],&learned.variance[current.bridge]);
+        assert_eq!(&migrated.variance[current.bridge.clone()],&learned.variance[current.bridge]);
     }
     #[test]
     fn causal_predictions_ignore_data_after_the_context() {
