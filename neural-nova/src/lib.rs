@@ -36,6 +36,8 @@ pub fn encode_ascii_context(history: &[u8]) -> Result<Vec<f32>, String> {
     Ok(features)
 }
 
+pub mod dialogue;
+
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
