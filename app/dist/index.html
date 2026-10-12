@@ -59,9 +59,13 @@
           <div class="section-line"><h3>Training</h3><span id="checkpointText" class="subtle">Fresh weights</span></div>
           <p class="muted">The teacher optimizes one shared loss for both pathways. Nova still generates her own responses — no scripted language corrections.</p>
           <div class="schedule-settings">
-            <label class="checkbox-line" for="adaptiveTraining"><input id="adaptiveTraining" type="checkbox" checked><span>Adaptive learning rate and early stopping</span></label>
-            <div><label for="trainingRate">Initial learning rate</label><select id="trainingRate"><option value="0.001">Gentle · 0.001</option><option value="0.003" selected>Balanced · 0.003</option><option value="0.005">Faster · 0.005</option></select></div>
+            <div class="trainer-switches">
+              <label class="checkbox-line" for="adaptiveTraining"><input id="adaptiveTraining" type="checkbox"><span>Adaptive learning rate</span></label>
+              <label class="checkbox-line" for="earlyStopping"><input id="earlyStopping" type="checkbox" checked><span>Early stopping</span></label>
+            </div>
+            <div><label for="trainingRate">Learning rate</label><select id="trainingRate"><option value="0.001" selected>Gentle · 0.001</option><option value="0.003">Balanced · 0.003</option><option value="0.005">Faster · 0.005</option></select></div>
           </div>
+          <p class="trainer-explainer" id="trainingScheduleHelp">Gentle stays fixed at 0.001; early stopping independently watches validation loss.</p>
           <div class="row wrap actions"><button type="button" class="primary" id="startTraining">▶ Start training</button><button type="button" id="stopTraining" disabled>Stop</button></div>
           <div class="progress-head"><span id="trainingProgress">No active training</span><strong id="trainingPercent">0%</strong></div>
           <p class="trainer-stage" id="trainingStage">Waiting for lessons.</p>
