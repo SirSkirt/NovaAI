@@ -1,5 +1,24 @@
 # Neural Nova v0.5.0 — three-tab hybrid brain lab
 
+## v0.6.0 — Tests & Corrections: external teacher, one neural brain
+
+### Test data and independent answer keys
+Within **Teach → Tests & Corrections** (collapsed by default), create/save/select/delete a named test. Paste or import separate printable-ASCII TXT files (one question per line and corresponding one answer per line), or import combined `question<TAB>answer` lines into the questions box with the answer box empty. The native parser checks 1–100 pairs, rejects missing/extra answers and unsafe/mismatched input, and keeps answer keys in teacher-only metadata, **never in the model's context, episodic memory or inference output**. Optional held-out unseen question/key TXT pairs must not overlap correction questions.
+
+### Execution and measurement
+By default, test with greedy generation, 3 independent attempts/question, 128 token window and Gentle 0.001 corrective rate; seeded sampling is also available. **All baseline first attempts across every question (and optionally all unseen variations) happen before any corrective update.** After baseline, an incorrect response may receive at most one normal teacher-forced supervised pass (up to 256 ASCII reply characters) through `HybridBrain::train_batch` before another *new independent neural inference*. No correction after the final attempt, on correct answers, or on ambiguous/needs-review answers. The neural brain is not altered for assessment, retention or generalization. All attempts are recorded even after early success.
+
+The Test Overview retains the **exact original response**, automatic and teacher-adjusted grading, answer key, sampled/greedy status, loss, gradient-update count and model step. Reports separate **untouched initial accuracy** from **post-correction accuracy**; they record training steps and how many initially incorrect answers became correct. Optional retention replay occurs after other corrections; optional generalization compares unseen questions before/after training without teaching to that set. Because prior test questions can improve later questions, **only the initial all-question baseline is untouched**.
+
+### Grade review, safety and persistence
+Conservative exact match ignores only surrounding whitespace. Capitalization/punctuation-only differences receive **Needs Teacher Review**; arbitrary semantic paraphrases are never auto-assumed correct. A human can override assessment and optionally record a different intended answer *without altering the original answer key, the original generated answer or Nova's weights*. Explicit "Send correction to lessons" opens the ordinary manual lesson editor; actual learning still requires the normal teacher action. Tests and reports are stored in `neural-nova-tests-v0.6.json`, separate from `neural-nova-hybrid-0.5.nhyb`, with safe temporary file/backup saves and interrupted-run labeling. Corrections use an atomic joint checkpoint, and an interrupted or failed partial correction rolls back in-memory weights. Pause/resume/stop operate at safe task boundaries.
+
+### Architecture fix
+The **existing dense Adam optimizer** formerly always used 0.001 regardless of the selected Transformer rate. `neural-nova/src/lib.rs` now exposes `Adam::set_learning_rate`; both `train_batch` and `train_memory_batch` use the same user-selected rate for **both neural pathways** (and the trainable Transformer bridge). This fixes the user-observed "Gentle" inconsistency; no scripted answers or second teacher brain were added. Existing weights/checkpoints are preserved. The native teacher-only code lives in `app/src-tauri/src/test_lab.rs` and `app/src-tauri/src/hybrid_lab.rs`, not in the model's inference implementation.
+
+### Validation
+Static frontend parsing and command wiring checks completed during development. Added Rust tests for separate/combined TXT parsing, conservative grading, invalid budgets, independent greedy inference, and a controlled case showing actual shared-gradient improvement. GitHub Actions builds/tests should be checked before treating a native installer as verified. Check Android and Windows job results separately; successful Rust core tests alone are not proof of native packaging.
+
 ## v0.5.0 — Learned word units and multi-turn neural memory
 
 **Final design notes (v0.5.0):** The memory reader is initialized to **zero**, so a migrated older checkpoint is not disturbed by new, untrained memory signals. Once multi-turn lessons train the reader, neural memory influences the one generated output. The memory mechanism uses differentiable content-based attention over up to 12 compressed prior-turn slots (32 dimensions each); writing uses a trainable tanh projection of pooled word/character embeddings, and shared-gradient training flows into both the reader and writer. Whole conversation sessions are held out for validation.
