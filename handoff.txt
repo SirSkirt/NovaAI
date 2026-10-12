@@ -62,8 +62,14 @@ RECOMMENDED USER TEST PLAN:
    initialize new words from their constituent trained character embeddings,
    delay word-token activation until pretrained, or test rehearsal from a cloned
    initial checkpoint. These are future hypotheses, NOT implemented changes.
-6. Previous checkpoints should be protected outside the active mutable checkpoint
-   path. The active trainer still overwrites its own best-checkpoint file.
+6. New safety behavior: before any lesson or corrective test that updates
+   trained weights, the app copies the saved joint checkpoint into
+   app_data_dir()/neural-nova-checkpoint-history/
+   using a timestamp and optimizer step in the filename. The active trainer
+   still overwrites its current checkpoint, but the pre-lesson copy remains.
+   Automatic historical backups can consume disk space; review them manually.
+   This does not replace the recommended external copy of the important
+   399-step checkpoint, and it does not reset the brain.
 7. The user's actual Lesson 02/03 TXT content and original 399-step checkpoint
    were not available in this GitHub investigation; numerical reproductions
    are controlled models, not evidence of exact real-user rollback behavior.
