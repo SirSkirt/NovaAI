@@ -52,6 +52,7 @@ fn random(seed:&mut u64)->f32 {
     ((*seed).wrapping_mul(2685821657736338717)>>40) as f32 / 16777216.0
 }
 fn dot(a:&[f32],b:&[f32])->f32 {a.iter().zip(b).map(|(x,y)|x*y).sum()}
+fn vector_norm(x:&[f32])->f32{(x.iter().map(|v|(*v as f64)*(*v as f64)).sum::<f64>()).sqrt() as f32}
 fn mv(w:&[f32],r:&Range<usize>,rows:usize,cols:usize,x:&[f32])->Vec<f32> {
     (0..rows).map(|i|dot(&w[r.start+i*cols..r.start+(i+1)*cols],x)).collect()
 }
@@ -90,6 +91,13 @@ struct Cache {
     memory_sources:Vec<Vec<u16>>, memory_means:Vec<Vec<f32>>,
     memory_activations:Vec<Vec<f32>>, memory_context:Vec<f32>,
     memory_query:Vec<f32>, memory_attention:Vec<f32>,
+    hidden_before_bridge_norm:f32,dense_features_norm:f32,bridge_norm:f32,hidden_after_bridge_norm:f32,
+}
+#[derive(Clone,Debug)]
+pub struct BridgeMeasurement{
+    pub transformer_norm:f32,pub dense_norm:f32,pub projected_bridge_norm:f32,
+    pub combined_norm:f32,pub bridge_to_transformer_ratio:f32,
+    pub next_character_total_variation:f32,
 }
 #[derive(Clone,Debug)]
 pub struct Attention {
@@ -174,10 +182,16 @@ impl Transformer {
         let ff=mv(&self.weights,&l.f2,D,FF,&act);
         let mut hidden=mid.clone();
         for j in 0..D {hidden[j]+=ff[j]+self.weights[l.b2.start+j];}
+        let hidden_before_bridge_norm=vector_norm(&hidden);
+        let mut dense_features_norm=0f32;
+        let mut bridge_norm=0f32;
         if let Some(features)=dense {
+            dense_features_norm=vector_norm(features);
             let projected=mv(&self.weights,&l.bridge,D,VOCAB,features);
+            bridge_norm=vector_norm(&projected);
             for j in 0..D {hidden[j]+=projected[j];}
         }
+        let hidden_after_bridge_norm=vector_norm(&hidden);
         let mut memory_means=Vec::new();
         let mut memory_activations=Vec::new();
         let mut memory_context=vec![0.0;D];
@@ -213,7 +227,8 @@ impl Transformer {
         let probabilities=stable_softmax(&logits);
         Ok(Cache{tokens,inputs,query,keys,values,attention,context,mid,pre,act,hidden,probabilities,
             memory_sources:memory.iter().skip(memory.len().saturating_sub(12)).cloned().collect(),
-            memory_means,memory_activations,memory_context,memory_query,memory_attention})
+            memory_means,memory_activations,memory_context,memory_query,memory_attention,
+            hidden_before_bridge_norm,dense_features_norm,bridge_norm,hidden_after_bridge_norm})
     }
     pub fn predict(&self,context:&[u8])->Result<Vec<f32>,String> {
         Ok(self.forward(context)?.probabilities)
@@ -338,6 +353,25 @@ impl Transformer {
             index:i,code:if (code as usize)<BASE{code as u8}else{b'?'},
             token_id:code,probability:cache.attention[i]
         }).collect())
+    }
+    /// Evaluation-only bridge ablation. Replaces the dense feature input with
+    /// zero while keeping Transformer weights, context, and output head intact.
+    /// No trainable parameter changes, no alternate response engine.
+    pub fn measure_bridge(&self,tokens:&[u16],features:&[f32],window:usize)
+        ->Result<BridgeMeasurement,String>{
+        let actual=self.forward_tokens_with_memory(tokens,Some(features),window,&[])?;
+        let absent=self.forward_tokens_with_memory(tokens,Some(&[0.0;VOCAB]),window,&[])?;
+        let variation=actual.probabilities.iter().zip(&absent.probabilities)
+            .map(|(a,b)|(a-b).abs()).sum::<f32>()*0.5;
+        Ok(BridgeMeasurement{
+            transformer_norm:actual.hidden_before_bridge_norm,
+            dense_norm:actual.dense_features_norm,
+            projected_bridge_norm:actual.bridge_norm,
+            combined_norm:actual.hidden_after_bridge_norm,
+            bridge_to_transformer_ratio:actual.bridge_norm/
+                actual.hidden_before_bridge_norm.max(1e-8),
+            next_character_total_variation:variation,
+        })
     }
     pub fn bridge_signal(&self,dense:&[f32])->Result<Vec<f32>,String> {
         if dense.len()!=VOCAB {return Err("Expected 128 dense bridge features".into());}
