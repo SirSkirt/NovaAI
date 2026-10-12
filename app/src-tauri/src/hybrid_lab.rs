@@ -472,6 +472,40 @@ pub async fn hybrid_tokenizer_probe(
         Ok(TokenizerProbeReport{added_word_units:added,unchanged_weights,samples})
     }).await.map_err(|e|e.to_string())?
 }
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct BridgeProbe{
+    transformer_norm:f32,dense_norm:f32,projected_bridge_norm:f32,
+    combined_norm:f32,bridge_to_transformer_ratio:f32,
+    next_character_total_variation:f32,
+    transformer_step:u64,dense_step:u32,
+}
+#[tauri::command]
+pub async fn hybrid_bridge_probe(
+    state:State<'_,HybridState>,message:String,context_chars:Option<usize>,
+)->Result<BridgeProbe,String>{
+    if message.is_empty()||message.len()>180||!message.is_ascii(){
+        return Err("Use 1–180 ASCII characters for bridge inspection".into());
+    }
+    let window=valid_window(context_chars)?;
+    let state=state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||{
+        if state.inner.training.load(Ordering::Acquire){
+            return Err("Finish neural training before bridge inspection".into());
+        }
+        let s=lock(&state)?;
+        let context=dialogue_prefix(&message)?;
+        let a=s.brain.bridge_measurement(&context,window)?;
+        Ok(BridgeProbe{
+            transformer_norm:a.transformer_norm,dense_norm:a.dense_norm,
+            projected_bridge_norm:a.projected_bridge_norm,
+            combined_norm:a.combined_norm,
+            bridge_to_transformer_ratio:a.bridge_to_transformer_ratio,
+            next_character_total_variation:a.next_character_total_variation,
+            transformer_step:s.brain.transformer.step,dense_step:s.brain.dense_adam_steps(),
+        })
+    }).await.map_err(|e|e.to_string())?
+}
 #[derive(Clone,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct TrainOptions {
