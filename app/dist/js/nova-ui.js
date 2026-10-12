@@ -98,7 +98,7 @@ function status(s){
 }
 function rememberDataset(){datasets[activeMode]=$("lessonData").value;try{localStorage.setItem("nova-hybrid-"+activeMode,datasets[activeMode]);}catch(_){}}
 function modeChanged(mode){
-  if(!datasets[mode])datasets[mode]=mode==="dialogue"?dialogueSample:textSample;
+  if(!(mode in datasets))datasets[mode]=mode==="dialogue"?dialogueSample:textSample;
   activeMode=mode;
   $("lessonData").value=datasets[mode];
   $("lessonHint").textContent=mode==="dialogue"
