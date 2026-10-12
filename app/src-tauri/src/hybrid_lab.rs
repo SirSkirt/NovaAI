@@ -756,8 +756,8 @@ pub fn hybrid_train(
     }
     let starting_lr=options.as_ref().and_then(|o|o.learning_rate).unwrap_or(DEFAULT_LEARNING_RATE);
     let patience=options.as_ref().and_then(|o|o.patience).unwrap_or(6);
-    if !starting_lr.is_finite() || !(0.0003..=0.006).contains(&starting_lr){
-        return Err("Learning rate must be between 0.0003 and 0.006".into());
+    if !starting_lr.is_finite() || !(0.0001..=0.006).contains(&starting_lr){
+        return Err("Learning rate must be between 0.0001 and 0.006".into());
     }
     if !(3..=15).contains(&patience){return Err("Patience must be 3–15 epochs".into());}
     if state.inner.training.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err(){
@@ -796,6 +796,10 @@ pub fn hybrid_train(
                 "learningRate":starting_lr,"patience":patience,
                 "lessonLengthBytes":lesson.text.len(),"lessonFingerprint":diag::fingerprint(&lesson.text),
                 "trainingExamples":plan.train.len(),"validationExamples":plan.validation.len(),
+                "trainingSections":plan.train_lessons,"heldoutSections":plan.validation_lessons,
+                "validationStrategy":if lesson.mode=="text"{
+                    "stable-hash whole paragraph/sentence groups; cross-boundary contexts forbidden"
+                }else{"mode-specific independent examples"},
                 "trainingSplitFingerprint":diag::fingerprint(&plan.training_text),
                 "tokenizerWords":s.brain.tokenizer.words.len(),
                 "stepTransformer":s.brain.transformer.step,"stepDense":s.brain.dense_adam_steps(),
