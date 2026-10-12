@@ -92,6 +92,7 @@ impl HybridBrain {
         dense_grad.scale(inverse);
         dense_grad.clip_global_norm(1.0);
         self.transformer.apply_gradients(&mut tf_grad,lr)?;
+        self.dense_adam.set_learning_rate(lr)?;
         self.dense_adam.apply(&mut self.dense,&dense_grad)?;
         Ok(loss*inverse)
     }
@@ -118,6 +119,7 @@ impl HybridBrain {
         for x in &mut tf_grad{*x*=inv;}
         dense_grad.scale(inv);dense_grad.clip_global_norm(1.0);
         self.transformer.apply_gradients(&mut tf_grad,lr)?;
+        self.dense_adam.set_learning_rate(lr)?;
         self.dense_adam.apply(&mut self.dense,&dense_grad)?;
         Ok(loss*inv)
     }
@@ -316,6 +318,16 @@ mod tests{
         assert_eq!(recovered.dense_adam.step,trained.dense_adam.step);
         assert_eq!(recovered.dense.layers[0].weights,trained.dense.layers[0].weights);
         assert_eq!(recovered.dense_adam.m.layers[0].weights,trained.dense_adam.m.layers[0].weights);
+    }
+    #[test]
+    fn both_hemispheres_honor_the_selected_learning_rate(){
+        let mut brain=HybridBrain::new();
+        brain.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.003).unwrap();
+        assert_eq!(brain.dense_adam.learning_rate(),0.003);
+        brain.train_memory_batch(&[(
+            b"U: hello\nN: ".to_vec(),b'H',vec!["U: hi\nN: Hey".to_string())
+        )],0.001).unwrap();
+        assert_eq!(brain.dense_adam.learning_rate(),0.001);
     }
     #[test]
     fn neural_memory_changes_predictions_and_trains_shared_write_read_matrices(){
