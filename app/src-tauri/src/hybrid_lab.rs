@@ -128,6 +128,22 @@ fn path(app:&AppHandle)->Result<PathBuf,String>{
     fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
     Ok(dir.join(CHECKPOINT))
 }
+fn snapshot_active_checkpoint(app:&AppHandle,brain:&HybridBrain,reason:&str)->Result<(),String>{
+    let current=path(app)?;
+    if !current.exists(){return Ok(());}
+    let directory=current.parent().ok_or("Checkpoint has no parent directory")?
+        .join("neural-nova-checkpoint-history");
+    fs::create_dir_all(&directory).map_err(|e|e.to_string())?;
+    let stamp=SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_err(|e|e.to_string())?.as_nanos();
+    let backup=directory.join(format!(
+        "neural-nova-{reason}-step{}-{stamp}.nhyb",brain.transformer.step
+    ));
+    let size=fs::copy(&current,&backup).map_err(|e|e.to_string())?;
+    if size==0 {return Err("Refusing to start learning: checkpoint backup was empty".into());}
+    Ok(())
+}
+
 #[derive(Clone,Serialize)]
 #[serde(rename_all="camelCase")]
 pub struct HybridStatus{
@@ -557,6 +573,7 @@ pub fn hybrid_train(
     let state=state.inner().clone();
     let ready=(||->Result<(),String>{
         let mut s=lock(&state)?;
+        if s.trained{snapshot_active_checkpoint(&app,&s.brain,"before-lesson")?;}
         s.brain.learn_token_units(&plan.training_text);
         s.epoch=0;s.epochs=lesson.epochs;s.completed=0;
         s.total=plan.train.len()*lesson.epochs as usize;
@@ -1119,7 +1136,15 @@ pub fn hybrid_test_start(app:AppHandle,state:State<'_,HybridState>,
     state.inner.stop.store(false,Ordering::Release);
     state.inner.test_paused.store(false,Ordering::Release);
     let steps=match lock(&state){
-        Ok(s)=>s.brain.transformer.step,
+        Ok(s)=>{
+            if options.corrections && s.trained{
+                if let Err(error)=snapshot_active_checkpoint(&app,&s.brain,"before-test"){
+                    state.inner.training.store(false,Ordering::Release);
+                    return Err(error);
+                }
+            }
+            s.brain.transformer.step
+        },
         Err(e)=>{state.inner.training.store(false,Ordering::Release);return Err(e);}
     };
     let id=test_unique_id("run");
