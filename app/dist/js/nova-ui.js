@@ -187,7 +187,7 @@ function loadSchedule(){
       if(typeof p.rehearsal==="boolean")$("rehearsalEnabled").checked=p.rehearsal;
       if(typeof p.protectPrevious==="boolean")$("retentionGuardEnabled").checked=p.protectPrevious;
       if([0.05,0.10,0.20].includes(p.retentionLossTolerance))
-        $("retentionTolerance").value=String(p.retentionLossTolerance);
+        $("retentionTolerance").value=p.retentionLossTolerance.toFixed(2);
     }
   }catch(_){}
   describeSchedule();
