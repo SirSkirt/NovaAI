@@ -12,6 +12,8 @@ pub fn run() {
             neural::neural_inspect,
             neural::neural_generate,
             neural::neural_train,
+            neural::neural_train_dialogues,
+            neural::neural_chat,
             neural::neural_stop,
             neural::neural_reset,
         ])
