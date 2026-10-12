@@ -88,7 +88,7 @@ fn memory_samples(sessions:&[Vec<DialoguePair>])->Result<(Vec<Example>,Vec<Vec<S
             let mut history=dialogue_prefix(&turn.user)?;
             for target in turn.assistant.bytes().chain(std::iter::once(b'\n')){
                 data.push((history[history.len().saturating_sub(CONTEXT)..].to_vec(),target));
-                histories.push(prior.iter().rev().take(12).rev().cloned().collect());
+                histories.push(prior.iter().skip(prior.len().saturating_sub(12)).cloned().collect());
                 history.push(target);
             }
             prior.push(format!("U: {}\nN: {}",turn.user,turn.assistant));
