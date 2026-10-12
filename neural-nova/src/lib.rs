@@ -415,6 +415,15 @@ impl Adam {
         })
     }
 
+    /// Keep both neural pathways on the same user-selected schedule.
+    /// This changes only optimizer step size; all neural weights remain trainable.
+    pub fn set_learning_rate(&mut self,rate:f32)->Result<(),String>{
+        if !rate.is_finite() || !(1e-6..=0.05).contains(&rate){
+            return Err("Dense learning rate outside supported range".into());
+        }
+        self.learning_rate=rate;Ok(())
+    }
+    pub fn learning_rate(&self)->f32{self.learning_rate}
     pub(crate) fn apply(&mut self, network: &mut Network, gradient: &Gradients) -> Result<(), String> {
         if self.m.layers.len() != network.layers.len() ||
             self.m.layers.iter().zip(&network.layers).any(|(m, l)|
