@@ -2,6 +2,12 @@
 
 ## v0.5.0 — Learned word units and multi-turn neural memory
 
+**Final design notes (v0.5.0):** The memory reader is initialized to **zero**, so a migrated older checkpoint is not disturbed by new, untrained memory signals. Once multi-turn lessons train the reader, neural memory influences the one generated output. The memory mechanism uses differentiable content-based attention over up to 12 compressed prior-turn slots (32 dimensions each); writing uses a trainable tanh projection of pooled word/character embeddings, and shared-gradient training flows into both the reader and writer. Whole conversation sessions are held out for validation.
+
+The trainer now samples up to **512 raw ASCII characters** before applying learned token compression and 256-token attention truncation. This permits the word-input tokenizer to save context positions. The generative output head is **still character based** (128 ASCII classes), and the dense pathway still sees 64 characters. Do not claim full BPE/subword output generation, general semantic memory, or long-term retrieval. Word units are added from *training-only* text, assigned stable IDs and saved in the new checkpoint. New word/memory weights need training. Frontend syntax and native-command mapping passed static checks; the Rust project and native builds remain unverified.
+
+
+
 This experimental upgrade keeps Neural Nova as **ONE trainable brain** (Transformer + dense network + shared-loss bridge). There is no second chatbot, canned-answer search, arbitrary response selection, or hard-coded semantic lookup.
 
 **Input tokenizer:** `neural-nova/src/tokenizer.rs` provides stable, lossless word-unit tokens with ASCII character fallback for unseen words. Word units are learned from the training split only; words repeated at least twice (3–24 ASCII characters) may enter a 256-slot vocabulary. Token embeddings are part of the Transformer weights and are trained by the existing neural loss. Word-unit IDs never reorder. New words must be trained: they do not arrive with preloaded meaning. **Replies are still decoded/generated character by character**, so this is an input-side tokenizer improvement, not yet a full generative word/subword head. Only ASCII is supported.
