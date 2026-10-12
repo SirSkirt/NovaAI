@@ -397,6 +397,81 @@ pub async fn hybrid_chat(
         })
     }).await.map_err(|e|e.to_string())?
 }
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct TokenizerProbeSample{
+    prompt:String,stage:String,token_ids:Vec<u16>,token_labels:Vec<String>,
+    vocabulary:usize,transformer_step:u64,dense_step:u32,
+    top_predictions:Vec<TokenProbability>,response:String,
+}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct TokenizerProbeReport{
+    added_word_units:usize,unchanged_weights:bool,
+    samples:Vec<TokenizerProbeSample>,
+}
+fn tokenizer_probe_sample(brain:&HybridBrain,prompt:&str,stage:&str,
+    length:usize,window:usize)->Result<TokenizerProbeSample,String>{
+    let mut history=dialogue_prefix(prompt)?;
+    let tokens=brain.tokenizer.encode(std::str::from_utf8(&history).map_err(|e|e.to_string())?)?;
+    let p=brain.predict_window(&history,window)?;
+    let mut ranked=(0..p.len()).collect::<Vec<_>>();
+    ranked.sort_by(|&a,&b|p[b].total_cmp(&p[a]));
+    let top_predictions=ranked.into_iter().take(8)
+        .map(|code|TokenProbability{code,probability:p[code]}).collect();
+    let mut response=Vec::new();
+    for _ in 0..length{
+        let predictions=brain.predict_window(&history,window)?;
+        let c=greedy_sample(&predictions);
+        if c==b'\n'{break;}
+        history.push(c);
+        response.push(c);
+    }
+    Ok(TokenizerProbeSample{
+        prompt:prompt.to_owned(),stage:stage.into(),
+        token_labels:tokens.iter().map(|&id|brain.tokenizer.token_label(id)).collect(),
+        token_ids:tokens,
+        vocabulary:brain.tokenizer.words.len(),
+        transformer_step:brain.transformer.step,dense_step:brain.dense_adam_steps(),
+        top_predictions,response:String::from_utf8(response).map_err(|e|e.to_string())?,
+    })
+}
+/// Non-mutating A/B experiment: stage B grows tokenizer units on a cloned
+/// brain, with ZERO optimizer steps or edits to the live neural checkpoint.
+#[tauri::command]
+pub async fn hybrid_tokenizer_probe(
+    state:State<'_,HybridState>,mode:String,lesson_text:String,probes:String,
+    max_chars:Option<usize>,context_chars:Option<usize>,
+)->Result<TokenizerProbeReport,String>{
+    let length=max_chars.unwrap_or(48);
+    if !(1..=80).contains(&length){return Err("Probe response length must be 1–80".into());}
+    let window=valid_window(context_chars)?;
+    let plan=prepare(&mode,&lesson_text)?;
+    let prompts=probes.lines().map(str::trim).filter(|s|!s.is_empty()).collect::<Vec<_>>();
+    if prompts.is_empty()||prompts.len()>6||
+        prompts.iter().any(|s|s.len()>180||!s.is_ascii()||s.contains('\r')){
+        return Err("Supply 1–6 ASCII prompts, max 180 characters each".into());
+    }
+    let prompts=prompts.into_iter().map(str::to_owned).collect::<Vec<_>>();
+    let state=state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||{
+        if state.inner.training.load(Ordering::Acquire){
+            return Err("Finish training before a tokenizer-only investigation".into());
+        }
+        let original=lock(&state)?.brain.clone();
+        let mut expanded=original.clone();
+        let added=expanded.learn_token_units(&plan.training_text);
+        let unchanged_weights=original.transformer.weights==expanded.transformer.weights &&
+            original.dense.layers.iter().zip(&expanded.dense.layers).all(|(a,b)|
+                a.weights==b.weights&&a.biases==b.biases);
+        let mut samples=Vec::new();
+        for prompt in &prompts{
+            samples.push(tokenizer_probe_sample(&original,prompt,"A: original",length,window)?);
+            samples.push(tokenizer_probe_sample(&expanded,prompt,"B: tokenizer only",length,window)?);
+        }
+        Ok(TokenizerProbeReport{added_word_units:added,unchanged_weights,samples})
+    }).await.map_err(|e|e.to_string())?
+}
 #[derive(Clone,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct TrainOptions {
