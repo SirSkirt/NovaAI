@@ -92,6 +92,36 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
         _=>Err("Select dialogue or text lessons".into())
     }
 }
+/// Training schedule; does not choose any response or change neural inference.
+#[derive(Clone,Copy,Debug)]
+pub struct ScheduleConfig {
+    pub adaptive_learning_rate:bool,
+    pub early_stopping:bool,
+    pub patience:u32,
+}
+#[derive(Clone,Copy,Debug)]
+pub struct ScheduleState {
+    pub learning_rate:f32,
+    pub stale_epochs:u32,
+    config:ScheduleConfig,
+}
+impl ScheduleState {
+    pub fn new(learning_rate:f32,config:ScheduleConfig)->Self{
+        Self{learning_rate,stale_epochs:0,config}
+    }
+    /// Early stopping and rate adaptation are independent toggles.
+    /// When enabled, the adaptive schedule may only REDUCE the learning rate.
+    pub fn observe_validation(&mut self,improved:bool)->bool{
+        if improved{self.stale_epochs=0;}else{self.stale_epochs=self.stale_epochs.saturating_add(1);}
+        if self.config.early_stopping && self.stale_epochs>=self.config.patience{
+            return true;
+        }
+        if self.config.adaptive_learning_rate && self.stale_epochs>0 && self.stale_epochs%2==0{
+            self.learning_rate=(self.learning_rate*0.5).max(0.0003);
+        }
+        false
+    }
+}
 /// Epoch one introduces short contexts first, later epochs use unbiased shuffling.
 /// No hard-coded responses, target transformations, or alterations to inference.
 pub fn training_order(samples:&[Example],epoch:u32,mode:&str)->Vec<usize>{
@@ -110,6 +140,38 @@ pub fn training_order(samples:&[Example],epoch:u32,mode:&str)->Vec<usize>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn early_stop_is_independent_of_adaptive_rate(){
+        let mut state=ScheduleState::new(0.001,ScheduleConfig{adaptive_learning_rate:false,early_stopping:true,patience:3});
+        assert!(!state.observe_validation(false));
+        assert!(!state.observe_validation(false));
+        assert_eq!(state.learning_rate,0.001);
+        assert!(state.observe_validation(false));
+        assert_eq!(state.learning_rate,0.001);
+    }
+    #[test]
+    fn adaptive_rate_does_not_force_early_stop(){
+        let mut state=ScheduleState::new(0.003,ScheduleConfig{adaptive_learning_rate:true,early_stopping:false,patience:3});
+        for _ in 0..8{assert!(!state.observe_validation(false));}
+        assert!(state.learning_rate<0.003);
+        assert!(state.learning_rate>=0.0003);
+    }
+    #[test]
+    fn both_disabled_keep_constant_rate_for_entire_training(){
+        let mut state=ScheduleState::new(0.001,ScheduleConfig{adaptive_learning_rate:false,early_stopping:false,patience:3});
+        for _ in 0..12{assert!(!state.observe_validation(false));}
+        assert_eq!(state.learning_rate,0.001);
+    }
+    #[test]
+    fn adaptive_never_increases_rate_even_after_improvement(){
+        let mut state=ScheduleState::new(0.001,ScheduleConfig{adaptive_learning_rate:true,early_stopping:true,patience:6});
+        state.observe_validation(false);state.observe_validation(false);
+        let reduced=state.learning_rate;
+        assert!(reduced<0.001);
+        assert!(!state.observe_validation(true));
+        assert_eq!(state.learning_rate,reduced);
+        assert_eq!(state.stale_epochs,0);
+    }
     #[test]
     fn split_is_stable_on_reordered_curriculum_and_preserves_question_groups(){
         let original="HELLO?\tHi!\nhello\tHey!\nwhat is rain?\tWater.\nwhat is snow\tIce.\nwhat is a cat\tAnimal.\nwhat is a tree\tPlant.\nbye\tGoodbye.\n";
