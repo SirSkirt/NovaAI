@@ -70,3 +70,21 @@ button.danger{border-color:#6b414c;color:#ffaaaa;background:#3a222b;white-space:
 footer{padding:32px 0 35px;color:#697991;text-align:center;font-size:12px}
 @media(max-width:820px){.intro{display:block}.architecture{display:inline-block;margin-top:20px}.workspace{grid-template-columns:1fr}}
 @media(max-width:600px){.shell{padding:0 12px}.intro{padding:24px 2px}.intro h2{font-size:34px}.stats{grid-template-columns:repeat(2,1fr);gap:8px}.stat{padding:13px}.stat strong{font-size:21px}.panel{padding:15px;border-radius:14px}.canvas-container{height:420px}.architecture{font-size:16px;padding:12px}.live-label{font-size:10px}.bottom{display:block}.bottom button{margin-top:18px}.settings-row{align-items:flex-start}.settings-row>div:first-child{min-width:118px}}
+
+/* The original bottom error spot is now a session diagnostic console. */
+.diagnostics{margin:18px 0;background:#171e2b;border:1px solid #3b4b67;border-radius:13px;overflow:hidden}
+.diagnostics.has-errors{background:#231b27;border-color:#ad566c}
+.diagnostics-heading{display:flex;justify-content:space-between;align-items:center;padding:15px 17px;cursor:pointer;list-style:none;gap:12px}
+.diagnostics-heading::-webkit-details-marker{display:none}
+.diagnostics-heading>span:first-child{display:flex;flex-wrap:wrap;gap:8px 15px;align-items:baseline}
+.diagnostics-heading strong{font-size:15px}
+.diagnostics-heading small{color:#acbed6}
+.diag-label{color:#92acdb;letter-spacing:.11em;font-size:10px;font-weight:750}
+.diag-caret{font-size:18px;color:#a4b4ce;transition:transform .2s}
+.diagnostics:not([open]) .diag-caret{transform:rotate(-90deg)}
+.diagnostics-body{padding:0 17px 17px}
+.diagnostics-toolbar{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:9px;font-size:12px;color:#98aac4}
+.diagnostics-toolbar>div{display:flex;gap:8px}
+.diagnostics-toolbar button{padding:6px 10px;font-size:11px}
+#diagnosticLog{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;border:1px solid #35445c;background:#0d1420;color:#c6d8ed;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;border-radius:10px;padding:12px;margin:0}
+.has-errors #diagnosticLog{border-color:#8f5061;color:#ffd3dc}

@@ -23,12 +23,70 @@ function setState(label,kind="ready"){
   $("brainStateText").textContent=label;
   $("brainState").className="pill "+(kind==="training"?"running":kind==="error"?"offline":"");
 }
-function setError(error){
-  $("errorMessage").hidden=false;
-  $("errorMessage").textContent=typeof error==="string"?error:String(error);
+// The diagnostics area is intentionally always available at the bottom of the app.
+// Every caught JS, Promise, Tauri command, and training error is shown here.
+const diagnosticEntries=[];
+let errorCount=0;
+let lastBackendError=null;
+function errorText(error){
+  if(typeof error==="string")return error;
+  if(error instanceof Error)return error.stack||error.message;
+  try{return JSON.stringify(error);}catch(_){return String(error);}
 }
-function clearError(){$("errorMessage").hidden=true;}
-function safeRun(task){return Promise.resolve().then(task).catch(setError);}
+function logDiagnostic(severity,source,message){
+  const entry={
+    time:new Date().toLocaleTimeString(),
+    severity,
+    source,
+    message:errorText(message)
+  };
+  diagnosticEntries.push(entry);
+  if(diagnosticEntries.length>150) diagnosticEntries.shift();
+  if(severity==="ERROR")errorCount++;
+  const area=$("diagnosticLog");
+  if(area) {
+    area.textContent=diagnosticEntries.map(item=>
+      "["+item.time+"] ["+item.severity+"] ["+item.source+"] "+item.message
+    ).join("\n\n");
+    area.scrollTop=area.scrollHeight;
+  }
+  const summary=$("diagnosticCount");
+  if(summary)summary.textContent=errorCount+" error"+(errorCount===1?"":"s")+" · "+diagnosticEntries.length+" entries";
+  const panel=$("diagnostics");
+  if(panel)panel.classList.toggle("has-errors",errorCount>0);
+  if(severity==="ERROR"){
+    if(panel)panel.open=true;
+    console.error("[Neural Nova]["+source+"]",entry.message);
+  }
+}
+function setError(error,source="UI"){logDiagnostic("ERROR",source,error);}
+function clearError(){} // Preserve earlier errors until the user clears the debugger.
+function safeRun(task,source="UI"){
+  return Promise.resolve().then(task).catch(error=>setError(error,source));
+}
+window.addEventListener("error",event=>{
+  logDiagnostic("ERROR","JavaScript",event.message+
+    (event.filename?" @ "+event.filename+":"+event.lineno+":"+event.colno:""));
+});
+window.addEventListener("unhandledrejection",event=>{
+  logDiagnostic("ERROR","Unhandled promise",event.reason);
+});
+function clearDiagnostics(){
+  diagnosticEntries.length=0;errorCount=0;lastBackendError=null;
+  $("diagnosticLog").textContent="No diagnostics recorded in this session.";
+  $("diagnosticCount").textContent="0 errors · 0 entries";
+  $("diagnostics").classList.remove("has-errors");
+}
+$("clearDiagnostics").addEventListener("click",clearDiagnostics);
+$("copyDiagnostics").addEventListener("click",()=>safeRun(async()=>{
+  const report="Neural Nova diagnostic report\n"+
+    "Architecture: 1024 → 512 → 512 → 128\n"+
+    "Status: "+JSON.stringify(latestStatus)+"\n"+
+    diagnosticEntries.map(item=>"["+item.time+"] ["+item.severity+"] ["+item.source+"] "+item.message).join("\n\n");
+  await navigator.clipboard.writeText(report);
+  logDiagnostic("INFO","Debugger","Diagnostic report copied.");
+},"Debugger"));
+
 function updateStatus(status){
   if(!status)return;
   latestStatus=status;
@@ -203,7 +261,38 @@ function setTraining(active){
   $("startTrain").disabled=active;
   $("stopTrain").disabled=!active;
   $("resetBtn").disabled=active;
-  setState(active?"Training":"Ready",active?"training":"ready");
+  setState(active?"Training":latestStatus?.trained?"Weights loaded":"Untrained",active?"training":"ready");
+}
+function updateProgressFromStatus(status){
+  if(!status.totalExamples)return;
+  const percent=100*(status.completedExamples||0)/status.totalExamples;
+  $("progressPercent").textContent=percent.toFixed(1)+"%";
+  $("progressFill").style.width=percent.toFixed(2)+"%";
+  $("progressText").textContent="Epoch "+status.currentEpoch+"/"+status.totalEpochs+
+    " · "+status.completedExamples.toLocaleString()+"/"+status.totalExamples.toLocaleString()+" examples";
+}
+let polling=false;
+async function pollBrainStatus(){
+  if(polling||!window.__TAURI__?.core?.invoke)return;
+  polling=true;
+  try{
+    const status=await invoke("neural_status");
+    const wasTraining=training;
+    if(status.training!==training)setTraining(status.training);
+    updateStatus(status);
+    if(status.training||wasTraining)updateProgressFromStatus(status);
+    if(status.lastError && status.lastError!==lastBackendError){
+      lastBackendError=status.lastError;
+      setError(status.lastError,"Rust training worker");
+    }
+    if(wasTraining&&!status.training){
+      appendLog(status.lastError?"Training ended with an error.":"Training finished or stopped. Checkpoint saved.");
+      logDiagnostic(status.lastError?"WARN":"INFO","Training",
+        status.lastError?"Training failed.":"Training is no longer running.");
+    }
+  } catch(error){
+    setError(error,"Status polling");
+  } finally{polling=false;}
 }
 function updateProgress(value){
   const percent=value.totalExamples?100*value.completedExamples/value.totalExamples:0;
@@ -238,17 +327,27 @@ $("startTrain").addEventListener("click",()=>safeRun(async()=>{
   if(!/^[\x00-\x7F]*$/.test(text))throw new Error("Corpus must be ASCII text for v0.1.");
   if(text.length<9||text.length>100000)throw new Error("Training text must have between 9 and 100,000 bytes.");
   if(!Number.isInteger(epochs)||epochs<1||epochs>25)throw new Error("Choose 1–25 epochs.");
-  await invoke("neural_train",{request:{text,epochs}});
-  setTraining(true);
-  $("progressText").textContent="Starting neural training…";
+  $("trainingLog").textContent="";
+  $("progressText").textContent="Submitting training request to Rust…";
   $("progressPercent").textContent="0%";
   $("progressFill").style.width="0%";
-  $("trainingLog").textContent="";
-}));
+  setTraining(true); // Set before invoking so a quick completion event cannot race with UI state.
+  try{
+    await invoke("neural_train",{request:{text,epochs}});
+    logDiagnostic("INFO","Training","Rust accepted "+text.length+" ASCII bytes over "+epochs+" epoch(s).");
+    await pollBrainStatus(); // Also works when live Tauri events are unavailable.
+  }catch(error){
+    setTraining(false);
+    throw error;
+  }
+},"Start training"));
 $("stopTrain").addEventListener("click",()=>safeRun(async()=>{
   const stopping=await invoke("neural_stop");
-  if(stopping)appendLog("Stop requested — waiting for the current batch to finish.");
-}));
+  if(stopping){
+    appendLog("Stop requested — waiting for the current batch to finish.");
+    logDiagnostic("INFO","Training","Cancellation requested.");
+  }
+},"Stop training"));
 $("resetBtn").addEventListener("click",()=>safeRun(async()=>{
   if(!confirm("Reset Neural Nova's weights and delete its separate experiment checkpoint? Original Nova will not be affected."))return;
   clearError();
@@ -258,37 +357,69 @@ $("resetBtn").addEventListener("click",()=>safeRun(async()=>{
   appendLog("New random network initialized.");
   await inspect();
 }));
+async function registerTrainingEvents(){
+  const events=eventAPI();
+  if(!events?.listen){
+    logDiagnostic("WARN","Tauri events","Native event API unavailable; periodic status polling enabled.");
+    return;
+  }
+  try{
+    // These require the explicit core:event:allow-listen Tauri capability.
+    await events.listen("neural-progress",event=>safeRun(async()=>{
+      updateProgress(event.payload);
+    },"Training progress event"));
+    await events.listen("neural-epoch",event=>safeRun(async()=>{
+      const p=event.payload;
+      appendLog("Epoch "+p.epoch+"/"+p.epochs+" complete · mean loss "+p.loss.toFixed(4));
+      logDiagnostic("INFO","Training","Epoch "+p.epoch+"/"+p.epochs+" completed; mean loss "+p.loss.toFixed(4));
+    },"Training epoch event"));
+    await events.listen("neural-done",event=>safeRun(async()=>{
+      setTraining(false);
+      appendLog(event.payload.cancelled?"Training stopped. Checkpoint saved.":"Training complete. Checkpoint saved.");
+      logDiagnostic("INFO","Training",event.payload.cancelled?"Training cancelled; checkpoint saved.":"Training complete; checkpoint saved.");
+      updateStatus(await invoke("neural_status"));
+      if(!event.payload.cancelled){
+        $("progressFill").style.width="100%";
+        $("progressPercent").textContent="100%";
+      }
+    },"Training completion event"));
+    await events.listen("neural-error",event=>safeRun(async()=>{
+      setTraining(false);
+      setError(event.payload,"Rust training worker");
+      updateStatus(await invoke("neural_status"));
+    },"Training error event"));
+    logDiagnostic("INFO","Tauri events","Subscribed to live training progress, epoch, completion and error events.");
+  }catch(error){
+    setError(error,"Tauri event permissions");
+    logDiagnostic("WARN","Tauri events","Event listener registration failed; periodic status polling will continue.");
+  }
+}
 async function boot(){
   updateCorpusSize();
   canvas.addEventListener("click",inspectClick);
-  new ResizeObserver(redraw).observe(canvas);
+  if(typeof ResizeObserver==="function")new ResizeObserver(redraw).observe(canvas);
   window.addEventListener("resize",redraw);
-  if(!window.__TAURI__){
+  redraw();
+  if(!window.__TAURI__?.core?.invoke){
     setState("Open in app","error");
-    setError("Open Neural Nova as an installed Windows or Android app to use its native Rust network.");
-    redraw();return;
+    setError("Open Neural Nova as an installed Windows or Android app to use its native Rust network.","Startup");
+    return;
   }
-  const events=eventAPI();
-  if(!events?.listen)throw new Error("Tauri event API unavailable.");
-  await events.listen("neural-progress",event=>updateProgress(event.payload));
-  await events.listen("neural-epoch",event=>{
-    const p=event.payload;
-    appendLog("Epoch "+p.epoch+"/"+p.epochs+" complete · mean loss "+p.loss.toFixed(4));
-  });
-  await events.listen("neural-done",async event=>{
-    setTraining(false);
-    appendLog(event.payload.cancelled?"Training stopped. Checkpoint saved.":"Training complete. Checkpoint saved.");
-    updateStatus(await invoke("neural_status"));
-    if(!event.payload.cancelled){
-      $("progressFill").style.width="100%";
-      $("progressPercent").textContent="100%";
-    }
-  });
-  await events.listen("neural-error",async event=>{
-    setTraining(false);setError(event.payload);
-    updateStatus(await invoke("neural_status"));
-  });
-  updateStatus(await invoke("neural_boot"));
-  await inspect();
+  logDiagnostic("INFO","Startup","Neural Nova v0.1 diagnostics initialized.");
+  // Start the status fallback independently of event permissions; stalled event delivery
+  // must never prevent backend state updates or hide an error.
+  setInterval(()=>{if(training||latestStatus?.training)void pollBrainStatus();},1000);
+  await registerTrainingEvents();
+  try{
+    const initial=await invoke("neural_boot");
+    updateStatus(initial);
+    setTraining(initial.training);
+    logDiagnostic("INFO","Startup","Rust neural network loaded. "+initial.parameters.toLocaleString()+" parameters.");
+  }catch(error){
+    setState("Startup error","error");
+    setError(error,"Rust startup");
+  }
+  try{await inspect();}
+  catch(error){setError(error,"Initial brain inspection");}
 }
-document.addEventListener("DOMContentLoaded",()=>safeRun(boot));
+document.addEventListener("DOMContentLoaded",()=>safeRun(boot,"Startup"));

@@ -111,7 +111,19 @@ hello nova. this is a lesson for neural nova.</textarea>
         <div><p class="eyebrow">CONTROL / EXPERIMENTAL ONLY</p><h2>Reset neural weights</h2><p>Reinitializes the model and deletes its experimental checkpoint. This cannot change original Nova or its data.</p></div>
         <button class="danger" id="resetBtn">Reset neural brain</button>
       </section>
-      <div id="errorMessage" class="error" role="alert" hidden></div>
+      <details id="diagnostics" class="diagnostics" open>
+        <summary class="diagnostics-heading">
+          <span><span class="diag-label">NEURAL NOVA DEBUGGER</span><strong>Runtime diagnostics</strong><small id="diagnosticCount">0 errors · 0 entries</small></span>
+          <span class="diag-caret" aria-hidden="true">▾</span>
+        </summary>
+        <div class="diagnostics-body">
+          <div class="diagnostics-toolbar">
+            <span>Front-end, native commands, training events and worker failures</span>
+            <div><button id="copyDiagnostics" type="button">Copy report</button><button id="clearDiagnostics" type="button">Clear</button></div>
+          </div>
+          <pre id="diagnosticLog" role="log" aria-live="polite">No diagnostics recorded in this session.</pre>
+        </div>
+      </details>
     </main>
     <footer>Neural Nova v0.1 · Custom Rust neural network · Separate from original Nova</footer>
   </div>
