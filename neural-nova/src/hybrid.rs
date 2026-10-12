@@ -290,7 +290,7 @@ mod tests{
             let mut old=vec![0.0;old_count];
             old[..4096].copy_from_slice(&src[..4096]);
             old[4096..8192].copy_from_slice(&src[8192..12288]);
-            old[8192..].copy_from_slice(&src[12288..]);
+            old[8192..].copy_from_slice(&src[12288..12288+(old_count-8192)]);
             write_floats(&mut file,&old).unwrap();
         }
         let dimensions=trained.dense.dimensions();
