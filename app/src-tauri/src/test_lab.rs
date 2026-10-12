@@ -27,8 +27,8 @@ pub struct Attempt{
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct QuestionResult{
-    pub question:String,pub expected:String,pub attempts:Vec<Attempt>,
-    pub retention:Option<Attempt>,
+    pub question:String,pub expected:String,pub teacher_answer:Option<String>,
+    pub attempts:Vec<Attempt>,pub retention:Option<Attempt>,
 }
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
