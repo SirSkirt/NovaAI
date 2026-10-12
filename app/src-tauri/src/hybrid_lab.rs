@@ -899,10 +899,31 @@ fn evaluate_memory(brain:&HybridBrain,valid:&[Example],memory:&[Vec<String>])->R
     }
     Ok(((loss/valid.len() as f64) as f32,correct as f32/valid.len() as f32))
 }
+/// Equal weight per earlier lesson. Archive validation is never put into
+/// supervised training; only each archived lesson's own TRAIN split is replayed.
+fn previous_validation_loss(brain:&HybridBrain,previous:&[PreparedLessons])
+    ->Result<Option<f32>,String>{
+    if previous.is_empty(){return Ok(None);}
+    let mut sum=0.0f64;
+    for lesson in previous{
+        let indices=rehearsal::prior_validation_selection(lesson);
+        let selected=indices.iter().map(|&i|lesson.validation[i].clone()).collect::<Vec<_>>();
+        let (loss,_) = if lesson.mode=="conversation"{
+            let histories=indices.iter().map(|&i|lesson.memory_validation[i].clone())
+                .collect::<Vec<_>>();
+            evaluate_memory(brain,&selected,&histories)?
+        }else{brain.evaluate(&selected)?};
+        if !loss.is_finite(){return Err("Non-finite previous-lesson validation loss".into());}
+        sum+=loss as f64;
+    }
+    Ok(Some((sum/previous.len() as f64) as f32))
+}
 fn train_inner(
     app:&AppHandle,state:&HybridState,lessons:&PreparedLessons,
     epochs:u32,adaptive_learning_rate:bool,early_stopping:bool,
     starting_lr:f32,patience:u32,retention:&[TestCase],
+    previous:&[PreparedLessons],rehearsal_enabled:bool,
+    protect_previous:bool,loss_tolerance:f32,
 )->Result<(bool,bool,u32),String>{
     let train:&[Example]=&lessons.train;
     let valid:&[Example]=&lessons.validation;
@@ -933,6 +954,20 @@ fn train_inner(
         s.retention_baseline=Some(baseline);
         s.retention_accuracy=Some(baseline);
     }
+    let prior_baseline=if protect_previous{
+        previous_validation_loss(&lock(state)?.brain,previous)?
+    }else{None};
+    let teacher_baseline=if protect_previous&&!retention.is_empty(){
+        Some(retention_accuracy(&lock(state)?.brain,retention)?)
+    }else{None};
+    if diag::enabled(&app.state::<Diagnostics>()){
+        diag::record(&app.state::<Diagnostics>(),"rehearsal_baseline",serde_json::json!({
+            "previousLessons":previous.len(),"rehearsalEnabled":rehearsal_enabled,
+            "retentionGuardEnabled":protect_previous,"priorHeldoutLoss":prior_baseline,
+            "teacherGreedyAccuracy":teacher_baseline,"lossTolerance":loss_tolerance,
+            "criterion":"new validation loss improves AND previous loss within baseline+tolerance AND optional teacher accuracy does not fall"
+        }));
+    }
     let mut best_epoch=0u32;
     let mut schedule=ScheduleState::new(starting_lr,ScheduleConfig{
         adaptive_learning_rate,early_stopping,patience,
@@ -947,6 +982,10 @@ fn train_inner(
         }else{"Practice: shuffled examples"};
         let learning_rate=schedule.learning_rate;
         let order=training_order(train,epoch,&lessons.mode);
+        let prior_orders=previous.iter().map(|p|training_order(&p.train,epoch,&p.mode))
+            .collect::<Vec<_>>();
+        let mut prior_cursors=vec![0usize;previous.len()];
+        let mut replay_batches=0usize;
         let mut epoch_loss=0.0f64;
         let mut trained_count=0usize;
         let mut batches=0usize;
@@ -959,7 +998,7 @@ fn train_inner(
             let mut s=lock(state)?;
             s.epoch=epoch;s.stage=stage.into();s.learning_rate=learning_rate;
         }
-        for ids in order.chunks(BATCH){
+        for (new_batch_index,ids) in order.chunks(BATCH).enumerate(){
             if state.inner.stop.load(Ordering::Acquire){cancelled=true;break;}
             let batch:Vec<Example>=ids.iter().map(|&i|train[i].clone()).collect();
             let (loss,step,diag)={
@@ -996,9 +1035,52 @@ fn train_inner(
             dense_clip_batches+=usize::from(diag.dense_clipped);
             completed+=batch.len();
             epoch_loss+=loss as f64*batch.len() as f64;
+            // Replay ONE real previous-lesson batch after every three new
+            // batches, round-robin across at most three older lesson archives.
+            // Both pathways receive the same actual gradients. The held-out
+            // portions of archived lessons are NEVER sampled here.
+            if rehearsal_enabled && !previous.is_empty() && (new_batch_index+1)%3==0 {
+                let source=replay_batches%previous.len();
+                let old=&previous[source];
+                let chosen=&prior_orders[source];
+                let start=prior_cursors[source];
+                let ids=(0..BATCH).map(|k|chosen[(start+k)%chosen.len()]).collect::<Vec<_>>();
+                prior_cursors[source]=(start+BATCH)%chosen.len();
+                replay_batches+=1;
+                let replay:Vec<Example>=ids.iter().map(|&i|old.train[i].clone()).collect();
+                let (replay_loss,step,grad)={
+                    let mut s=lock(state)?;
+                    let replay_loss=if old.mode=="conversation"{
+                        let with_memory=ids.iter().map(|&i|(
+                            old.train[i].0.clone(),old.train[i].1,old.memory_train[i].clone()
+                        )).collect::<Vec<_>>();
+                        s.brain.train_memory_batch(&with_memory,learning_rate)?
+                    }else{s.brain.train_batch(&replay,learning_rate)?};
+                    if !replay_loss.is_finite(){return Err("Non-finite rehearsal loss".into());}
+                    s.completed=completed+replay.len();
+                    s.train_loss=Some(replay_loss);
+                    (replay_loss,s.brain.transformer.step,
+                        s.brain.last_batch_diagnostics.clone().ok_or("Missing rehearsal gradients")?)
+                };
+                completed+=replay.len();trained_count+=replay.len();batches+=1;
+                epoch_loss+=replay_loss as f64*replay.len() as f64;
+                transformer_grad_norm+=grad.transformer_norm as f64;
+                dense_grad_norm+=grad.dense_norm as f64;
+                bridge_grad_norm+=grad.bridge_norm as f64;
+                transformer_clip_batches+=usize::from(grad.transformer_clipped);
+                dense_clip_batches+=usize::from(grad.dense_clipped);
+                if diag::enabled(&app.state::<Diagnostics>()){
+                    diag::record(&app.state::<Diagnostics>(),"rehearsal_batch",serde_json::json!({
+                        "epoch":epoch,"sourceIndex":source,"sourceMode":old.mode,
+                        "optimizerStep":step,"examples":replay.len(),"loss":replay_loss,
+                        "learningRate":learning_rate,"usesEpisodicMemory":old.mode=="conversation",
+                        "gradientTransformer":grad.transformer_norm,"gradientDense":grad.dense_norm
+                    }));
+                }
+            }
             if completed%64<batch.len(){
                 let _=app.emit("hybrid-progress",serde_json::json!({
-                    "completed":completed,"total":train.len()*epochs as usize,
+                    "completed":completed,"total":(train.len()+if rehearsal_enabled&&!previous.is_empty(){(train.len()+BATCH*3-1)/(BATCH*3)*BATCH}else{0})*epochs as usize,
                     "epoch":epoch,"epochs":epochs,"loss":loss,"step":step,
                     "stage":stage,"learningRate":learning_rate,
                     "tokensPerSecond":completed as f64/started.elapsed().as_secs_f64().max(0.001)
