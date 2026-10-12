@@ -731,8 +731,11 @@ fn train_inner(
             break;
         }
     }
+    let restored_retention=if retention.is_empty(){None}
+        else{Some(retention_accuracy(&best_brain,retention)?)};
     {
         let mut s=lock(state)?;
+        s.retention_accuracy=restored_retention;
         // Last training steps may overfit. Only the best held-out joint
         // checkpoint is kept, never selected between two independently
         // answering models.
