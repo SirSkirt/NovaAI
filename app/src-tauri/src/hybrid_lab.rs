@@ -1358,7 +1358,6 @@ fn train_inner(
     protect_previous:bool,loss_tolerance:f32,
 )->Result<(bool,bool,u32),String>{
     let train:&[Example]=&lessons.train;
-    let valid:&[Example]=&lessons.validation;
     let started=Instant::now();
     let (mut best_brain,mut best_loss,mut best_accuracy,initially_trained)={
         let mut s=lock(state)?;
@@ -2240,8 +2239,8 @@ mod test_runner_tests{
     #[test]
     fn replay_even_tiny_lessons_and_rotate_distinct_archive_sources(){
         let archive=vec![
-            prepare("dialogue","hi\tHello!\nbye\tGoodbye!\ncat\tCat.\ndog\tDog.\n").unwrap(),
-            prepare("dialogue","hello\tHey!\nthanks\tWelcome.\nsun\tWarm.\nsnow\tCold.\n").unwrap(),
+            prepare("dialogue","hi\tHello!\nbye\tGoodbye!\ncat\tCat.\ndog\tDog.\nfish\tFish.\n").unwrap(),
+            prepare("dialogue","hello\tHey!\nthanks\tWelcome.\nsun\tWarm.\nsnow\tCold.\nrain\tWet.\n").unwrap(),
             prepare("reasoning",&(0..6).map(|n|format!(
                 "Person {n} has red shoes.\tWhat color are the shoes?\tRed.\tBlue."
             )).collect::<Vec<_>>().join("\n")).unwrap(),
