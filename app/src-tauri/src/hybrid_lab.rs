@@ -49,6 +49,20 @@ struct Shared{
 }
 #[derive(Clone)]
 pub struct HybridState{inner:Arc<Shared>}
+impl HybridState{
+    pub(crate) fn is_training(&self)->bool{
+        self.inner.training.load(Ordering::Acquire)
+    }
+}
+#[cfg(target_os="android")]
+fn training_notification(app:&AppHandle,body:String,finished:bool){
+    use tauri_plugin_notification::NotificationExt;
+    let mut note=app.notification().builder().id(90217).silent()
+        .title(if finished{"Nova training finished"}else{"Nova training in progress"})
+        .body(body);
+    if !finished {note=note.ongoing();}
+    let _=note.show();
+}
 impl Default for HybridState{
     fn default()->Self{
         Self{inner:Arc::new(Shared{
@@ -922,6 +936,8 @@ pub fn hybrid_train(
         if let Err(ref e)=result{
             if let Ok(mut s)=lock(&state){s.error=Some(e.clone());s.stage="Training failed".into();}
             eprintln!("Neural Nova hybrid trainer error: {e}");
+            #[cfg(target_os="android")]
+            training_notification(&app,format!("Training failed: {}",e),true);
         }
         // Keep training exclusive until teacher archive has been saved.
         match result{
@@ -1092,6 +1108,8 @@ fn train_inner(
     let mut completed=0usize;
     let mut cancelled=false;
     let mut early_stopped=false;
+    #[cfg(target_os="android")]
+    let mut last_android_notice=Instant::now()-std::time::Duration::from_secs(20);
     for epoch in 1..=epochs{
         if state.inner.stop.load(Ordering::Acquire){cancelled=true;break;}
         let stage=if epoch==1&&lessons.mode=="dialogue"{
@@ -1224,6 +1242,17 @@ fn train_inner(
                 }
             }
             if completed%64<batch.len(){
+                #[cfg(target_os="android")]
+                if last_android_notice.elapsed()>=std::time::Duration::from_secs(8){
+                    let total=(train.len()+if rehearsal_enabled&&!previous.is_empty(){
+                        ((train.len()+BATCH-1)/BATCH)/3*BATCH
+                    }else{0})*epochs as usize;
+                    let pct=if total==0{0}else{(100*completed/total).min(100)};
+                    training_notification(app,format!(
+                        "Epoch {}/{} • {}% • loss {:.4}",epoch,epochs,pct,loss
+                    ),false);
+                    last_android_notice=Instant::now();
+                }
                 let _=app.emit("hybrid-progress",serde_json::json!({
                     "completed":completed,"total":(train.len()+if rehearsal_enabled&&!previous.is_empty(){((train.len()+BATCH-1)/BATCH)/3*BATCH}else{0})*epochs as usize,
                     "epoch":epoch,"epochs":epochs,"loss":loss,"step":step,
@@ -1355,6 +1384,12 @@ fn train_inner(
                 else{"Complete; best checkpoint restored"}.into();
         if s.trained{s.brain.save(path(app)?)?;}
     }
+    #[cfg(target_os="android")]
+    training_notification(app,format!(
+        "{} • selected epoch {} of {}",
+        if cancelled{"Stopped"}else if early_stopped{"Early stopping"}else{"Completed"},
+        best_epoch,epochs
+    ),true);
     Ok((cancelled,early_stopped,best_epoch))
 }
 #[tauri::command]
