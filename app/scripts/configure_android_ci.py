@@ -18,7 +18,7 @@ if not gradle.is_file() or not manifest.is_file():
     sys.exit("Android generator output absent: run npm run android:init first")
 # Intentionally PUBLIC development-only key. Persistent across machines and CI
 # runs; convenient for sideloaded experimental builds but insecure for release.
-encoded=root.parent.parent/"keys"/"experimental-debug.jks.base64"
+encoded=pathlib.Path(__file__).resolve().parents[1]/"keys"/"experimental-debug.jks.base64"
 if not encoded.is_file():
     sys.exit("The checked-in experimental debug key is missing: "+str(encoded))
 password="android"
