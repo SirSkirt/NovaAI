@@ -1,3 +1,14 @@
+NEURAL NOVA v0.11.0 — COOPERATIVE BRAIN VALIDATION UPDATE (2026-10-13)
+- Experimental app visible version, package and Cargo bumped 0.10.1 -> 0.11.0. Unchanged Android package identity com.qtech.neuralnova.experimental and pinned public development certificate. Brain visualizer drawing, style and behavior unchanged (only visible version label and diagnostic text version updated).
+- New neural-nova/src/bin/cooperative_eval.rs performs real greedy generated-answer evaluation, independent unseen names/objects, relationship reversal, irrelevant fact and event transfer. It reports normalized full-answer preference margins, complete output strings, inference timings, both read-only ablations, and older greeting retention. Run from neural-nova: cargo run --release --bin cooperative_eval -- 4 (steps 1..128); only external evaluator knows expected answers.
+- Core GitHub Actions run https://github.com/SirSkirt/NovaAI/actions/runs/38409127485 PASSED: 53 Rust tests; release trainer built; cooperative_eval compiled and executed. Four preference training steps on a fresh minimal model yielded 0/5 exact complete answers for full, no-dense and no-exchange modes. Generated outputs were repeated 'H' due to tiny warmup greeting curriculum; this is NOT evidence of learned relational reasoning, nor a regression of an imported trained checkpoint. The evaluation is a measurement, not a guaranteed success threshold.
+- Ablations produced different next-character probability margins/distributions. GitHub runner sample inference about 55-58ms per 12-character full response vs 18-20ms when exchange disabled; expect a CPU cost (~3x on this microbenchmark), profile real Android separately. Greeting validation loss on probe 0.4642 -> 0.0897 (no forgetting here, but far from a general retention guarantee).
+- Earlier full Rust CI run 38408409304 also passed full suite including migration, finite-difference BPTT, two evolving network queries and retention test.
+- Final Android/Windows packaging run for v0.11.0 and cooperative evaluator is https://github.com/SirSkirt/NovaAI/actions/runs/38409093919 (status in progress when this note written). DO NOT claim installers successful until its separate jobs pass.
+- Phase 1 mechanism exists and core CI validates derivatives and execution. Phase 2 specialization objectives, strong unseen compositional generalization and eventual unified lesson-block trainer are NOT implemented. Treat reasoning achievement as unproven, test with a sufficiently trained imported checkpoint on device before proceeding.
+
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA — COOPERATIVE TWO-HEMISPHERE ARCHITECTURE (WORK IN PROGRESS, 2026-10-13)
 
 AUTHORITATIVE USER INTENT
