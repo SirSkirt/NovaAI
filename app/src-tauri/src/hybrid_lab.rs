@@ -1009,6 +1009,30 @@ fn previous_validation_loss(brain:&HybridBrain,previous:&[PreparedLessons])
     }
     Ok(Some((sum/previous.len() as f64) as f32))
 }
+fn reasoning_validation(brain:&HybridBrain,lessons:&PreparedLessons)
+    ->Result<(f32,f32),String>{
+    if lessons.reasoning_validation.is_empty(){return Ok((0.0,0.0));}
+    let mut sum=0.0f32;
+    let mut wins=0usize;
+    for (context,good,bad) in lessons.reasoning_validation.iter().take(16){
+        let (loss,win)=brain.reasoning_margin(context,good,bad)?;
+        if !loss.is_finite(){return Err("Non-finite reasoning validation loss".into());}
+        sum+=loss;if win{wins+=1;}
+    }
+    let n=lessons.reasoning_validation.len().min(16);
+    Ok((sum/n as f32,wins as f32/n as f32))
+}
+fn current_validation(brain:&HybridBrain,lessons:&PreparedLessons)
+    ->Result<(f32,f32,f32,f32),String>{
+    let (next_loss,accuracy)=if lessons.mode=="conversation"{
+        evaluate_memory(brain,&lessons.validation,&lessons.memory_validation)?
+    }else{brain.evaluate(&lessons.validation)?};
+    let (ranking,ranking_acc)=reasoning_validation(brain,lessons)?;
+    let selected_loss=if lessons.mode=="reasoning"{
+        next_loss+0.4*ranking
+    }else{next_loss};
+    Ok((selected_loss,accuracy,ranking,ranking_acc))
+}
 fn train_inner(
     app:&AppHandle,state:&HybridState,lessons:&PreparedLessons,
     epochs:u32,adaptive_learning_rate:bool,early_stopping:bool,
@@ -1021,15 +1045,14 @@ fn train_inner(
     let started=Instant::now();
     let (mut best_brain,mut best_loss,mut best_accuracy,initially_trained)={
         let mut s=lock(state)?;
-        let (loss,accuracy)=if lessons.mode=="conversation"{
-            evaluate_memory(&s.brain,valid,&lessons.memory_validation)?
-        }else{s.brain.evaluate(valid)?};
+        let (loss,accuracy,ranking_loss,ranking_accuracy)=current_validation(&s.brain,lessons)?;
         if !loss.is_finite(){return Err("Non-finite baseline validation loss".into());}
         s.heldout_loss=Some(loss);s.heldout_accuracy=Some(accuracy);
         s.best_heldout_loss=Some(loss);
         if diag::enabled(&app.state::<Diagnostics>()){
             diag::record(&app.state::<Diagnostics>(),"lesson_validation_baseline",serde_json::json!({
                 "loss":loss,"nextCharacterAccuracy":accuracy,
+                "reasoningRankingLoss":ranking_loss,"reasoningRankingAccuracy":ranking_accuracy,
                 "step":s.brain.transformer.step,"wordUnits":s.brain.tokenizer.words.len(),
                 "weightsFingerprint":diag::weight_digest(&s.brain),
                 "selectionUsesOnlyCurrentLessonValidation":true,
@@ -1117,6 +1140,26 @@ fn train_inner(
                     "usesEpisodicMemory":lessons.mode=="conversation",
                 }));
             }
+            // Every fourth new batch additionally optimizes a DIFFERENT
+            // sequence-level loss: prefer supported conclusions to explicitly
+            // contradicted conclusions. There is still only one shared brain.
+            if lessons.mode=="reasoning" && !lessons.reasoning_train.is_empty()
+                && (new_batch_index+1)%4==0{
+                let index=(new_batch_index/4+epoch as usize-1)%lessons.reasoning_train.len();
+                let item=lessons.reasoning_train[index].clone();
+                let (rank_loss,reasoning_step)={
+                    let mut s=lock(state)?;
+                    let loss=s.brain.train_preference_batch(&[item],learning_rate)?;
+                    if !loss.is_finite(){return Err("Non-finite reasoning preference loss".into());}
+                    (loss,s.brain.transformer.step)
+                };
+                if diag::enabled(&app.state::<Diagnostics>()){
+                    diag::record(&app.state::<Diagnostics>(),"reasoning_preference_batch",
+                        serde_json::json!({"epoch":epoch,"optimizerStep":reasoning_step,
+                            "rankLoss":rank_loss,"curriculumIndex":index,
+                            "bothNetworksUpdated":true}));
+                }
+            }
             trained_count+=batch.len();
             batches+=1;
             transformer_grad_norm+=diag.transformer_norm as f64;
@@ -1180,12 +1223,10 @@ fn train_inner(
         }
         if trained_count==0 {break;}
         let (validation_loss,validation_accuracy,prior_loss,retention_score,
-            eligible,improved)={
+            eligible,improved,reasoning_ranking_loss,reasoning_ranking_accuracy)={
             let mut s=lock(state)?;
             s.stage="Evaluating current and earlier held-out lessons".into();
-            let (loss,accuracy)=if lessons.mode=="conversation"{
-                evaluate_memory(&s.brain,valid,&lessons.memory_validation)?
-            }else{s.brain.evaluate(valid)?};
+            let (loss,accuracy,ranking_loss,ranking_accuracy)=current_validation(&s.brain,lessons)?;
             if !loss.is_finite(){return Err("Non-finite validation loss".into());}
             let old_loss=if protect_previous{
                 previous_validation_loss(&s.brain,previous)?
@@ -1206,7 +1247,7 @@ fn train_inner(
             s.best_heldout_loss=Some(best_loss);
             s.heldout_loss=Some(loss);
             s.heldout_accuracy=Some(accuracy);
-            (loss,accuracy,old_loss,teacher,eligible,improved)
+            (loss,accuracy,old_loss,teacher,eligible,improved,ranking_loss,ranking_accuracy)
         };
         if let Some(value)=retention_score{lock(state)?.retention_accuracy=Some(value);}
         let should_stop=schedule.observe_validation(improved);
@@ -1218,6 +1259,7 @@ fn train_inner(
                 "epoch":epoch,"learningRate":learning_rate,
                 "trainingLoss":epoch_loss/trained_count as f64,
                 "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
+                "reasoningRankingLoss":reasoning_ranking_loss,"reasoningRankingAccuracy":reasoning_ranking_accuracy,
                 "bestValidationLoss":best_loss,"bestEpoch":best_epoch,"improved":improved,
                 "priorHeldoutLoss":prior_loss,"priorBaselineLoss":prior_baseline,
                 "retentionGuardAccepted":eligible,"rehearsalBatches":replay_batches,
