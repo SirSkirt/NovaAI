@@ -1541,7 +1541,7 @@ fn train_inner(
                     let total=lock(state)?.total;
                     let pct=if total==0{0}else{(100*completed/total).min(100)};
                     training_notification(app,format!(
-                        "Epoch {}/{} • {}% • loss {:.4}",epoch,epochs,pct,loss
+                        "Epoch {}/{} • {}% • batch loss {:.4}",epoch,epochs,pct,loss
                     ),false);
                     last_android_notice=Instant::now();
                 }
