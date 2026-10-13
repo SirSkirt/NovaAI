@@ -3,7 +3,7 @@
 const $=id=>document.getElementById(id);
 const invoke=(command,args={})=>window.__TAURI__?.core?.invoke(command,args)
   ?? Promise.reject(Error("Installed native Neural Nova required"));
-let bundle=null,mode=null,active=false,stopping=false,at=0,success=0,failures=0;
+let bundle=null,mode=null,selectedMode=null,active=false,stopping=false,at=0,success=0,failures=0;
 let nativeZipBytes=null,nativeZipName=null;
 const android=/Android/i.test(navigator.userAgent);
 if(android){
@@ -73,10 +73,10 @@ async function preview(){
   if(data.byteLength===0||data.byteLength>4*1024*1024)
     throw Error("Selected ZIP must be between 1 byte and 4 MiB.");
   const result=await invoke("hybrid_zip_preview",{bytes:Array.from(data),mode:currentMode()});
-  bundle=result;mode=currentMode();at=0;success=0;failures=0;
+  bundle=result;mode=result.mode;selectedMode=currentMode();at=0;success=0;failures=0;
   $("massLessonsLog").textContent="";
   result.lessons.forEach((lesson,i)=>addLog((i+1)+". "+lesson.name+" · "+
-    lesson.trainingSamples+" training / "+lesson.heldoutSamples+" held-out targets"));
+    lesson.mode+" · "+lesson.trainingSamples+" training / "+lesson.heldoutSamples+" held-out targets"));
   view("Validated "+bundle.lessons.length+" "+mode+" lessons ("+result.totalBytes+
     " uncompressed bytes). Ready for sequential teaching.");
   readyButtons();
@@ -105,7 +105,7 @@ async function nativeDone(){
 }
 async function runQueue(){
   if(active||!bundle)throw Error("Validate a ZIP before starting.");
-  if(mode!==currentMode())throw Error("Lesson type changed. Validate the ZIP again.");
+  if(selectedMode!==currentMode())throw Error("Legacy fallback type changed. Validate the ZIP again.");
   const started=await invoke("hybrid_status");
   if(started.training)throw Error("Another training session is already running.");
   if(!confirm("Teach "+bundle.lessons.length+" "+mode+" lessons one at a time? Each lesson updates the ONE active joint neural checkpoint."))return;
@@ -132,7 +132,7 @@ async function runQueue(){
         // Ensure progress and completion listeners are installed before
         // starting native Rust work, including tiny lessons.
         const watch=await nativeDone();
-        try{await invoke("hybrid_train",{lesson:{mode,text:lesson.text,epochs},options:cfg});}
+        try{await invoke("hybrid_train",{lesson:{mode:lesson.mode,text:lesson.text,epochs},options:cfg});}
         catch(e){watch.cancel();throw e;}
         const result=await watch.finished;
         if(result.cancelled||stopping){
@@ -166,11 +166,11 @@ async function safe(task){
 }
 $("massLessonZip").addEventListener("change",()=>{
   nativeZipBytes=null;nativeZipName=null;
-  bundle=null;readyButtons();view("ZIP selected. Validate before starting.");
+  bundle=null;readyButtons();view("ZIP selected. Structured lesson blocks are detected automatically. Validate before starting.");
 });
 $("nativeMassLessonZip").addEventListener("click",()=>safe(pickNativeZip));
 $("lessonMode").addEventListener("change",()=>{
-  if(!active){bundle=null;readyButtons();view("Lesson mode changed; revalidate ZIP.");}
+  if(!active){bundle=null;readyButtons();view("Legacy fallback changed; structured lesson blocks will still auto-detect. Revalidate ZIP.");}
 });
 $("previewMassLessons").addEventListener("click",()=>safe(preview));
 $("startMassLessons").addEventListener("click",()=>safe(runQueue));
