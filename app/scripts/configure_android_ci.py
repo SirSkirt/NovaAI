@@ -7,6 +7,7 @@ import base64
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 root=pathlib.Path(__file__).resolve().parents[1]/"src-tauri"/"gen"/"android"
@@ -27,6 +28,23 @@ if len(keystore)<100:
 file=root/"nova-development.jks"
 file.write_bytes(keystore)
 file.chmod(0o600)
+# The certificate must match the one used for every future Nova update.
+# Verify before touching Gradle so users can't accidentally rotate the key.
+EXPECTED_SHA256="215dd8ef18bc794b4e52d6a369d22dc106a984123ffcada35333974129e24ae3"
+try:
+    listed=subprocess.run([
+        "keytool","-list","-v","-keystore",str(file),
+        "-alias","nova-experimental-dev",
+        "-storepass:env","NOVA_ANDROID_KEYSTORE_PASSWORD",
+    ],capture_output=True,text=True,check=True,timeout=30)
+except (OSError,subprocess.SubprocessError) as exc:
+    file.unlink(missing_ok=True)
+    sys.exit("Development keystore could not be opened using the supplied password/alias. Check that both secrets match the original Nova key. "+str(exc))
+found=re.search(r"SHA256:\s*([0-9a-fA-F:]+)",listed.stdout)
+digest=found.group(1).replace(":","").lower() if found else ""
+if digest!=EXPECTED_SHA256:
+    file.unlink(missing_ok=True)
+    sys.exit("Signing certificate mismatch: the keystore is not the existing Nova development key. Keep the original keystore; rotating the key prevents in-place updates. Expected fingerprint: "+EXPECTED_SHA256)
 prop=root/"keystore.properties"
 prop.write_text(f"keyAlias=nova-experimental-dev\nkeyPassword={password}\nstorePassword={password}\nstoreFile={file.as_posix()}\n")
 prop.chmod(0o600)
@@ -34,7 +52,7 @@ text=gradle.read_text()
 if "create(\"novaDev\")" not in text:
     config='''signingConfigs {
         create("novaDev") {
-            val properties = Properties().apply {
+            val properties = java.util.Properties().apply {
                 rootProject.file("keystore.properties").inputStream().use { load(it) }
             }
             keyAlias = properties.getProperty("keyAlias")
@@ -48,9 +66,17 @@ if "create(\"novaDev\")" not in text:
         sys.exit("Generated Gradle file lacks expected buildTypes block")
     text=text.replace("    buildTypes {", "    "+config+"buildTypes {",1)
     match=r'(getByName\("debug"\)\s*\{)'
-    if not re.search(match,text):
-        sys.exit("Generated Gradle file lacks debug build configuration")
-    text=re.sub(match,r'\1\n            signingConfig = signingConfigs.getByName("novaDev")',text,count=1)
+    if re.search(match,text):
+        text=re.sub(match,r'\1\n            signingConfig = signingConfigs.getByName("novaDev")',text,count=1)
+    else:
+        # Tauri's generated Gradle template may only define release explicitly.
+        # The Android Gradle plugin creates debug implicitly; configuring it
+        # here is supported even when there's no preexisting debug block.
+        text=text.replace('buildTypes {','''buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("novaDev")
+        }
+        ''',1)
     gradle.write_text(text)
 
 text=manifest.read_text()
