@@ -296,7 +296,7 @@ $("startTraining").addEventListener("click",()=>safe(async()=>{
       " epochs · "+(adaptiveLearningRate?"adaptive":"fixed")+" LR "+learningRate+
       " · early stopping "+(earlyStopping?"on":"off")+".");
     await poll();
-  }catch(e){setRunning(false);throw e;}
+  }catch(e){setRunning(false);await window.NovaTrainingBackground?.stop();throw e;}
 },"Training"));
 $("runTokenizerProbe").addEventListener("click",()=>safe(async()=>{
   if(running||busy)throw Error("Finish training or generation before this investigation.");
