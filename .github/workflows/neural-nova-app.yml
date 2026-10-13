@@ -94,7 +94,43 @@ jobs:
           SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print | sort -V | tail -n 1)"
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;$ANDROID_NDK_VERSION"
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          # Prefer the requested pinned NDK if already installed. GitHub's
+          # Ubuntu image also ships a working newer NDK; reuse it instead of
+          # downloading a ~1GB zip every run (one runner supplied a truncated
+          # r27 archive: "Error on ZipFile unknown archive"). Only download if
+          # NO complete installed NDK can compile for all four ABIs.
+          NDK_ROOT="$SDK_ROOT/ndk"
+          ndk_ok() {
+            local v="$1"
+            local bin="$NDK_ROOT/$v/toolchains/llvm/prebuilt/linux-x86_64/bin"
+            for triple in aarch64-linux-android24 armv7a-linux-androideabi24 i686-linux-android24 x86_64-linux-android24; do
+              test -x "$bin/$triple-clang" || return 1
+            done
+          }
+          SELECTED="$ANDROID_NDK_VERSION"
+          if ! ndk_ok "$SELECTED"; then
+            SELECTED=""
+            for installed in "$NDK_ROOT"/*; do
+              test -d "$installed" || continue
+              version="$(basename "$installed")"
+              if ndk_ok "$version"; then SELECTED="$version"; break; fi
+            done
+          fi
+          if [[ -z "$SELECTED" ]]; then
+            SELECTED="$ANDROID_NDK_VERSION"
+            for attempt in 1 2 3; do
+              rm -rf "$NDK_ROOT/$SELECTED"
+              if "$SDKMANAGER" "ndk;$SELECTED" && ndk_ok "$SELECTED"; then
+                break
+              fi
+              echo "::warning::NDK download failed (attempt $attempt/3); retrying"
+              sleep 5
+            done
+            ndk_ok "$SELECTED" || { echo "::error::No valid Android NDK compiler"; exit 1; }
+          fi
+          echo "Using Android NDK $SELECTED"
+          echo "ANDROID_NDK_VERSION=$SELECTED" >> "$GITHUB_ENV"
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
