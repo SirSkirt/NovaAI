@@ -34,23 +34,24 @@ async function preview(){
 async function nativeDone(){
   const event=window.__TAURI__?.event;
   if(!event?.listen)throw Error("Native events are required for sequential learning.");
-  let ended=false;
-  let unsubscribeA=null,unsubscribeB=null;
-  const result=new Promise((resolve,reject)=>{
-    event.listen("hybrid-done",({payload})=>{
-      if(ended)return;ended=true;
-      if(unsubscribeA)unsubscribeA();
-      if(unsubscribeB)unsubscribeB();
-      resolve(payload);
-    }).then(fn=>{unsubscribeA=fn;}).catch(reject);
-    event.listen("hybrid-error",({payload})=>{
-      if(ended)return;ended=true;
-      if(unsubscribeA)unsubscribeA();
-      if(unsubscribeB)unsubscribeB();
-      reject(Error(String(payload)));
-    }).then(fn=>{unsubscribeB=fn;}).catch(reject);
+  let resolveDone,rejectDone,settled=false;
+  const finished=new Promise((resolve,reject)=>{resolveDone=resolve;rejectDone=reject;});
+  let unlistenA=()=>{},unlistenB=()=>{};
+  const cleanup=()=>{unlistenA();unlistenB();};
+  unlistenA=await event.listen("hybrid-done",({payload})=>{
+    if(settled)return;settled=true;cleanup();resolveDone(payload);
   });
-  return result;
+  try{
+    unlistenB=await event.listen("hybrid-error",({payload})=>{
+      if(settled)return;settled=true;cleanup();rejectDone(Error(String(payload)));
+    });
+  }catch(e){unlistenA();throw e;}
+  return {finished,cancel:()=>{
+    if(settled)return;
+    settled=true;cleanup();
+    // Finish the promise even when native training could not start.
+    resolveDone({cancelled:true,bestEpoch:0});
+  }};
 }
 async function runQueue(){
   if(active||!bundle)throw Error("Validate a ZIP before starting.");
@@ -79,9 +80,10 @@ async function runQueue(){
       try{
         // Ensure progress and completion listeners are installed before
         // starting native Rust work, including tiny lessons.
-        const outcome=nativeDone();
-        await invoke("hybrid_train",{lesson:{mode,text:lesson.text,epochs},options:cfg});
-        const result=await outcome;
+        const watch=await nativeDone();
+        try{await invoke("hybrid_train",{lesson:{mode,text:lesson.text,epochs},options:cfg});}
+        catch(e){watch.cancel();throw e;}
+        const result=await watch.finished;
         if(result.cancelled||stopping){
           stopping=true;addLog("STOPPED: "+lesson.name+" · best available checkpoint kept");
           break;
