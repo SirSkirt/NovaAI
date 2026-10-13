@@ -1,3 +1,30 @@
+NEURAL NOVA v0.9.0 — SHARED TRAINABLE LATENT REFINEMENT (2026-10-13)
+
+USER'S AUTHORITATIVE ARCHITECTURE GOAL
+Nova is a locally teachable REASONING AI who learns language as a means of communicating and acquiring concepts, not as the end goal of predicting letters. Keep the preexisting Transformer + 1024->512->512->128 dense association pathway as TWO INTEGRATED PATHWAYS OF ONE BRAIN, not independent models. Both receive joint gradient updates. No canned answers, hardcoded reasoning rules, hidden symbolic solves, scripted inference fallbacks, predetermined cognition output or independent answer selector. Numeric and file validation are not cognitive fallbacks.
+
+NONNEGOTIABLE UI REQUIREMENT
+THE EXISTING BRAIN VISUALIZER MUST REMAIN UNCHANGED. v0.9.0 does not change Visualize HTML/CSS/rendering or visualization backend payload. Internal activity is reported in JSONL diagnostics only. Its original blue/purple hemispheres, connection fibers, attention, colors and layout remain intact. Put future internal diagnostics in debugger or Teach, not a visualizer redesign.
+
+IMPLEMENTED ARCHITECTURE (Rust neural-nova/src/transformer.rs, hybrid.rs)
+- Keep original attention/FF language processing, existing dense network, tokenizer, learned bridge, episodic memory and final decoder. Input -> attention+FF -> dense bridge -> neural memory -> SHARED TRAINABLE RECURRENT LATENT REFINEMENT -> SAME output projection. This is not an independent third model.
+- Append three parameter ranges AFTER old complete Transformer tensors: D x D reasoning read projection, D bias, D x D reasoning update projection. D=32; three recursive refinement passes use SHARED weights. Each pass takes the current fused representation, applies a learned tanh feature transform and a learned residual update, then feeds the result into the next pass. No rules/templates/forced reply content. Same output head still generates text autoregressively.
+- Exact backpropagation through the three refinement steps (BPTT), before memory, dense bridge, attention and dense-network gradients. Next-character, Conversation-memory and full-answer contrastive preference losses now also train recurrent representations.
+- Checkpoint migration: old complete v0.8 Transformer weight and Adam moment prefix, tokenizer and dense network are kept. New update projection starts at zero for function preservation, then learns via gradient (not a response fallback). Earlier 128/256-position migrations remain supported. Full joint checkpoint save/load serializes appended trainable weights and moments in the same .nhyb format with new tensor count; older versions may not read v0.9 checkpoints. Back up known-good .nhyb first.
+- New read-only HybridBrain::reasoning_activity and Transformer diagnostics expose learned three-step update norms. JSONL train_epoch and training_selected_checkpoint record recurrentLatentSteps and recurrentUpdateNorms. No visualizer edits.
+- Rust tests cover finite-difference recurrent gradients AND upstream dense bridge; neutral-to-trained recurrent activity; exact prior full checkpoint predictions/weights/optimizer/tokenizer migration; earlier v0.3 compatibility; shared preference objective affecting Transformer, dense and recurrent steps.
+- SCIENTIFIC LIMITATION: Learned recurrent steps and contrastive loss do NOT prove real reasoning, causal understanding, self-reflection or multi-step problem solving. These tools make more internal computation trainable, but it may learn shortcuts. The user's goal requires independent held-out reasoning generalization tests, entity swaps, reversed relationships, multi-hop tasks, and complete generated response evaluation. Do not mislabel token accuracy as reasoning.
+
+REPRODUCTION
+1. Export/back up current 12,711-step or latest known-good .nhyb before installing.
+2. Install Windows/Android artifacts only after successful GitHub Actions verification.
+3. Import old .nhyb and verify original deterministic greetings match before ANY new training. The new refinement norms should start at zero on migrated model.
+4. Teach existing Dialogue/Text/Conversation and new Reasoning curricula, keeping replay, retention guard, gentle rates and JSONL enabled.
+5. Compare step norms, old skill retention, unseen conclusions and fully generated answers against a no-refinement baseline. No hardcoded reasoning or answers.
+
+
+---- PRIOR HANDOFF ----
+
 NEURAL NOVA v0.8.0 HANDOFF — SHARED BRAIN, SEQUENTIAL TEACHING, REASONING PILOT
 
 Authoritative user goal: A teachable LOCAL reasoning AI, not merely a character predictor. The existing Transformer pathway plus dense association pathway remain components of ONE jointly trainable neural brain. No external pretrained model, canned reply selection, inference-time answer override, or teacher-run "reasoner". The trainer supplies lessons and loss signals; Nova's learned shared weights must develop the capability. Current v0.8.0 is only an INITIAL reasoning-teaching experiment and does NOT establish human-like understanding or autonomous multi-step reasoning.
