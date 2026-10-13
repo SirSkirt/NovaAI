@@ -772,14 +772,14 @@ async function listen(){
     });
     await events.listen("hybrid-done",({payload:p})=>{
       setRunning(false);
-      void window.NovaTrainingBackground?.stop();
+      if(!window.NovaMassLearning?.active)void window.NovaTrainingBackground?.stop();
       void updateRehearsalBank().catch(e=>report("WARN","Rehearsal archive",e));
       report("INFO","Training",p.cancelled?"Training stopped; best joint checkpoint restored.":
         p.earlyStopped?"Validation stalled; early stopped at best epoch "+p.bestEpoch+".":
         "Shared training finished; best validation checkpoint restored (epoch "+p.bestEpoch+").");
       void poll();
     });
-    await events.listen("hybrid-error",({payload:p})=>{setRunning(false);void window.NovaTrainingBackground?.stop();report("ERROR","Rust training",p);void poll();});
+    await events.listen("hybrid-error",({payload:p})=>{setRunning(false);if(!window.NovaMassLearning?.active)void window.NovaTrainingBackground?.stop();report("ERROR","Rust training",p);void poll();});
     report("INFO","Events","Listening for unified Nova training progress, epoch, completion and errors.");
   }catch(e){report("ERROR","Native events",e);}
 }
