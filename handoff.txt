@@ -1,3 +1,12 @@
+NEURAL NOVA v0.9.1 — ANDROID ZIP IMPORT FIX (2026-10-13)
+- Android NotReadableError was thrown by WebView File.arrayBuffer after choosing a .zip from the Android system picker. This occurs BEFORE ZIP parsing or trainer execution, not in the neural architecture.
+- Android now uses native tauri-plugin-dialog + tauri-plugin-fs to pick a document URI and read its contents immediately. Android ignores restrictive MIME filters, because ZIP providers advertise different types. Rust still validates ZIP bytes, lesson formats and archive limits. Desktop keeps existing browser-file picker.
+- Permissions scoped to main window: dialog:allow-open and fs:allow-read-file. No general storage permissions or external upload service. Tauri native selected-document access is used rather than unsafe filesystem paths.
+- Reasoning is now accepted as a ZIP lesson type in native validation as well as Text/Language, Dialogue, Conversation.
+- A mocked Android selection regression test verifies native ZIP bytes flow to the shared validator without invoking WebView File.arrayBuffer. GitHub Actions validates Rust and JavaScript and builds Windows NSIS and Android APK.
+- No changes to existing brain visualizer, neural model weights, learner, checkpoints, lessons, teacher selection or brain architecture. ZIP queue is still sequential.
+- On-device Android SAF reading is not emulated by CI; verify selection from Downloads and nonlocal document providers in the installed APK. If a provider fails, copy ZIP into Downloads and report the exact native read error.
+
 NEURAL NOVA v0.9.0 — SHARED TRAINABLE LATENT REFINEMENT (2026-10-13)
 
 USER'S AUTHORITATIVE ARCHITECTURE GOAL
