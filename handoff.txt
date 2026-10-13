@@ -1,3 +1,30 @@
+NEURAL NOVA v0.10.0 — ANDROID BACKGROUND TRAINING + DURABLE DEVELOPMENT SIGNING
+2026-10-13
+
+User requirement: when training begins, Android app may be backgrounded while TRAINING RUNS IN NATIVE RUST and a PROGRESS notification appears. The Android installation key should remain identical across builds for in-place updates. Never touch the Visualize brain depiction, change neural architecture, or hardcode answer fallbacks.
+
+IMPLEMENTATION
+- Training worker remains native Rust spawn_blocking in app/src-tauri/src/hybrid_lab.rs. A separate Android tauri-plugin-background-service starts ONLY upon the user's Teach or bulk ZIP action. app/src-tauri/src/training_keepalive.rs checks real shared HybridState.training and automatically returns after training finishes; it never teaches or computes predictions. Background plugin is configured foreground service type 'specialUse' with on-device neural-network training rationale and foreground notifications.
+- Frontend: app/dist/js/training-background-ui.js starts the foreground service immediately BEFORE invoking hybrid_train, and stops on completed/error. Bulk ZIP controls similarly keep it active during sequential lessons. Failure to start a foreground service blocks the Android teaching run, rather than silently claiming background training is active.
+- Native progress notifications: hybrid_lab.rs posts an updating silent ongoing notification at least every ~8 seconds during active training batches, with epoch, approximate percent, and loss. Progress replaces same notification ID 90217 (not spamming new IDs); completion/cancellation/error posts final notification. Foreground keepalive service posts its own mandatory persistent notification. This is NOT a true ongoing progress-bar notification or guarantee of survival if user force-stops app.
+- App/src-tauri/Cargo.toml includes Tauri background-service, notification, tokio and async-trait dependencies. app/src-tauri/src/lib.rs registers these plugins only on Android. Main capability grants start/stop/is_running for service. Background plugin configured type specialUse. app/scripts/configure_android_ci.py patches generated AndroidManifest.xml to request FOREGROUND_SERVICE, FOREGROUND_SERVICE_SPECIAL_USE, POST_NOTIFICATIONS and adds special-use declaration for on-device training.
+- IMPORTANT Android caveats: user must allow notifications and may need to remove battery restrictions; device thermal control / OS pressure can suspend/kill it, and Android may terminate on user force-stop. Android 'specialUse' is for development sideloading and may require Google Play declaration/approval if published. Android dataSync type's 6-hour cap does not automatically apply to specialUse, but no infinite execution guarantee. If OS kills native process, ongoing training cannot magically resume from an in-memory batch; restart from last saved checkpoint.
+
+SIGNING
+- Developer keystore generated offline, NOT committed or sent through any GitHub tool. SHA256 certificate fingerprint:
+  21:5D:D8:EF:18:BC:79:4B:4E:52:D6:A3:69:D2:2D:C1:06:A9:84:12:3F:FC:AD:A3:53:33:97:41:29:E2:4A:E3
+- The user must store TWO repo GitHub Actions secrets: NOVA_ANDROID_KEYSTORE_BASE64 (entire single-line base64 of .jks) and NOVA_ANDROID_KEYSTORE_PASSWORD. Alias is nova-experimental-dev; key and store passwords same. Workflow refuses to use throwaway debug key if secrets are missing, and checks signed APK cert fingerprint. If secrets not installed, Android job intentionally fails on configuration.
+- Existing APKs were signed by different ephemeral debug keys; one uninstall may be required (after EXPORTING neural checkpoint first). Future APKs with this key plus incrementing Android versionCode can install over each other. Never delete last keystore copy. Back up securely. Private keystore/password are in the user-delivered artifact, NOT repo.
+- Source app version 0.10.0. Windows builds should still work; Android builds require user provisioning signing secrets.
+
+VERIFY
+1. Supply secrets via GitHub Settings > Secrets and variables > Actions; rerun workflow.
+2. Verify APK signing fingerprint and compare 0.10.0 signed update over subsequent 0.10.1+; on initial switch may need uninstall.
+3. On physical Android 16, permit notifications, start multi-epoch lesson, switch to another app, lock screen for >2 minutes, observe notification progression and CPU continuing. Return and verify updates/checkpoint, try Stop and loss recovery.
+4. Run ZIP sequential teaching in background, verify service stays while each training lesson active. Check error cases and physical thermal/battery policies.
+5. Any service errors should fail clearly and not teach without protection. Do not change brain visualizer.
+
+---- Previous handoff ----
 NEURAL NOVA v0.9.1 — ANDROID ZIP IMPORT FIX (2026-10-13)
 - Android NotReadableError was thrown by WebView File.arrayBuffer after choosing a .zip from the Android system picker. This occurs BEFORE ZIP parsing or trainer execution, not in the neural architecture.
 - Android now uses native tauri-plugin-dialog + tauri-plugin-fs to pick a document URI and read its contents immediately. Android ignores restrictive MIME filters, because ZIP providers advertise different types. Rust still validates ZIP bytes, lesson formats and archive limits. Desktop keeps existing browser-file picker.
