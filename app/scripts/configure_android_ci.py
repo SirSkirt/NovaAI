@@ -48,20 +48,15 @@ digest=found.group(1).replace(":","").lower() if found else ""
 if digest!=EXPECTED_SHA256:
     file.unlink(missing_ok=True)
     sys.exit("Pinned experimental debug key does not match its expected certificate; refusing to silently change update signature. Expected fingerprint: "+EXPECTED_SHA256)
-prop=root/"keystore.properties"
-prop.write_text(f"keyAlias=nova-experimental-dev\nkeyPassword={password}\nstorePassword={password}\nstoreFile={file.as_posix()}\n")
-prop.chmod(0o600)
 text=gradle.read_text()
 if "create(\"novaDev\")" not in text:
     config='''signingConfigs {
         create("novaDev") {
-            val properties = java.util.Properties().apply {
-                rootProject.file("keystore.properties").inputStream().use { load(it) }
-            }
-            keyAlias = properties.getProperty("keyAlias")
-            keyPassword = properties.getProperty("keyPassword")
-            storePassword = properties.getProperty("storePassword")
-            storeFile = file(properties.getProperty("storeFile"))
+            // Public experimental/debug signing identity; not a release key.
+            keyAlias = "nova-experimental-dev"
+            keyPassword = "android"
+            storePassword = "android"
+            storeFile = rootProject.file("nova-development.jks")
         }
     }
     '''
