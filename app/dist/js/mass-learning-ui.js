@@ -88,6 +88,12 @@ async function runQueue(){
           stopping=true;addLog("STOPPED: "+lesson.name+" · best available checkpoint kept");
           break;
         }
+        if(!result.bestEpoch){
+          failures++;stopping=true;
+          addLog("NO ACCEPTED EPOCH "+lesson.name+
+            " · prior brain restored; stopped queue to avoid silently skipping a lesson");
+          break;
+        }
         success++;
         addLog("COMPLETE "+lesson.name+" · selected epoch "+result.bestEpoch);
       }catch(error){
