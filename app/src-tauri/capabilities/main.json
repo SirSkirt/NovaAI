@@ -8,6 +8,8 @@
   "permissions": [
     "core:default",
     "core:event:allow-listen",
-    "core:event:allow-unlisten"
+    "core:event:allow-unlisten",
+    "dialog:allow-open",
+    "fs:allow-read-file"
   ]
 }
