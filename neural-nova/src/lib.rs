@@ -380,6 +380,12 @@ fn read_u32(r: &mut impl Read) -> Result<u32, String> {
 }
 
 impl Gradients {
+    pub(crate) fn add_scaled(&mut self,other:&Self,factor:f32){
+        for (a,b) in self.layers.iter_mut().zip(&other.layers){
+            for (x,y) in a.weights.iter_mut().zip(&b.weights){*x+=factor*(*y);}
+            for (x,y) in a.biases.iter_mut().zip(&b.biases){*x+=factor*(*y);}
+        }
+    }
     pub(crate) fn zeros(network: &Network) -> Self {
         Self {
             layers: network.layers.iter().map(|l| LayerGrad {
