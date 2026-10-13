@@ -19,7 +19,7 @@
   <header class="app-header">
     <div class="brand">
       <span class="brand-symbol" aria-hidden="true">◉</span>
-      <div><h1>Neural Nova <span class="beta">v0.11.0</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
+      <div><h1>Neural Nova <span class="beta">v0.12.0</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
     </div>
     <div class="status-pill" id="brainState" role="status"><span class="status-indicator"></span><span id="brainStateText">Starting…</span></div>
   </header>
@@ -40,12 +40,12 @@
       <div class="teach-grid">
         <div class="card">
           <div class="field-row">
-            <div class="wide-field"><label for="lessonMode">Lesson type</label><select id="lessonMode"><option value="dialogue">Dialogue / replies</option><option value="text">Text / language patterns</option><option value="conversation">Multi-turn conversations</option><option value="reasoning">Reasoning · supported vs contradicted conclusions</option></select></div>
+            <div class="wide-field"><label for="lessonMode">Lesson type</label><select id="lessonMode"><option value="unified" selected>Unified lesson blocks · auto-detect all four</option><option value="dialogue">Legacy Dialogue / replies</option><option value="text">Text / language patterns</option><option value="conversation">Multi-turn conversations</option><option value="reasoning">Reasoning · supported vs contradicted conclusions</option></select></div>
             <div class="small-field"><label for="trainingEpochs">Max epochs</label><input id="trainingEpochs" type="number" min="1" max="60" value="12"></div>
           </div>
           <div class="section-line"><label for="lessonData">Training data</label><span id="lessonCount" class="subtle"></span></div>
           <textarea id="lessonData" spellcheck="false" rows="9" aria-describedby="lessonHint"></textarea>
-          <p id="lessonHint" class="muted">One question and ideal reply per line, separated by a TAB. At least five different pairs.</p>
+          <p id="lessonHint" class="muted">One TXT can contain all four [Dialogue Lesson], [Understanding Lesson], [Multi-Turn Conversation Lesson], and [Reasoning Lesson] blocks, each with a nested [examples] section. No mode selection needed.</p>
           <div class="row wrap">
             <label class="file-button" for="lessonFile">＋ Import .txt</label><input type="file" id="lessonFile" accept=".txt,text/plain">
             <button type="button" id="sampleLesson" class="secondary compact">Example data</button>
@@ -62,7 +62,7 @@
         </div>
         <div class="card training-card">
           <div class="section-line"><h3>Training</h3><span id="checkpointText" class="subtle">Fresh weights</span></div>
-          <p class="muted">One shared neural loss trains Nova's Transformer, dense pathway, learned word embeddings and conversation-memory reader/writer. No canned answers.</p>
+          <p class="muted">Unified lessons balance dialogue, understanding, memory, reasoning and explanatory language objectives through the same cooperating brain. No scripted inference.</p>
           <div class="schedule-settings">
             <div class="trainer-switches">
               <label class="checkbox-line" for="adaptiveTraining"><input id="adaptiveTraining" type="checkbox"><span>Adaptive learning rate</span></label>
@@ -91,12 +91,12 @@
                 <option value="0.20">Permissive · 0.20</option>
               </select></div>
             </div>
-            <p class="muted">The archive holds up to three previous lessons. Earlier validation questions are scored separately and are never replayed. The selected Test &amp; Corrections benchmark can additionally veto regressions.</p>
+            <p class="muted">The archive keeps up to 128 previous lessons and refuses to silently discard older learning sources when full. Earlier validation questions are scored separately and are never replayed. The selected Test &amp; Corrections benchmark can additionally veto regressions.</p>
             <details class="teacher-extra">
               <summary>Import a previous lesson from an older checkpoint</summary>
               <label for="priorLessonName">Name</label><input id="priorLessonName" placeholder="Dialogue Lesson 02" maxlength="80">
               <label for="priorLessonMode">Lesson type</label>
-              <select id="priorLessonMode"><option value="dialogue">Dialogue / replies</option><option value="text">Text / language</option><option value="conversation">Multi-turn conversations</option></select>
+              <select id="priorLessonMode"><option value="dialogue">Dialogue / replies</option><option value="text">Text / language</option><option value="conversation">Multi-turn conversations</option><option value="reasoning">Reasoning comparisons</option><option value="unified">Unified lesson blocks</option></select>
               <textarea id="priorLessonData" rows="4" spellcheck="false" placeholder="Paste the previously taught lesson here, or import its TXT file."></textarea>
               <div class="row wrap"><label class="file-button" for="priorLessonFile">＋ Import prior .txt</label><input type="file" id="priorLessonFile" accept=".txt,text/plain">
               <button type="button" id="archivePriorLesson" class="secondary">Archive for future rehearsal</button>
@@ -134,7 +134,7 @@
 
           <details class="teacher-extra" id="massLearningTools">
             <summary>Bulk lessons · sequential ZIP teaching</summary>
-            <p class="muted">Choose the lesson type above, then import a ZIP containing only .txt lessons of that type. Each file gets its own training run, holdouts, and checkpoint selection. Files are ordered by their names (01_, 02_, 03_). Existing model state is preserved between lessons.</p>
+            <p class="muted">Import a ZIP with numbered .txt lessons. Structured TXT files identify their own Dialogue, Understanding, Conversation and Reasoning blocks; choose a legacy type above only for older unstructured files. Each file gets its own training run, holdouts, and checkpoint selection. Files are ordered by their names (01_, 02_, 03_). Existing model state is preserved between lessons.</p>
             <div class="row wrap actions">
               <label class="file-button" id="browserMassLessonPicker" for="massLessonZip">＋ Select lesson ZIP</label>
               <input type="file" id="massLessonZip" accept=".zip,application/zip">
@@ -143,7 +143,7 @@
               <button type="button" id="startMassLessons" class="primary" disabled>▶ Teach entire ZIP</button>
               <button type="button" id="stopMassLessons" class="secondary" disabled>Stop after/current lesson</button>
             </div>
-            <p class="muted" id="massLessonsStatus">Choose a ZIP and select the lesson type. No files queued.</p>
+            <p class="muted" id="massLessonsStatus">Choose a ZIP of numbered structured TXT lessons. No files queued.</p>
             <pre id="massLessonsLog" class="epoch-history" style="max-height:240px;overflow:auto;white-space:pre-wrap">No bulk lessons loaded.</pre>
           </details>
           <details class="teacher-extra">
