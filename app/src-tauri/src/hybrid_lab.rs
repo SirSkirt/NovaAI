@@ -1144,7 +1144,7 @@ fn mixed_validation(brain:&HybridBrain,lesson:&PreparedLessons,indices:&[usize])
     for &i in indices{
         let (context,target)=&lesson.validation[i];
         let kind=lesson.validation_kinds[i] as usize;
-        let memory=if kind==neural_nova::unified::CONVERSATION{
+        let memory=if kind==neural_nova::unified::CONVERSATION as usize{
             &lesson.memory_validation[i][..]
         }else{&[][..]};
         let p=brain.predict_with_memory(context,256,memory)?;
