@@ -1291,6 +1291,105 @@ fn generated_heldout(brain:&HybridBrain,lesson:&PreparedLessons)
     Ok(std::array::from_fn(|i|if counts[i]==0{None}
         else{Some(correct[i] as f32/counts[i] as f32)}))
 }
+/// Teacher-side *autonomous* validation: Nova generates its own preceding
+/// characters, instead of receiving the correct prefix at every position.
+/// Only held-out examples are scored. Targets NEVER update neural weights.
+/// One held-out reply per category, max 12 generated characters each, bounded
+/// for local CPU training. A fully correct response is counted only if Nova
+/// generates its learned newline at the correct place.
+#[derive(Clone,Copy,Debug,Serialize)]
+#[serde(rename_all="camelCase")]
+struct AutonomousValidation {
+    self_conditioned_loss:f32,
+    first_character_accuracy:f32,
+    generated_prefix_accuracy:f32,
+    complete_answers_correct:usize,
+    complete_answers_checked:usize,
+    represented_categories:usize,
+    max_characters_per_probe:usize,
+}
+fn autonomous_validation(brain:&HybridBrain,lessons:&PreparedLessons)
+    ->Result<Option<AutonomousValidation>,String>{
+    const MAX_ROLLOUT:usize=12;
+    const EARLY_END_MISSING_PENALTY:f32=6.0;
+    let mut categories=[false;4];
+    let mut total_loss=0.0f32;
+    let mut total_chars=0usize;
+    let mut correct_chars=0usize;
+    let mut correct_first=0usize;
+    let mut complete=0usize;
+    let mut full_correct=0usize;
+    for (prompt,reply,memory,kind) in &lessons.heldout_replies {
+        let k=*kind as usize;
+        if k>=4 || categories[k] {continue;}
+        categories[k]=true;
+        let target=reply.iter().copied().chain(std::iter::once(b'\n'))
+            .take(MAX_ROLLOUT).collect::<Vec<_>>();
+        if target.is_empty(){continue;}
+        let is_complete=reply.len()+1<=MAX_ROLLOUT;
+        if is_complete{complete+=1;}
+        total_chars+=target.len();
+        let mut history=prompt.clone();
+        let mut generated=Vec::new();
+        let mut ended=false;
+        for (i,&expected) in target.iter().enumerate(){
+            let probabilities=brain.predict_with_memory(&history,256,memory)?;
+            let guess=probabilities.iter().enumerate().max_by(|a,b|
+                a.1.total_cmp(b.1)).ok_or("Empty neural output distribution")?.0 as u8;
+            total_loss-=probabilities[expected as usize].max(1e-30).ln();
+            if guess==expected{correct_chars+=1;}
+            if i==0 && guess==expected{correct_first+=1;}
+            if guess==b'\n' {
+                ended=true;
+                // Chat really terminates on newline; missing target positions
+                // are counted as missed, not silently removed from averages.
+                total_loss+=EARLY_END_MISSING_PENALTY*(target.len()-i-1) as f32;
+                break;
+            }
+            generated.push(guess);
+            history.push(guess);
+        }
+        if is_complete && ended && generated==*reply{full_correct+=1;}
+    }
+    let tested=categories.iter().filter(|&&x|x).count();
+    if tested==0{return Ok(None);}
+    let score=AutonomousValidation{
+        self_conditioned_loss:total_loss/total_chars.max(1) as f32,
+        first_character_accuracy:correct_first as f32/tested as f32,
+        generated_prefix_accuracy:correct_chars as f32/total_chars.max(1) as f32,
+        complete_answers_correct:full_correct,
+        complete_answers_checked:complete,
+        represented_categories:tested,
+        max_characters_per_probe:MAX_ROLLOUT,
+    };
+    if !score.self_conditioned_loss.is_finite(){
+        return Err("Non-finite autonomous held-out loss".into());
+    }
+    Ok(Some(score))
+}
+/// A new checkpoint must improve the already-established held-out loss,
+/// avoid regressing observed autonomous replies, AND improve the combined
+/// held-out criterion. When neither model can produce a complete reply yet,
+/// smooth self-conditioned likelihood can still show learning progress.
+fn autonomous_selection_ok(
+    previous:Option<AutonomousValidation>,
+    candidate:Option<AutonomousValidation>,
+    previous_heldout:f32,candidate_heldout:f32,
+)->bool {
+    if !(candidate_heldout+MIN_IMPROVEMENT<previous_heldout){return false;}
+    match (previous,candidate) {
+        (Some(old),Some(new))=>{
+            let old_combined=previous_heldout+0.35*old.self_conditioned_loss;
+            let new_combined=candidate_heldout+0.35*new.self_conditioned_loss;
+            new.self_conditioned_loss<=old.self_conditioned_loss+0.05 &&
+            new.first_character_accuracy+1e-6>=old.first_character_accuracy &&
+            new.complete_answers_correct>=old.complete_answers_correct &&
+            new_combined+MIN_IMPROVEMENT<old_combined
+        },
+        (None,None)=>true,
+        _=>false,
+    }
+}
 /// Genuine neural first-character distribution, not a guessed cause of Yello.
 fn greeting_first_character_bias(brain:&HybridBrain)->Option<serde_json::Value>{
     let p=brain.predict(b"U: hello\nN: ").ok()?;
