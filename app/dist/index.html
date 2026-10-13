@@ -113,7 +113,11 @@
             <div><span id="heldoutLossLabel">Held-out composite loss</span><strong id="heldoutLoss">—</strong></div>
             <div><span>Held-out accuracy</span><strong id="heldoutAccuracy">—</strong></div>
             <div id="reasoningAccuracyMetric" hidden><span>Unseen conclusion preference</span><strong id="reasoningAccuracy">—</strong></div>
+            <div id="selfGeneratedStartMetric" hidden><span>Self-generated first character · best checkpoint</span><strong id="selfGeneratedStart">—</strong></div>
+            <div id="selfGeneratedPrefixMetric" hidden><span>Self-generated prefix · best checkpoint</span><strong id="selfGeneratedPrefix">—</strong></div>
+            <div id="selfGeneratedReplyMetric" hidden><span>Complete self-generated replies · best checkpoint</span><strong id="selfGeneratedReplies">—</strong></div>
           </div>
+          <p class="muted" id="autonomousValidationNote" hidden>Independent held-out evaluation: one reply per available learning objective, up to 12 characters. The teacher provides expected answers for SCORING only, not during Nova's generation. An accepted checkpoint is not necessarily a mastered lesson.</p>
           <div class="trainer-details"><span id="lessonSplit">Validation split: —</span><span id="trainingSpeed">Throughput: —</span><span id="bestEpoch">Best epoch: —</span></div>
           <details class="teacher-extra" id="checkpointTransfer">
             <summary>Import / export the complete neural checkpoint</summary>
