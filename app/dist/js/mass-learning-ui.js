@@ -4,6 +4,16 @@ const $=id=>document.getElementById(id);
 const invoke=(command,args={})=>window.__TAURI__?.core?.invoke(command,args)
   ?? Promise.reject(Error("Installed native Neural Nova required"));
 let bundle=null,mode=null,active=false,stopping=false,at=0,success=0,failures=0;
+let nativeZipBytes=null,nativeZipName=null;
+const android=/Android/i.test(navigator.userAgent);
+if(android){
+  // Android WebView File.arrayBuffer() can throw NotReadableError for files
+  // selected through Storage Access Framework. Let the native plugins hold
+  // the transient document grant and read the bytes immediately.
+  $("browserMassLessonPicker").hidden=true;
+  $("massLessonZip").hidden=true;
+  $("nativeMassLessonZip").hidden=false;
+}
 const view=(message)=>{$("massLessonsStatus").textContent=message;};
 function addLog(message){
   $("massLessonsLog").textContent+=(($("massLessonsLog").textContent==="No bulk lessons loaded.")?"":"\n")+message;
@@ -15,14 +25,54 @@ function readyButtons(){
   $("stopMassLessons").disabled=!active;
 }
 const currentMode=()=>$("lessonMode").value;
+async function pickNativeZip(){
+  if(active)throw Error("Finish the current lesson before selecting another ZIP.");
+  const dialog=window.__TAURI__?.dialog;
+  const fs=window.__TAURI__?.fs;
+  if(!dialog?.open||!fs?.readFile)
+    throw Error("Native Android file picker unavailable; update to the new Neural Nova build.");
+  // Android returns a content:// URI, not a normal filesystem path.
+  // Tauri's dialog plugin grants access to selected documents for plugin-fs.
+  const picked=await dialog.open({
+    multiple:false,directory:false,pickerMode:"document",
+    filters:[{name:"ZIP lesson archive",extensions:["application/zip","application/x-zip-compressed","zip"]}]
+  });
+  if(picked===null || picked===undefined)return; // Android Back / Cancel.
+  if(typeof picked!=="string")throw Error("Unexpected result from Android document picker.");
+  nativeZipBytes=null;nativeZipName=null;bundle=null;readyButtons();
+  view("Reading ZIP with Android's native document access…");
+  let data;
+  try{data=await fs.readFile(picked);}
+  catch(error){
+    throw Error("Android could not read this document: "+String(error)+
+      ". Try moving the ZIP into Downloads and selecting it from Files.");
+  }
+  if(!(data instanceof Uint8Array))data=new Uint8Array(data);
+  if(data.byteLength===0||data.byteLength>4*1024*1024)
+    throw Error("Selected ZIP must be between 1 byte and 4 MiB.");
+  nativeZipBytes=data;
+  nativeZipName=picked.split("/").pop()||"Selected ZIP";
+  view("ZIP read successfully from Android Files ("+data.byteLength+
+    " bytes). Tap Validate ZIP.");
+}
 async function preview(){
   if(active)throw Error("Finish the current lesson queue first.");
-  const file=$("massLessonZip").files[0];
-  if(!file)throw Error("Select a .zip containing .txt lessons.");
-  if(!file.name.toLowerCase().endsWith(".zip")||file.size>4*1024*1024)
-    throw Error("Choose a .zip smaller than 4 MiB.");
-  const bytes=Array.from(new Uint8Array(await file.arrayBuffer()));
-  const result=await invoke("hybrid_zip_preview",{bytes,mode:currentMode()});
+  let data=nativeZipBytes;
+  if(!data){
+    const file=$("massLessonZip").files[0];
+    if(!file)throw Error("Select a .zip containing .txt lessons.");
+    if(!file.name.toLowerCase().endsWith(".zip")||file.size>4*1024*1024)
+      throw Error("Choose a .zip smaller than 4 MiB.");
+    try{data=new Uint8Array(await file.arrayBuffer());}
+    catch(error){
+      if(error?.name==="NotReadableError")
+        throw Error("The WebView cannot read this selection. Use Android's native ZIP picker instead.");
+      throw error;
+    }
+  }
+  if(data.byteLength===0||data.byteLength>4*1024*1024)
+    throw Error("Selected ZIP must be between 1 byte and 4 MiB.");
+  const result=await invoke("hybrid_zip_preview",{bytes:Array.from(data),mode:currentMode()});
   bundle=result;mode=currentMode();at=0;success=0;failures=0;
   $("massLessonsLog").textContent="";
   result.lessons.forEach((lesson,i)=>addLog((i+1)+". "+lesson.name+" · "+
@@ -113,8 +163,10 @@ async function safe(task){
   catch(error){view("Error: "+String(error));console.error("Nova bulk lesson queue",error);}
 }
 $("massLessonZip").addEventListener("change",()=>{
+  nativeZipBytes=null;nativeZipName=null;
   bundle=null;readyButtons();view("ZIP selected. Validate before starting.");
 });
+$("nativeMassLessonZip").addEventListener("click",()=>safe(pickNativeZip));
 $("lessonMode").addEventListener("change",()=>{
   if(!active){bundle=null;readyButtons();view("Lesson mode changed; revalidate ZIP.");}
 });
