@@ -10,6 +10,9 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "dialog:allow-open",
-    "fs:allow-read-file"
+    "fs:allow-read-file",
+    "background-service:allow-start",
+    "background-service:allow-stop",
+    "background-service:allow-is-running"
   ]
 }
