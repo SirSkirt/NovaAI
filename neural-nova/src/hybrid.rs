@@ -382,6 +382,17 @@ fn read_floats(f:&mut File,data:&mut [f32])->Result<(),String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    /// Simulate the actual pre-recurrent checkpoint: all old weights and
+    /// optimizer moments are preserved, new reasoning projection is neutral.
+    fn emulate_pre_reasoning_checkpoint(brain:&mut HybridBrain){
+        let old=Transformer::previous_parameter_count();
+        let mut previous=Transformer::new(11);
+        previous.step=brain.transformer.step;
+        previous.import_compatible_arrays(&brain.transformer.weights[..old],
+            &brain.transformer.momentum[..old],
+            &brain.transformer.variance[..old]).unwrap();
+        brain.transformer=previous;
+    }
     #[test]
     fn shared_loss_updates_both_hemispheres_and_bridge(){
         let mut brain=HybridBrain::new();
@@ -428,6 +439,7 @@ mod tests{
         for _ in 0..2{
             brain.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.001).unwrap();
         }
+        emulate_pre_reasoning_checkpoint(&mut brain);
         let prompt=b"U: hello\nN: ";
         let before=brain.predict_window(prompt,256).unwrap();
         let old_count=Transformer::previous_parameter_count();
@@ -479,6 +491,7 @@ mod tests{
     fn old_v03_joint_checkpoint_migrates_without_changing_short_context_results(){
         let mut trained=HybridBrain::new();
         trained.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.001).unwrap();
+        emulate_pre_reasoning_checkpoint(&mut trained);
         let prompt=b"U: hello\nN: ";
         let before=trained.predict_window(prompt,128).unwrap();
         let old_count=24800;
