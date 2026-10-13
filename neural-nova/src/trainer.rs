@@ -24,6 +24,11 @@ pub struct PreparedLessons{
     pub memory_validation:Vec<Vec<String>>,
     pub reasoning_train:Vec<ReasoningExample>,
     pub reasoning_validation:Vec<ReasoningExample>,
+    /// Alignment with train/validation examples; empty for explicit legacy modes.
+    pub train_kinds:Vec<u8>,pub validation_kinds:Vec<u8>,
+    /// Counts of complete independent units by objective (0 dialogue,
+    /// 1 understanding, 2 multi-turn, 3 reasoning, 4 explanatory language).
+    pub category_train:[usize;5],pub category_validation:[usize;5],
 }
 
 /// Canonicalize prompt *only to avoid train/validation contamination*.
@@ -133,7 +138,8 @@ fn prepare_text_sections(text:&str)->Result<PreparedLessons,String>{
         validation_lessons:valid_units.len(),mode:"text".into(),
         training_text:train_units.join("\n\n"),
         memory_train:Vec::new(),memory_validation:Vec::new(),
-        reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
+        reasoning_train:Vec::new(),reasoning_validation:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
+        category_train:[0;5],category_validation:[0;5],
     })
 }
 
@@ -232,7 +238,9 @@ fn prepare_reasoning(text:&str)->Result<PreparedLessons,String>{
     Ok(PreparedLessons{train,validation,mode:"reasoning".into(),
         train_lessons:train_pairs.len(),validation_lessons:validation_pairs.len(),
         training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
-        reasoning_train,reasoning_validation})
+        reasoning_train,reasoning_validation,
+        train_kinds:Vec::new(),validation_kinds:Vec::new(),
+        category_train:[0;5],category_validation:[0;5]})
 }
 
 pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
@@ -268,9 +276,11 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
                 .map(|p|format!("{} {}\n",p.user,p.assistant)).collect::<String>();
             Ok(PreparedLessons{train,validation,train_lessons:train_pairs.len(),validation_lessons:valid_pairs.len(),
                 mode:mode.into(),training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
-                reasoning_train:Vec::new(),reasoning_validation:Vec::new()})
+                reasoning_train:Vec::new(),reasoning_validation:Vec::new()train_kinds:Vec::new(),validation_kinds:Vec::new(),
+        category_train:[0;5],category_validation:[0;5],})
         },
         "reasoning"=>prepare_reasoning(text),
+        "unified"=>crate::unified::prepare(text),
         "text"=>{
             if text.len()<120||text.len()>MAX_CORPUS_BYTES{
                 return Err(format!("Text lessons require 120–{MAX_CORPUS_BYTES} ASCII bytes per training run"));
@@ -291,7 +301,8 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
             Ok(PreparedLessons{train,validation,
                 train_lessons:sessions.len(),validation_lessons:held.len(),mode:mode.into(),
                 training_text,memory_train,memory_validation,
-                reasoning_train:Vec::new(),reasoning_validation:Vec::new()})
+                reasoning_train:Vec::new(),reasoning_validation:Vec::new()train_kinds:Vec::new(),validation_kinds:Vec::new(),
+        category_train:[0;5],category_validation:[0;5],})
         },
         _=>Err("Select dialogue, text, conversation, or reasoning lessons".into())
     }
