@@ -1012,10 +1012,20 @@ pub fn hybrid_train(
                         rehearsal::write(&rehearsal_path(&app)?,&bank)
                     })();
                     if let Err(e)=saved{
+                        // Do not let ZIP training treat this lesson as safely
+                        // accepted: future replay would omit a learned lesson.
+                        // The checkpoint is already saved, so surface a clear
+                        // repair-needed error instead of silently progressing.
+                        let issue=format!(
+                            "Neural checkpoint saved, but teacher rehearsal archive failed: {e}"
+                        );
                         diag::record(&app.state::<Diagnostics>(),"rehearsal_archive_error",
-                            serde_json::json!({"message":e}));
-                        let _=app.emit("hybrid-error",
-                            format!("Neural checkpoint saved, but teacher rehearsal archive failed: {e}"));
+                            serde_json::json!({"message":issue}));
+                        if let Ok(mut session)=lock(&state){
+                            session.error=Some(issue.clone());
+                            session.stage="Lesson archive failed after checkpoint save".into();
+                        }
+                        let _=app.emit("hybrid-error",issue);
                     }
                 }
                 state.inner.training.store(false,Ordering::Release);
