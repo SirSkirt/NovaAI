@@ -1,3 +1,11 @@
+NEURAL NOVA v0.10.1 EXPERIMENTAL DEBUG SIGNING — 2026-10-13
+- User explicitly requested ONE fixed development/debug signing key so future Android debug APKs update in place, and has never had an earlier signing key. No requirement for production/release security and user is working from phone only. Earlier CI implementation demanded repository secrets and hardcoded an unrelated fingerprint, causing "Stable Android development signing is not configured" failure after compilation.
+- A new ONE-TIME experimental DEBUG keystore was generated and pinned as Base64 text at app/keys/experimental-debug.jks.base64 for the public experimental branch. This is INTENTIONALLY PUBLIC and MUST NEVER be used for a production or publicly trusted release. Android key alias nova-experimental-dev, password android; SHA256 signing certificate 070b1e684da8087d6c30874c16c9be831b7cbce49264d61040ee73ecb5652ade. Persistent APK identity com.qtech.neuralnova.experimental. Do not regenerate or rotate this key. Documented at app/docs/android-signing.md.
+- app/scripts/configure_android_ci.py now decodes the same repository key on every Android CI build, verifies the pinned certificate fingerprint, sets Gradle debug signing config, and preserves foreground-service manifest additions. Removed GitHub secret checks and dependencies from .github/workflows/neural-nova-app.yml. CI verifies apksigner certificate fingerprint before upload. Version raised to 0.10.1.
+- Initial transition from previously signed temporary debug APK can require ONE uninstall/reinstall due to Android certificate mismatch. EXPORT the .nhyb checkpoint and training artifacts BEFORE uninstalling, then import afterward. Subsequent increasing-version builds signed with this single key should update normally.
+- This addresses signing only, not a production release key; the neural architecture and visualizer are unchanged. Keep background-training functionality from v0.10.0 intact.
+- Build status should be verified on final Actions run 38400455061. Any future user-facing claim of success must be supported by Windows/Android job results.
+
 NEURAL NOVA v0.10.0 — ANDROID BACKGROUND TRAINING + DURABLE DEVELOPMENT SIGNING
 2026-10-13
 
