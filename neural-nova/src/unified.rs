@@ -1,7 +1,7 @@
 //! Strict, teacher-only unified lesson reader. Blocks set learning objectives;
 //! they NEVER become hardcoded responses or run during Nova's inference.
 use crate::dialogue::{dialogue_prefix,validate_pair,DialoguePair};
-use crate::trainer::{PreparedLessons,Example,ReasoningExample,MAX_SAMPLES};
+use crate::trainer::{PreparedLessons,ReasoningExample,MAX_SAMPLES};
 use std::collections::{BTreeMap,BTreeSet};
 
 pub const DIALOGUE:u8=0;
@@ -301,7 +301,7 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
         return Err("Unified lesson needs independent train and held-out examples".into());
     }
     if prepared.train.len()>MAX_SAMPLES{
-        return Err(format!("Too many training characters (max {MAX_SAMPLES})".into()));
+        return Err(format!("Too many training characters (max {MAX_SAMPLES})"));
     }
     Ok(prepared)
 }
