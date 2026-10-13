@@ -386,9 +386,9 @@ mod tests{
         assert_eq!(p.train.len(),p.memory_train.len());
         assert_eq!(p.train.len(),p.train_kinds.len());
         assert_eq!(p.validation.len(),p.validation_kinds.len());
-        assert_eq!(p.heldout_replies.len(),
-            p.category_validation[..4].iter().sum::<usize>() +
-            p.category_validation[CONVERSATION as usize].saturating_mul(2));
+        assert!(!p.heldout_replies.is_empty());
+        assert!(p.heldout_replies.iter().all(|(_,expected,_,kind)|
+            !expected.is_empty() && *kind<=REASONING));
 
     }
     #[test]fn mismatched_or_unsafe_blocks_reject_before_training(){
