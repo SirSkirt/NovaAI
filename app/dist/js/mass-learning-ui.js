@@ -123,6 +123,7 @@ async function runQueue(){
   active=true;stopping=false;at=0;success=0;failures=0;
   readyButtons();
   try{
+    await window.NovaTrainingBackground?.start();
     for(const lesson of bundle.lessons){
       if(stopping)break;
       view("Lesson "+(at+1)+"/"+bundle.lessons.length+": "+lesson.name+" · training");
