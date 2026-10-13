@@ -6,6 +6,8 @@ mod diagnostic_log;
 mod rehearsal;
 mod lesson_zip;
 mod checkpoint_transfer;
+#[cfg(target_os="android")]
+mod training_keepalive;
 
 use neural::NeuralState;
 use transformer_lab::TransformerState;
