@@ -929,12 +929,14 @@ pub fn hybrid_train(
     // Compute exact replay row totals from the same scheduler as training.
     // A short curriculum still rehearses older categories by default.
     let total_training_samples=(1..=lesson.epochs).map(|epoch|{
+        let batches=objective_batches(&plan,epoch).len();
         let extra=if rehearsal_enabled{
-            balanced_replay_schedule(&previous,epoch,
-                objective_batches(&plan,epoch).len())
+            balanced_replay_schedule(&previous,epoch,batches)
                 .iter().map(|(_,ids,_)|ids.len()).sum::<usize>()
         }else{0};
-        plan.train.len()+extra
+        let boundary=reply_boundary_batches(&plan,epoch,batches)
+            .iter().map(Vec::len).sum::<usize>();
+        plan.train.len()+extra+boundary
     }).sum::<usize>();
     let ready=(||->Result<(),String>{
         let mut s=lock(&state)?;
@@ -1167,6 +1169,37 @@ fn objective_batches(lesson:&PreparedLessons,epoch:u32)->Vec<Vec<usize>>{
             }
         }
         if !progress{break;}
+    }
+    result
+}
+/// The beginning and learned end-of-turn are rare relative to middle reply
+/// characters. Give these *real teacher response targets* an auxiliary
+/// optimizer batch every eighth regular batch, balanced by objective.
+/// This is training only: no greeting or completion is hardcoded at inference.
+fn reply_boundary_batches(lesson:&PreparedLessons,epoch:u32,
+    new_batches:usize)->Vec<Vec<usize>>{
+    if lesson.mode!="unified" || new_batches==0 {return Vec::new();}
+    let mut first=vec![Vec::<usize>::new();4];
+    let mut ends=vec![Vec::<usize>::new();4];
+    for (i,((context,target),&kind)) in lesson.train.iter()
+        .zip(&lesson.train_kinds).enumerate(){
+        let k=kind as usize;
+        if k>=4 {continue;} // Explanatory teacher text is never a Nova reply.
+        if context.ends_with(b"\nN: "){first[k].push(i);}
+        if *target==b'\n' && context.windows(4).any(|w|w==b"\nN: "){
+            ends[k].push(i);
+        }
+    }
+    let available=(0..4).filter(|&k|!first[k].is_empty()&&!ends[k].is_empty())
+        .collect::<Vec<_>>();
+    if available.is_empty(){return Vec::new();}
+    let slots=(new_batches+7)/8;
+    let mut result=Vec::with_capacity(slots);
+    for slot in 0..slots{
+        let k=available[(slot+epoch as usize-1)%available.len()];
+        let first_id=first[k][(slot+epoch as usize-1)%first[k].len()];
+        let end_id=ends[k][(slot+epoch as usize-1)%ends[k].len()];
+        result.push(vec![first_id,end_id]);
     }
     result
 }
@@ -1439,6 +1472,8 @@ fn train_inner(
         }else{"Practice: shuffled examples"};
         let learning_rate=schedule.learning_rate;
         let batches_new=objective_batches(lessons,epoch);
+        let focus_batches=reply_boundary_batches(lessons,epoch,batches_new.len());
+        let mut focus_count=0usize;
         // Sample old categories fairly and rotate *archived lesson sources*,
         // rather than selecting arbitrary first batches from large lessons.
         let prior_batches=if rehearsal_enabled {
@@ -1603,6 +1638,57 @@ fn train_inner(
                         "learningObjective":objective,
                         "gradientTransformer":grad.transformer_norm,"gradientDense":grad.dense_norm
                     }));
+                }
+            }
+            // The same trainable two-hemisphere network receives a balanced
+            // dose of actual first-character and learned end-of-reply targets.
+            // There is no inference-time answer routing or canned dialogue.
+            if !focus_batches.is_empty() &&
+                ((new_batch_index+1)%8==0 || new_batch_index+1==batches_new.len()){
+                let ids=&focus_batches[focus_count];
+                focus_count+=1;
+                let kind=lessons.train_kinds[ids[0]];
+                let (focus_loss,grad,step)={
+                    let mut s=lock(state)?;
+                    let focus_loss=if kind==neural_nova::unified::CONVERSATION{
+                        let examples=ids.iter().map(|&id|(
+                            train[id].0.clone(),train[id].1,
+                            lessons.memory_train[id].clone()
+                        )).collect::<Vec<_>>();
+                        s.brain.train_memory_batch(&examples,learning_rate)?
+                    }else{
+                        let examples=ids.iter().map(|&id|train[id].clone())
+                            .collect::<Vec<_>>();
+                        s.brain.train_batch(&examples,learning_rate)?
+                    };
+                    if !focus_loss.is_finite(){
+                        return Err("Non-finite response-boundary training loss".into());
+                    }
+                    let grad=s.brain.last_batch_diagnostics.clone()
+                        .ok_or("Response-boundary gradient diagnostics missing")?;
+                    let step=s.brain.transformer.step;
+                    s.train_loss=Some(focus_loss);
+                    s.completed=completed+ids.len();
+                    (focus_loss,grad,step)
+                };
+                completed+=ids.len();
+                trained_count+=ids.len();
+                batches+=1;
+                epoch_loss+=focus_loss as f64*ids.len() as f64;
+                transformer_grad_norm+=grad.transformer_norm as f64;
+                dense_grad_norm+=grad.dense_norm as f64;
+                bridge_grad_norm+=grad.bridge_norm as f64;
+                transformer_clip_batches+=usize::from(grad.transformer_clipped);
+                dense_clip_batches+=usize::from(grad.dense_clipped);
+                if diag::enabled(&app.state::<Diagnostics>()){
+                    diag::record(&app.state::<Diagnostics>(),"reply_boundary_batch",
+                        serde_json::json!({
+                            "epoch":epoch,"objective":kind,
+                            "samples":ids.len(),"loss":focus_loss,
+                            "optimizerStep":step,"firstCharacterAndLearnedReplyEnd":true,
+                            "teacherProvidedTargetsOnly":true,
+                            "bothPathwaysUpdated":true
+                        }));
                 }
             }
             if completed%64<batch.len(){
@@ -2246,6 +2332,28 @@ pub fn hybrid_test_review(app:AppHandle,state:State<'_,HybridState>,
 #[cfg(test)]
 mod test_runner_tests{
     use super::*;
+    #[test]
+    fn unified_boundary_training_uses_only_supervised_answer_tokens(){
+        let raw=concat!(
+            "[Dialogue Lesson]\nGreetings are used to begin conversations.\n",
+            "[examples]\nhello  Hello!\nhi  Hi!\nbye  Goodbye!\n",
+            "thanks  You're welcome.\ngood morning  Good morning!\n",
+            "[/examples]\n[/Dialogue Lesson]"
+        );
+        let plan=prepare("unified",raw).unwrap();
+        let scheduled=reply_boundary_batches(&plan,1,17);
+        assert_eq!(scheduled.len(),3);
+        for ids in &scheduled {
+            assert_eq!(ids.len(),2);
+            assert!(ids.iter().all(|&id|id<plan.train.len() &&
+                plan.train_kinds[id]==neural_nova::unified::DIALOGUE));
+            assert!(plan.train[ids[0]].0.ends_with(b"\nN: "));
+            assert_eq!(plan.train[ids[1]].1,b'\n');
+            assert!(plan.train[ids[1]].0.windows(4).any(|w|w==b"\nN: "));
+        }
+        assert!(plan.train.iter().zip(&plan.train_kinds)
+            .any(|(_,kind)|*kind==neural_nova::unified::EXPLANATION));
+    }
     #[test]
     fn replay_even_tiny_lessons_and_rotate_distinct_archive_sources(){
         let archive=vec![
