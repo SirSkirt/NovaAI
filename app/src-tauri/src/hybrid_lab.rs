@@ -926,9 +926,16 @@ pub fn hybrid_train(
             Err(e)=>{state.inner.training.store(false,Ordering::Release);return Err(e);}
         }
     }else{Vec::new()};
-    let replay_batch_count=if rehearsal_enabled&&!previous.is_empty(){
-        ((plan.train.len()+BATCH-1)/BATCH)/3
-    }else{0};
+    // Compute exact replay row totals from the same scheduler as training.
+    // A short curriculum still rehearses older categories by default.
+    let total_training_samples=(1..=lesson.epochs).map(|epoch|{
+        let extra=if rehearsal_enabled{
+            balanced_replay_schedule(&previous,epoch,
+                objective_batches(&plan,epoch).len())
+                .iter().map(|(_,ids,_)|ids.len()).sum::<usize>()
+        }else{0};
+        plan.train.len()+extra
+    }).sum::<usize>();
     let ready=(||->Result<(),String>{
         let mut s=lock(&state)?;
         if s.trained{snapshot_active_checkpoint(&app,&s.brain,"before-lesson")?;}
@@ -968,7 +975,7 @@ pub fn hybrid_train(
             }));
         }
         s.epoch=0;s.epochs=lesson.epochs;s.completed=0;
-        s.total=(plan.train.len()+replay_batch_count*BATCH)*lesson.epochs as usize;
+        s.total=total_training_samples;
         s.heldout_loss=None;s.heldout_accuracy=None;s.train_loss=None;s.error=None;
         s.best_heldout_loss=None;s.best_epoch=0;s.learning_rate=starting_lr;
         s.train_lessons=plan.train_lessons;s.validation_lessons=plan.validation_lessons;
@@ -1152,6 +1159,44 @@ fn objective_batches(lesson:&PreparedLessons,epoch:u32)->Vec<Vec<usize>>{
     }
     result
 }
+/// Deterministic balanced replay, with round-robin categories AND archived
+/// lesson sources. One giant/old lesson cannot monopolize a category simply
+/// because it contributes more character batches. Never uses held-out rows.
+/// Even a one-batch new lesson receives one prior-skill rehearsal batch.
+fn balanced_replay_schedule(previous:&[PreparedLessons],epoch:u32,
+    new_batches:usize)->Vec<(usize,Vec<usize>,u8)>{
+    if previous.is_empty()||new_batches==0{return Vec::new();}
+    let mut sources=vec![Vec::<(usize,Vec<Vec<usize>>)>::new();5];
+    for (source,old) in previous.iter().enumerate(){
+        let mut by_category=vec![Vec::<Vec<usize>>::new();5];
+        for ids in objective_batches(old,epoch){
+            if ids.is_empty(){continue;}
+            let kind=if old.mode=="unified"{old.train_kinds[ids[0]] as usize}
+                else if old.mode=="conversation"{2}
+                else if old.mode=="reasoning"{3}
+                else if old.mode=="text"{4}else{0};
+            by_category[kind].push(ids);
+        }
+        for (kind,batches) in by_category.into_iter().enumerate(){
+            if !batches.is_empty(){sources[kind].push((source,batches));}
+        }
+    }
+    let categories=(0..5).filter(|&k|!sources[k].is_empty()).collect::<Vec<_>>();
+    if categories.is_empty(){return Vec::new();}
+    let slots=(new_batches+2)/3; // ceil; last partial chunk gets rehearsal.
+    let mut per_category=[0usize;5];
+    let mut result=Vec::with_capacity(slots);
+    for slot in 0..slots {
+        let category=categories[(slot+epoch as usize-1)%categories.len()];
+        let curs=per_category[category];
+        let available=&sources[category];
+        let (source,batches)=&available[(curs+epoch as usize-1)%available.len()];
+        let batch=batches[(curs+epoch as usize-1)%batches.len()].clone();
+        result.push((*source,batch,category as u8));
+        per_category[category]+=1;
+    }
+    result
+}
 /// Score precisely the requested mixed held-out rows, including memory inputs.
 fn mixed_validation(brain:&HybridBrain,lesson:&PreparedLessons,indices:&[usize])
     ->Result<(f32,f32,[Option<f32>;5]),String>{
@@ -1324,35 +1369,11 @@ fn train_inner(
         }else{"Practice: shuffled examples"};
         let learning_rate=schedule.learning_rate;
         let batches_new=objective_batches(lessons,epoch);
-        // Balance archived categories across whole earlier-lesson bank, not
-        // merely one archive at a time. Never replay validation indices.
-        // Balanced, bounded rehearsal: build one rotating pool for each
-        // objective over the ENTIRE archived curriculum. Select categories
-        // cyclically, not the first lesson or largest batch. Never sample
-        // archived validation rows or change saved archive contents.
-        let mut replay_pools=vec![Vec::<(usize,Vec<usize>,u8)>::new();5];
-        for (i,p) in previous.iter().enumerate(){
-            for ids in objective_batches(p,epoch){
-                let kind=if p.mode=="unified"{p.train_kinds[ids[0]]}
-                    else if p.mode=="conversation"{2}
-                    else if p.mode=="reasoning"{3}
-                    else if p.mode=="text"{4}else{0};
-                replay_pools[kind as usize].push((i,ids,kind));
-            }
-        }
-        let mut prior_batches=Vec::new();
-        let mut cursors=[0usize;5];
-        let replay_slots=batches_new.len()/3;
-        for slot in 0..replay_slots{
-            let available=(0..5).filter(|&k|!replay_pools[k].is_empty())
-                .collect::<Vec<_>>();
-            if available.is_empty(){break;}
-            let category=available[(slot+epoch as usize-1)%available.len()];
-            let pool=&replay_pools[category];
-            let offset=(epoch as usize-1)%pool.len();
-            prior_batches.push(pool[(offset+cursors[category])%pool.len()].clone());
-            cursors[category]+=1;
-        }
+        // Sample old categories fairly and rotate *archived lesson sources*,
+        // rather than selecting arbitrary first batches from large lessons.
+        let prior_batches=if rehearsal_enabled {
+            balanced_replay_schedule(previous,epoch,batches_new.len())
+        }else{Vec::new()};
         let mut replay_batches=0usize;
         let mut contextual_batches=0usize;
         let mut epoch_loss=0.0f64;
@@ -1459,7 +1480,8 @@ fn train_inner(
             // batches, round-robin across at most three older lesson archives.
             // Both pathways receive the same actual gradients. The held-out
             // portions of archived lessons are NEVER sampled here.
-            if rehearsal_enabled && !prior_batches.is_empty() && (new_batch_index+1)%3==0 {
+            if !prior_batches.is_empty() &&
+                ((new_batch_index+1)%3==0 || new_batch_index+1==batches_new.len()) {
                 let (source,ids,objective)=prior_batches[replay_batches%prior_batches.len()].clone();
                 let old=&previous[source];
                 replay_batches+=1;
@@ -1516,9 +1538,7 @@ fn train_inner(
             if completed%64<batch.len(){
                 #[cfg(target_os="android")]
                 if last_android_notice.elapsed()>=std::time::Duration::from_secs(8){
-                    let total=(train.len()+if rehearsal_enabled&&!previous.is_empty(){
-                        ((train.len()+BATCH-1)/BATCH)/3*BATCH
-                    }else{0})*epochs as usize;
+                    let total=lock(state)?.total;
                     let pct=if total==0{0}else{(100*completed/total).min(100)};
                     training_notification(app,format!(
                         "Epoch {}/{} • {}% • loss {:.4}",epoch,epochs,pct,loss
@@ -1526,7 +1546,7 @@ fn train_inner(
                     last_android_notice=Instant::now();
                 }
                 let _=app.emit("hybrid-progress",serde_json::json!({
-                    "completed":completed,"total":(train.len()+if rehearsal_enabled&&!previous.is_empty(){((train.len()+BATCH-1)/BATCH)/3*BATCH}else{0})*epochs as usize,
+                    "completed":completed,"total":lock(state)?.total,
                     "epoch":epoch,"epochs":epochs,"loss":loss,"step":step,
                     "stage":stage,"learningRate":learning_rate,
                     "tokensPerSecond":completed as f64/started.elapsed().as_secs_f64().max(0.001)
@@ -2152,6 +2172,26 @@ pub fn hybrid_test_review(app:AppHandle,state:State<'_,HybridState>,
 #[cfg(test)]
 mod test_runner_tests{
     use super::*;
+    #[test]
+    fn replay_even_tiny_lessons_and_rotate_distinct_archive_sources(){
+        let archive=vec![
+            prepare("dialogue","hi\\tHello!\\nbye\\tGoodbye!\\ncat\\tCat.\\ndog\\tDog.\\n").unwrap(),
+            prepare("dialogue","hello\\tHey!\\nthanks\\tWelcome.\\nsun\\tWarm.\\nsnow\\tCold.\\n").unwrap(),
+            prepare("reasoning",&(0..6).map(|n|format!(
+                "Person {n} has red shoes.\\tWhat color are the shoes?\\tRed.\\tBlue."
+            )).collect::<Vec<_>>().join("\\n")).unwrap(),
+        ];
+        let single=balanced_replay_schedule(&archive,1,1);
+        assert_eq!(single.len(),1,"one new batch must still rehearse");
+        let many=balanced_replay_schedule(&archive,1,10);
+        assert_eq!(many.len(),4,"one replay per three or fewer new batches");
+        assert!(many.iter().any(|(_,_,kind)|*kind==0));
+        assert!(many.iter().any(|(_,_,kind)|*kind==3));
+        assert!(many.iter().all(|(source,ids,_)|!ids.is_empty()&&
+            ids.iter().all(|&i|i<archive[*source].train.len())));
+        let follow=balanced_replay_schedule(&archive,2,10);
+        assert_ne!(many,follow,"category/source order must vary across epochs");
+    }
     #[test]
     fn small_corrective_example_improves_target_probability_in_one_joint_brain(){
         let mut brain=HybridBrain::new();
