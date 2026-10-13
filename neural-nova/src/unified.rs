@@ -231,14 +231,31 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
     if grouped.len()<2{return Err("Unified lesson examples all describe one repeated question; add independent examples".into());}
     let mut names:Vec<String>=grouped.keys().cloned().collect();
     names.sort_by(|a,b|hash(a).cmp(&hash(b)).then(a.cmp(b)));
-    let mut held:BTreeSet<String>=names.iter().rev().take((names.len()/5).max(1)).cloned().collect();
+    // A category represented by just one independent unit cannot have both
+    // training and validation. Keep its only unit in training; report zero
+    // held-out for that category rather than claiming to have tested it.
+    let mut protected=BTreeSet::<String>::new();
+    for kind in 0..=3{
+        let kinds=names.iter().filter(|name|grouped[*name].iter()
+            .any(|&i|units[i].kind==kind)).collect::<Vec<_>>();
+        if kinds.len()==1{protected.insert((*kinds[0]).clone());}
+    }
+    let candidates=names.iter().filter(|key|!protected.contains(*key))
+        .cloned().collect::<Vec<_>>();
+    if candidates.is_empty(){
+        return Err("Cannot reserve independent held-out groups without withholding every example in a single-example category".into());
+    }
+    let mut held:BTreeSet<String>=candidates.iter().rev()
+        .take((names.len()/5).max(1).min(candidates.len())).cloned().collect();
     // Aim for a validation sample from each category with >=2 independent
     // prompt groups. Entire repeated groups move together across categories.
     for kind in 0..=3{
         let candidates=names.iter().filter(|name|grouped[*name].iter()
             .any(|&i|units[i].kind==kind)).collect::<Vec<_>>();
         if candidates.len()>=2 && !candidates.iter().any(|x|held.contains(*x)){
-            held.insert((**candidates.last().unwrap()).clone());
+            if let Some(candidate)=candidates.iter().rev().find(|key|!protected.contains(**key)){
+                held.insert((**candidate).clone());
+            }
         }
     }
     // Never allocate every unique unit to validation.
