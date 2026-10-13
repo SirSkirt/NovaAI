@@ -13,6 +13,7 @@
  */
 #include <jni.h>
 #include <pthread.h>
+#include <string.h>
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static jobject wake_lock = NULL;
@@ -110,7 +111,18 @@ fail:
 JNIEXPORT jstring JNICALL
 Java_app_tauri_backgroundservice_HeadlessBridge_startCore(
     JNIEnv *env, jclass cls, jstring data_dir, jstring reason) {
-    (void)cls; (void)data_dir; (void)reason;
+    (void)cls; (void)data_dir;
+    // The Rust education session cannot be reconstructed by the plugin's
+    // generic boot auto-restart. Never hold a CPU wake lock after an OS
+    // restart without an explicit user-triggered native training session.
+    if (reason == NULL)
+        return result(env, "{\\"ok\\":false,\\"state\\":\\"failed\\",\\"code\\":\\"resume_training_in_app\\",\\"recoverable\\":true}");
+    const char *why = (*env)->GetStringUTFChars(env, reason, NULL);
+    if (why == NULL) return result(env, "{\\"ok\\":false,\\"state\\":\\"failed\\",\\"code\\":\\"invalid_start_reason\\"}");
+    int manual = strcmp(why, "manual_start") == 0;
+    (*env)->ReleaseStringUTFChars(env, reason, why);
+    if (!manual)
+        return result(env, "{\\"ok\\":false,\\"state\\":\\"failed\\",\\"code\\":\\"resume_training_in_app\\",\\"recoverable\\":true}");
     if (!acquire_wake_lock(env))
         return result(env, "{\"ok\":false,\"state\":\"failed\",\"code\":\"nova_wakelock_failed\",\"message\":\"Cannot acquire Android CPU wake lock for training\",\"recoverable\":true}");
     return result(env, "{\"ok\":true,\"state\":\"running\",\"recoverable\":false}");
