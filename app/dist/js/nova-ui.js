@@ -156,6 +156,7 @@ function modeChanged(mode){
     :mode==="reasoning"
     ?"Reasoning: one TAB-separated PREMISE, QUESTION, SUPPORTED answer, and CONTRADICTED answer per line. At least five distinct problems. The shared brain learns a whole-answer preference in addition to ordinary text."
     :"120–50,000 ASCII bytes, with at least five distinct paragraphs (blank-line separated), sentences, or lines. Entire sections are independently held out by a stable split; no training context crosses into validation.";
+  $("reasoningAccuracyMetric").hidden=mode!=="reasoning";
   countData();
 }
 function countData(){
@@ -692,6 +693,7 @@ async function listen(){
         (Number.isFinite(p.previousHeldoutLoss)?" | prior heldout "+
             p.previousHeldoutLoss.toFixed(4)+" (baseline "+p.previousBaselineLoss.toFixed(4)+")":"")+
         (p.guardAccepted===false?" | REJECTED for retention":"")+
+        (Number.isFinite(p.reasoningRankingAccuracy)&&activeMode==="reasoning"?" | unseen preference "+(100*p.reasoningRankingAccuracy).toFixed(1)+"%":"")+
         (p.rehearsalBatches?" | old batches "+p.rehearsalBatches:""));
       if(Number.isFinite(p.transformerGradientNorm)){
         history("Gradient norms (before clipping): Transformer "+
@@ -703,6 +705,9 @@ async function listen(){
       }
       $("heldoutLoss").textContent=p.validationLoss.toFixed(4);
       $("heldoutAccuracy").textContent=(100*p.validationAccuracy).toFixed(1)+"%";
+      if(Number.isFinite(p.reasoningRankingAccuracy)){
+        $("reasoningAccuracy").textContent=(100*p.reasoningRankingAccuracy).toFixed(1)+"%";
+      }
       $("bestEpoch").textContent="Best epoch: "+(p.bestEpoch||"baseline")+" · loss "+p.bestLoss.toFixed(4);
       $("trainingSpeed").textContent="Throughput: "+p.tokensPerSecond.toFixed(1)+" tokens/s";
     });
