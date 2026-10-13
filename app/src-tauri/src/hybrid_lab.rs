@@ -361,7 +361,14 @@ fn status(state:&HybridState,s:&Session)->HybridStatus{
 }
 #[tauri::command]
 pub fn hybrid_boot(app:AppHandle,state:State<'_,HybridState>)->Result<HybridStatus,String>{
-    if state.inner.training.load(Ordering::Acquire){return Err("Cannot boot while Nova is training".into());}
+    // Android may recreate the WebView while native background ZIP training is
+    // still running. UI boot must ATTACH to the live brain, never reload an old
+    // checkpoint over the active weights or reject the reconnect.
+    if state.inner.training.load(Ordering::Acquire) ||
+        app.state::<crate::lesson_zip::ZipQueueState>().is_active(){
+        let s=lock(&state)?;
+        return Ok(status(&state,&s));
+    }
     let mut s=lock(&state)?;
     let file=path(&app)?;
     if file.exists(){
