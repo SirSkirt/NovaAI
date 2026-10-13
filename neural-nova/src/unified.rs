@@ -504,10 +504,10 @@ mod tests{
             .filter(|(_,kind)|**kind==EXPLANATION).collect::<Vec<_>>();
         assert!(!examples.is_empty());
         assert!(examples.iter().all(|((context,_),_)|
-            context.starts_with(b"T: ") && !context.ends_with(b"\\nN: ")));
+            context.starts_with(b"T: ") && !context.ends_with(b"\nN: ")));
         assert!(plan.heldout_replies.iter().all(|(_,_,_,kind)|*kind!=EXPLANATION));
         assert!(plan.train.iter().zip(&plan.train_kinds)
-            .any(|((context,_),kind)|*kind==DIALOGUE && context.ends_with(b"\\nN: ")));
+            .any(|((context,_),kind)|*kind==DIALOGUE && context.ends_with(b"\nN: ")));
     }
     #[test]fn stable_holdouts_never_create_reply_or_preference_targets(){
         let raw=basic();
