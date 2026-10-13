@@ -135,6 +135,25 @@ fn classify_lesson_outcome(best_epoch:u32,error:Option<String>)
     if best_epoch==0{Ok(LessonDisposition::BaselineRetained)}
     else{Ok(LessonDisposition::Accepted(best_epoch))}
 }
+/// Record a lesson's actual education outcome without inventing learning.
+/// Zero eligible epochs means the baseline was retained, so it is NOT counted
+/// as accepted and MUST NOT be written to the rehearsal archive.
+fn apply_lesson_disposition(status:&mut ZipTrainingStatus,
+    name:&str,disposition:LessonDisposition) {
+    match disposition {
+        LessonDisposition::Accepted(epoch)=>{
+            status.completed+=1;
+            status.stage=format!(
+                "Accepted {} (epoch {}); preparing next lesson",name,epoch);
+        },
+        LessonDisposition::BaselineRetained=>{
+            status.skipped+=1;
+            status.stage=format!(
+                "No eligible improvement in {}; best baseline retained. Continuing to next lesson",
+                name);
+        }
+    }
+}
 #[derive(Default)]
 struct ZipQueueShared {
     active:AtomicBool,
@@ -247,27 +266,10 @@ pub fn hybrid_zip_train(app:AppHandle,brain:State<'_,HybridState>,
                 // cancellation is neither a learned lesson nor a validation
                 // failure and must not start the next lesson.
                 if queue.inner.stopping.load(Ordering::Acquire){break;}
-                match classify_lesson_outcome(best_epoch,error)
-                    .map_err(|e|format!("{}: {}",lesson.name,e))? {
-                    LessonDisposition::Accepted(epoch)=>{
-                        queue.update(&app,|s|{
-                            s.completed+=1;
-                            s.stage=format!("Accepted {} (epoch {}); preparing next lesson",
-                                lesson.name,epoch);
-                        });
-                    },
-                    LessonDisposition::BaselineRetained=>{
-                        // The trainer already restored its protected baseline.
-                        // Do NOT archive or count the rejected lesson as learned.
-                        // Move to the next independently validated lesson.
-                        queue.update(&app,|s|{
-                            s.skipped+=1;
-                            s.stage=format!(
-                                "No eligible improvement in {}; original checkpoint retained. Continuing to next lesson",
-                                lesson.name);
-                        });
-                    }
-                }
+                let outcome=classify_lesson_outcome(best_epoch,error)
+                    .map_err(|e|format!("{}: {}",lesson.name,e))?;
+                queue.update(&app,|s|
+                    apply_lesson_disposition(s,&lesson.name,outcome));
             }
             Ok(())
         })();
@@ -313,15 +315,45 @@ mod tests{
             .collect::<Vec<_>>().join("\n\n")
     }
     #[test]fn protected_baseline_allows_following_zip_lessons(){
-        assert_eq!(classify_lesson_outcome(0,None).unwrap(),
+        let data=curriculum();
+        let bundle=read_bundle(&make_zip(&[
+            ("01_baseline.txt",&data),("02_second.txt",&data)]),"text").unwrap();
+        let mut status=ZipTrainingStatus{
+            total:bundle.lessons.len(),..Default::default()
+        };
+        // First lesson early-stops with no eligible improvement. The shared
+        // neural trainer has already restored its protected checkpoint.
+        status.current=1;
+        let first=classify_lesson_outcome(0,None).unwrap();
+        assert_eq!(first,LessonDisposition::BaselineRetained);
+        apply_lesson_disposition(&mut status,&bundle.lessons[0].name,first);
+        assert_eq!(status.skipped,1);
+        assert_eq!(status.completed,0);
+        assert_eq!(status.failed,0);
+        assert!(status.stage.contains("Continuing to next lesson"));
+        // Next ZIP lesson is still scheduled and can actually be accepted.
+        status.current=2;
+        let second=classify_lesson_outcome(3,None).unwrap();
+        assert_eq!(second,LessonDisposition::Accepted(3));
+        apply_lesson_disposition(&mut status,&bundle.lessons[1].name,second);
+        assert_eq!(status.completed,1);
+        assert_eq!(status.skipped,1);
+        assert_eq!(status.current,2);
+        let failure=classify_lesson_outcome(0,Some("checkpoint save failed".into()));
+        assert_eq!(failure.unwrap_err(),"checkpoint save failed");
+        // A genuine write/training failure is still fatal.
+    }
+    #[test]fn skipped_lessons_are_not_mislabeled_as_accepted(){
+        let mut progress=ZipTrainingStatus::default();
+        apply_lesson_disposition(&mut progress,"01.txt",
             LessonDisposition::BaselineRetained);
-        assert_eq!(classify_lesson_outcome(3,None).unwrap(),
-            LessonDisposition::Accepted(3));
-        let failed=classify_lesson_outcome(0,Some("checkpoint save failed".into()));
-        assert_eq!(failed.unwrap_err(),"checkpoint save failed");
-        // A protected baseline is deliberately NOT an accepted lesson.
-        // The caller increments 'skipped' and starts the next lesson;
-        // real errors still fail closed.
+        assert_eq!(progress.completed,0);
+        assert_eq!(progress.skipped,1);
+        assert!(progress.stage.contains("No eligible improvement"));
+        apply_lesson_disposition(&mut progress,"02.txt",
+            LessonDisposition::Accepted(4));
+        assert_eq!(progress.completed,1);
+        assert_eq!(progress.skipped,1);
     }
     #[test]fn sorted_and_validated_lessons(){
         let c=curriculum();
