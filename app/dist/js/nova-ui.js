@@ -176,6 +176,8 @@ function modeChanged(mode){
     :mode==="reasoning"
     ?"Reasoning: one TAB-separated PREMISE, QUESTION, SUPPORTED answer, and CONTRADICTED answer per line. At least five distinct problems. The shared brain learns a whole-answer preference in addition to ordinary text."
     :"120–50,000 ASCII bytes, with at least five distinct paragraphs (blank-line separated), sentences, or lines. Entire sections are independently held out by a stable split; no training context crosses into validation.";
+  $("heldoutLossLabel").textContent=mode==="unified"||mode==="reasoning"
+    ?"Held-out composite loss":"Held-out loss";
   $("reasoningAccuracyMetric").hidden=mode!=="reasoning"&&mode!=="unified";
   countData();
 }
