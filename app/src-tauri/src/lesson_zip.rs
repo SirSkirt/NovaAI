@@ -109,6 +109,17 @@ mod tests{
         assert!(read_bundle(&make_zip(&[("script.js","alert('hi')")]),"text").is_err());
         assert!(read_bundle(&make_zip(&[("good.txt",&c)]),"unknown").is_err());
     }
+    #[test]fn reasoning_zip_uses_existing_teacher_mode_and_splits_holdouts(){
+        let data=(0..8).map(|n|format!(
+            "The box {n} is red.\tWhat color is box {n}?\tRed.\tBlue."
+        )).collect::<Vec<_>>().join("\n");
+        let zipped=make_zip(&[("01_reasoning.txt",&data)]);
+        let bundle=read_bundle(&zipped,"reasoning").unwrap();
+        assert_eq!(bundle.mode,"reasoning");
+        assert_eq!(bundle.lessons.len(),1);
+        assert!(bundle.lessons[0].training_samples>0);
+        assert!(bundle.lessons[0].heldout_samples>0);
+    }
     #[test]fn require_real_distinct_text_sections(){
         let data=make_zip(&[("weak.txt",&"abcde ".repeat(100))]);
         assert!(read_bundle(&data,"text").is_err());
