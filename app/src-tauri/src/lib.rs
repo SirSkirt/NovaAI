@@ -4,11 +4,14 @@ mod hybrid_lab;
 mod test_lab;
 mod diagnostic_log;
 mod rehearsal;
+mod lesson_zip;
+mod checkpoint_transfer;
 
 use neural::NeuralState;
 use transformer_lab::TransformerState;
 use hybrid_lab::HybridState;
 use diagnostic_log::Diagnostics;
+use checkpoint_transfer::TransferState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,6 +20,7 @@ pub fn run() {
         .manage(TransformerState::default())
         .manage(HybridState::default())
         .manage(Diagnostics::default())
+        .manage(TransferState::default())
         .invoke_handler(tauri::generate_handler![
             neural::neural_boot,
             neural::neural_status,
@@ -40,6 +44,13 @@ pub fn run() {
             diagnostic_log::nova_log_stop,
             diagnostic_log::nova_log_read,
             hybrid_lab::hybrid_train,
+            lesson_zip::hybrid_zip_preview,
+            hybrid_lab::hybrid_checkpoint_export_begin,
+            hybrid_lab::hybrid_checkpoint_export_chunk,
+            hybrid_lab::hybrid_checkpoint_import_begin,
+            hybrid_lab::hybrid_checkpoint_import_append,
+            hybrid_lab::hybrid_checkpoint_import_finish,
+            hybrid_lab::hybrid_checkpoint_import_cancel,
             hybrid_lab::hybrid_rehearsal_info,
             hybrid_lab::hybrid_rehearsal_add,
             hybrid_lab::hybrid_rehearsal_clear,
