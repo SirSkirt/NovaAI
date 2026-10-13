@@ -4,7 +4,7 @@ use neural_nova::trainer::{prepare,PreparedLessons};
 use serde::{Serialize,Deserialize};
 use std::{fs,path::Path};
 
-pub const MAX_ARCHIVED_LESSONS:usize=3;
+pub const MAX_ARCHIVED_LESSONS:usize=128;
 pub const RETENTION_VALIDATION_LIMIT:usize=256;
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
@@ -19,7 +19,7 @@ pub struct RehearsalBank{
 pub fn read(path:&Path)->Result<RehearsalBank,String>{
     if !path.exists(){return Ok(RehearsalBank::default());}
     let raw=fs::read(path).map_err(|e|e.to_string())?;
-    if raw.len()>250_000{return Err("Rehearsal bank exceeds size limit".into());}
+    if raw.len()>8_000_000{return Err("Rehearsal bank exceeds 8MB; export or archive it before adding more lessons".into());}
     let bank:RehearsalBank=serde_json::from_slice(&raw).map_err(|e|e.to_string())?;
     if bank.lessons.len()>MAX_ARCHIVED_LESSONS ||
       bank.lessons.iter().any(|x|x.text.len()>50_000 || x.name.len()>80){
@@ -28,7 +28,11 @@ pub fn read(path:&Path)->Result<RehearsalBank,String>{
     Ok(bank)
 }
 pub fn write(path:&Path,bank:&RehearsalBank)->Result<(),String>{
+    if bank.lessons.len()>MAX_ARCHIVED_LESSONS {
+        return Err("Rehearsal archive full; export old lessons rather than deleting them".into());
+    }
     let raw=serde_json::to_vec(bank).map_err(|e|e.to_string())?;
+    if raw.len()>8_000_000 {return Err("Rehearsal bank exceeds 8MB".into());}
     let temp=path.with_extension("tmp");
     {
         use std::io::Write;
@@ -58,10 +62,10 @@ pub fn append(bank:&mut RehearsalBank,record:LessonRecord,ending_fingerprint:Str
     if let Some(i)=bank.lessons.iter().position(|v|v.mode==record.mode&&v.text==record.text){
         bank.lessons.remove(i);
     }
-    bank.lessons.push(record);
-    if bank.lessons.len()>MAX_ARCHIVED_LESSONS{
-        bank.lessons.drain(..bank.lessons.len()-MAX_ARCHIVED_LESSONS);
+    if bank.lessons.len()==MAX_ARCHIVED_LESSONS {
+        return Err("Rehearsal archive is full (128 lessons). No older material has been deleted.".into());
     }
+    bank.lessons.push(record);
     bank.model_fingerprint=ending_fingerprint;
     Ok(())
 }
@@ -106,12 +110,22 @@ mod tests{
         mode:"dialogue".into(),name:s.into(),
         text:format!("hello\tHi {s}\nbye\tBye {s}\ncat\tAnimal {s}\ndog\tPet {s}\nbird\tBird {s}\n")
     }}
-    #[test]fn bounded_archive_keeps_last_three_and_must_match_weights(){
+    #[test]fn archive_never_silently_discards_older_lessons(){
         let mut bank=RehearsalBank::default();
         for i in 0..5{append(&mut bank,lesson(&i.to_string()),format!("fp-{i}")).unwrap();}
-        assert_eq!(bank.lessons.len(),3);
-        assert_eq!(matched(bank.clone(),"fp-4").lessons.len(),3);
+        assert_eq!(bank.lessons.len(),5);
+        assert_eq!(matched(bank.clone(),"fp-4").lessons.len(),5);
         assert!(matched(bank,"other-checkpoint").lessons.is_empty());
+    }
+    #[test]fn archive_rejects_capacity_without_deleting_old_sources(){
+        let mut bank=RehearsalBank::default();
+        for i in 0..MAX_ARCHIVED_LESSONS{
+            append(&mut bank,lesson(&i.to_string()),format!("fp-{i}")).unwrap();
+        }
+        let old=bank.lessons.clone();
+        assert!(append(&mut bank,lesson("overflow"),"bad".into()).is_err());
+        assert_eq!(bank.lessons.len(),old.len());
+        assert_eq!(bank.lessons[0].text,old[0].text);
     }
     #[test]fn replay_never_trains_on_its_holdout(){
         let mut bank=RehearsalBank::default();
