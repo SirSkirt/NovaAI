@@ -417,6 +417,92 @@ mod tests{
         brain.transformer=previous;
     }
     #[test]
+    fn cooperative_exchange_is_neutral_on_migrated_v010_weights(){
+        let mut old=HybridBrain::new();
+        old.learn_token_units("apple apple person person");
+        old.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.0003).unwrap();
+        let prefix=Transformer::precooperation_parameter_count();
+        let prompt=b"U: Susie has 2 apples. Tim has 4 apples. Who has more?\nN: ";
+        let original=old.predict_ablation_with_memory(prompt,256,&[],false,true).unwrap();
+        let mut migrated=HybridBrain::new();
+        migrated.dense=old.dense.clone();
+        migrated.dense_adam=old.dense_adam.clone();
+        migrated.tokenizer=old.tokenizer.clone();
+        migrated.transformer.import_compatible_arrays(
+            &old.transformer.weights[..prefix],&old.transformer.momentum[..prefix],
+            &old.transformer.variance[..prefix]).unwrap();
+        migrated.transformer.step=old.transformer.step;
+        assert_eq!(migrated.predict_window(prompt,256).unwrap(),original,
+            "new communication must be mathematically neutral at migration");
+        assert_eq!(&migrated.transformer.momentum[..prefix],
+            &old.transformer.momentum[..prefix]);
+        assert_eq!(&migrated.transformer.variance[..prefix],
+            &old.transformer.variance[..prefix]);
+        assert_eq!(migrated.dense_adam.step,old.dense_adam.step);
+    }
+    #[test]
+    fn context_contribution_and_readonly_ablation(){
+        let mut brain=HybridBrain::new();
+        let prompt=b"U: Susie has 2 apples. Tim has 4 apples. Who has more?\nN: ";
+        let l=crate::transformer::EXCHANGE_ROUNDS;
+        assert_eq!(brain.exchange_activity(prompt).unwrap(),vec![0.0;l]);
+        let before=brain.predict_window(prompt,256).unwrap();
+        let no_dense=brain.predict_ablation_with_memory(prompt,256,&[],true,false).unwrap();
+        let no_exchange=brain.predict_ablation_with_memory(prompt,256,&[],false,true).unwrap();
+        assert!(before.iter().zip(&no_dense).map(|(a,b)|(a-b).abs()).sum::<f32>()>1e-8,
+            "dense pathway must contribute to the final distribution");
+        assert_eq!(before,no_exchange,"new path starts neutral");
+        let original=brain.transformer.weights.clone();
+        brain.transformer.weights[brain.transformer.parameter_count()-128]=0.4;
+        let active=brain.predict_window(prompt,256).unwrap();
+        let disabled=brain.predict_ablation_with_memory(prompt,256,&[],false,true).unwrap();
+        assert!(active.iter().zip(&disabled).map(|(a,b)|(a-b).abs()).sum::<f32>()>1e-9,
+            "communication ablation should change predictions when learned");
+        let saved=brain.transformer.weights.clone();
+        let m=brain.transformer.momentum.clone();
+        let v=brain.transformer.variance.clone();
+        for _ in 0..2{
+            let _=brain.predict_ablation_with_memory(prompt,256,&[],true,false).unwrap();
+            let _=brain.predict_ablation_with_memory(prompt,256,&[],false,true).unwrap();
+        }
+        assert_eq!(brain.transformer.weights,saved);
+        assert_eq!(brain.transformer.momentum,m);
+        assert_eq!(brain.transformer.variance,v);
+        assert_ne!(original,saved);
+    }
+    #[test]
+    fn cooperative_joint_gradient_reaches_all_trainable_parts(){
+        let mut brain=HybridBrain::new();
+        let before_dense=brain.dense.layers[0].weights.clone();
+        let prompt=b"U: Amy has a red ball. Ben has a blue ball. Which ball is red?\nN: ";
+        let original=brain.transformer.weights.clone();
+        // Two passes: neutral response learns first, then its gradients can
+        // reach the queries and the same dense network via exact chain rule.
+        for _ in 0..3{brain.train_batch(&[(prompt.to_vec(),b'A')],0.002).unwrap();}
+        let tf=&brain.transformer.weights;
+        let p=Transformer::precooperation_parameter_count();
+        assert_ne!(&tf[..p],&original[..p],"Transformer/reasoning/bridge must update");
+        assert_ne!(&tf[p..],&original[p..],"exchange parameters must update");
+        assert_ne!(brain.dense.layers[0].weights,before_dense,"dense weights must update");
+        assert!(brain.exchange_activity(prompt).unwrap().iter().any(|v|*v>0.0));
+    }
+    #[test]
+    fn heldout_entity_combinations_do_not_leak_into_reasoning_training(){
+        let mut brain=HybridBrain::new();
+        let train=b"U: Alice has 2 stones. Bob has 4 stones. Who has more?\nN: ".to_vec();
+        let heldout=b"U: Oscar has 4 rings. Mina has 2 rings. Who has more?\nN: ".to_vec();
+        let baseline=brain.reasoning_margin(&heldout,b"Oscar.",b"Mina.").unwrap();
+        for _ in 0..2{
+            brain.train_preference_batch(&[(train.clone(),b"Bob.".to_vec(),b"Alice.".to_vec())],
+                0.0003).unwrap();
+        }
+        let after=brain.reasoning_margin(&heldout,b"Oscar.",b"Mina.").unwrap();
+        assert!(baseline.0.is_finite()&&after.0.is_finite());
+        assert_ne!(train,heldout);
+        // This tests independent measurement, NOT a guaranteed pass at
+        // untrained relational reasoning or semantic generalization.
+    }
+    #[test]
     fn shared_loss_updates_both_hemispheres_and_bridge(){
         let mut brain=HybridBrain::new();
         let before_t=brain.transformer.weights.clone();
