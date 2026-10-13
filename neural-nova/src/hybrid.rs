@@ -504,6 +504,23 @@ mod tests{
         // untrained relational reasoning or semantic generalization.
     }
     #[test]
+    fn gentle_reasoning_update_preserves_a_previously_learned_greeting(){
+        let mut brain=HybridBrain::new();
+        let greeting=(b"U: Hello!\nN: ".to_vec(),b'H');
+        for _ in 0..4{brain.train_batch(&[greeting.clone()],0.001).unwrap();}
+        let baseline=brain.evaluate(&[greeting.clone()]).unwrap().0;
+        let snapshot=brain.clone();
+        let original=snapshot.predict_window(&greeting.0,256).unwrap();
+        brain.train_preference_batch(&[(
+            b"U: Nia has 2 beads. Lee has 3 beads. Who has more?\nN: ".to_vec(),
+            b"Lee.".to_vec(),b"Nia.".to_vec())],0.0001).unwrap();
+        let retained=brain.evaluate(&[greeting.clone()]).unwrap().0;
+        assert!(retained.is_finite() && retained<=baseline+0.75,
+            "gentle reasoning lesson regressed existing greeting: {baseline} -> {retained}");
+        assert_eq!(snapshot.predict_window(&greeting.0,256).unwrap(),original,
+            "backup checkpoint must remain untouched by new training");
+    }
+    #[test]
     fn shared_loss_updates_both_hemispheres_and_bridge(){
         let mut brain=HybridBrain::new();
         let before_t=brain.transformer.weights.clone();
