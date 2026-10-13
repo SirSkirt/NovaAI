@@ -1,3 +1,12 @@
+NEURAL NOVA v0.11.0 — FINAL BUILD VERIFICATION (2026-10-13)
+- FULL GitHub Actions app build https://github.com/SirSkirt/NovaAI/actions/runs/38409093919 SUCCEEDED: JavaScript/Rust validation, Windows NSIS installer, Android debug APK, pinned debug signing certificate verification, and BOTH artifact uploads.
+- Android Actions artifact: Neural-Nova-Experimental-Android (artifact ID 11820672433). Windows: Neural-Nova-Experimental-Windows (artifact ID 11820671931). These are CI-built, NOT yet independently tested on the user's physical phone.
+- Rust core https://github.com/SirSkirt/NovaAI/actions/runs/38409127485 SUCCEEDED: 53 tests, release binary and standalone evaluator.
+- Upgrade is now build-verified. Before first Android install, export existing .nhyb and lesson/rehearsal data; existing v0.10.1 signing identity stays pinned for in-place update IF installed APK already shares its signing certificate. Real-device background training, checkpoint migration, ablations, inference latency, and reasoning skill retention are the next checks.
+- Unified lesson-block trainer remains out of scope until reasoning objectives and actual heldout learning behavior have been studied. Do not treat 0/5 heldout generated answers after FOUR toy steps on a fresh brain as successful reasoning.
+
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA v0.11.0 — COOPERATIVE BRAIN VALIDATION UPDATE (2026-10-13)
 - Experimental app visible version, package and Cargo bumped 0.10.1 -> 0.11.0. Unchanged Android package identity com.qtech.neuralnova.experimental and pinned public development certificate. Brain visualizer drawing, style and behavior unchanged (only visible version label and diagnostic text version updated).
 - New neural-nova/src/bin/cooperative_eval.rs performs real greedy generated-answer evaluation, independent unseen names/objects, relationship reversal, irrelevant fact and event transfer. It reports normalized full-answer preference margins, complete output strings, inference timings, both read-only ablations, and older greeting retention. Run from neural-nova: cargo run --release --bin cooperative_eval -- 4 (steps 1..128); only external evaluator knows expected answers.
