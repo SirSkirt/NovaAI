@@ -270,7 +270,7 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
         let belonging=names.iter().filter(|name|grouped[*name].iter()
             .any(|&i|units[i].kind==kind)).collect::<Vec<_>>();
         if !belonging.is_empty() && belonging.iter().all(|name|held.contains(*name)){
-            held.remove(*belonging[0]);
+            held.remove(belonging[0]);
         }
     }
     let mut prepared=PreparedLessons{
