@@ -263,13 +263,46 @@ $("clearRehearsal").addEventListener("click",()=>safe(async()=>{
 },"Clear rehearsal"));
 $("lessonMode").addEventListener("change",e=>{rememberDataset();modeChanged(e.target.value);});
 $("lessonData").addEventListener("input",()=>{rememberDataset();countData();});
+function importLessonText(text,name){
+  if(typeof text!=="string"||new TextEncoder().encode(text).length>50000)
+    throw Error("TXT lessons must be 50,000 bytes or smaller.");
+  text=text.replace(/\r\n/g,"\n");
+  if(!/^[\x00-\x7f]*$/.test(text))throw Error("The experimental tokenizer currently accepts ASCII text only.");
+  const structured=/^\[(?:Dialogue Lesson|Understanding Lesson|Multi-Turn Conversation Lesson|Reasoning Lesson)\]$/m.test(text);
+  if(structured && activeMode!=="unified"){
+    rememberDataset();$("lessonMode").value="unified";modeChanged("unified");
+  }
+  $("lessonData").value=text;rememberDataset();countData();
+  report("INFO","Lesson","Loaded "+name+(structured?" · detected unified lesson blocks.":" · explicit legacy type retained."));
+}
 $("lessonFile").addEventListener("change",()=>safe(async()=>{
   const file=$("lessonFile").files[0];if(!file)return;
-  const text=await file.text();
-  if(!/^[\x00-\x7f]*$/.test(text))throw Error("The experimental tokenizer currently accepts ASCII text only.");
-  $("lessonData").value=text;rememberDataset();countData();
-  report("INFO","Lesson","Loaded "+file.name+".");
+  importLessonText(await file.text(),file.name);
 },"File import"));
+if(/Android/i.test(navigator.userAgent)){
+  $("browserLessonFileLabel").hidden=true;
+  $("browserLessonFileLabel").style.display="none";
+  $("lessonFile").hidden=true;
+  $("nativeLessonFile").hidden=false;
+}
+$("nativeLessonFile").addEventListener("click",()=>safe(async()=>{
+  if(running)throw Error("Finish the current lesson before selecting another TXT.");
+  const dialog=window.__TAURI__?.dialog;
+  const fs=window.__TAURI__?.fs;
+  if(!dialog?.open||!fs?.readFile)
+    throw Error("Native Android document picker unavailable.");
+  const selected=await dialog.open({multiple:false,directory:false,pickerMode:"document"});
+  if(selected===null||selected===undefined)return;
+  if(typeof selected!=="string")throw Error("Unexpected Android document selection.");
+  let bytes;
+  try{bytes=await fs.readFile(selected);}
+  catch(e){throw Error("Android Files could not read this TXT: "+String(e));}
+  if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes);
+  if(!bytes.byteLength||bytes.byteLength>50000)
+    throw Error("Selected TXT must be 1–50,000 bytes.");
+  const text=new TextDecoder("utf-8",{fatal:true}).decode(bytes);
+  importLessonText(text,selected.split("/").pop()||"Android TXT");
+},"Android TXT import"));
 $("sampleLesson").addEventListener("click",()=>{
   $("lessonData").value=activeMode==="unified"?unifiedSample:activeMode==="dialogue"?dialogueSample:activeMode==="conversation"?conversationSample:activeMode==="reasoning"?reasoningSample:textSample;
   rememberDataset();countData();
