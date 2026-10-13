@@ -721,7 +721,7 @@ async function listen(){
         "Shared training finished; best validation checkpoint restored (epoch "+p.bestEpoch+").");
       void poll();
     });
-    await events.listen("hybrid-error",({payload:p})=>{setRunning(false);report("ERROR","Rust training",p);void poll();});
+    await events.listen("hybrid-error",({payload:p})=>{setRunning(false);void window.NovaTrainingBackground?.stop();report("ERROR","Rust training",p);void poll();});
     report("INFO","Events","Listening for unified Nova training progress, epoch, completion and errors.");
   }catch(e){report("ERROR","Native events",e);}
 }
