@@ -54,6 +54,14 @@ impl HybridState{
         self.inner.training.load(Ordering::Acquire)
     }
 }
+/// Teacher-only outcome used by the native ZIP scheduler after a completed
+/// lesson. It never changes Nova's predictions or evaluates answers for her.
+pub(crate) fn completed_training_outcome(state:&HybridState)
+    ->Result<(u32,Option<String>),String>{
+    let session=lock(state)?;
+    Ok((session.best_epoch,session.error.clone()))
+}
+
 #[cfg(target_os="android")]
 fn training_notification(app:&AppHandle,body:String,finished:bool){
     use tauri_plugin_notification::NotificationExt;
