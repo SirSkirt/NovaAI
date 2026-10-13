@@ -1,6 +1,6 @@
 [package]
 name = "nova-local-assistant"
-version = "0.7.1"
+version = "0.8.0"
 description = "Neural Nova experimental neural-network trainer"
 authors = ["QTech"]
 edition = "2021"
