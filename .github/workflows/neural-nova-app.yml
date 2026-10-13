@@ -105,6 +105,9 @@ jobs:
       - name: Initialize Android project
         working-directory: app
         run: npm run android:init -- --ci --skip-targets-install
+      - name: Compile Android native code (no APK published with temporary signing)
+        working-directory: app
+        run: npm run android:debug-apk -- --ci
       - name: Configure durable Android development signature and foreground service
         env:
           NOVA_ANDROID_KEYSTORE_BASE64: ${{ secrets.NOVA_ANDROID_KEYSTORE_BASE64 }}
