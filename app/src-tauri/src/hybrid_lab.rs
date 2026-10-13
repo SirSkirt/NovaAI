@@ -7,6 +7,7 @@ use crate::transformer_lab::Lesson;
 use crate::test_lab::{TestArchive,TestDefinition,TestReport,TestOptions,TestCase,QuestionResult,Attempt,parse_cases,grade,validate_options};
 use crate::diagnostic_log::{self as diag, Diagnostics};
 use crate::rehearsal::{self,LessonRecord,RehearsalBank};
+use crate::checkpoint_transfer::TransferState;
 use serde::{Deserialize,Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -191,6 +192,90 @@ fn snapshot_active_checkpoint(app:&AppHandle,brain:&HybridBrain,reason:&str)->Re
     let size=fs::copy(&current,&backup).map_err(|e|e.to_string())?;
     if size==0 {return Err("Refusing to start learning: checkpoint backup was empty".into());}
     Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct CheckpointTransferInfo{bytes:usize,step:u64,words:usize,parameters:usize}
+/// Take a consistent frozen copy of the whole joint brain including Adam
+/// moments and tokenizer. The file on disk remains untouched.
+#[tauri::command]
+pub fn hybrid_checkpoint_export_begin(app:AppHandle,
+    state:State<'_,HybridState>,transfer:State<'_,TransferState>)
+    ->Result<CheckpointTransferInfo,String>{
+    if state.inner.training.load(Ordering::Acquire){return Err("Wait until training completes".into());}
+    let s=lock(&state)?;
+    if !s.trained{return Err("Teach Nova before exporting neural weights".into());}
+    let temp=path(&app)?.with_extension("checkpoint-export.tmp");
+    s.brain.save(&temp)?;
+    let bytes=fs::read(&temp).map_err(|e|e.to_string())?;
+    let _=fs::remove_file(&temp);
+    let length=transfer.begin_export(bytes)?;
+    Ok(CheckpointTransferInfo{bytes:length,step:s.brain.transformer.step,
+        words:s.brain.tokenizer.words.len(),parameters:s.brain.parameter_count()})
+}
+#[tauri::command]
+pub fn hybrid_checkpoint_export_chunk(
+    transfer:State<'_,TransferState>,offset:usize)->Result<Vec<u8>,String>{
+    transfer.chunk(offset)
+}
+#[tauri::command]
+pub fn hybrid_checkpoint_import_begin(
+    state:State<'_,HybridState>,transfer:State<'_,TransferState>,
+    bytes:usize)->Result<(),String>{
+    if state.inner.training.load(Ordering::Acquire){return Err("Wait until training completes".into());}
+    transfer.import_begin(bytes)
+}
+#[tauri::command]
+pub fn hybrid_checkpoint_import_append(
+    transfer:State<'_,TransferState>,chunk:Vec<u8>)->Result<usize,String>{
+    transfer.import_append(chunk)
+}
+#[tauri::command]
+pub fn hybrid_checkpoint_import_cancel(transfer:State<'_,TransferState>)->Result<(),String>{
+    transfer.cancel()
+}
+#[tauri::command]
+pub fn hybrid_checkpoint_import_finish(
+    app:AppHandle,state:State<'_,HybridState>,
+    transfer:State<'_,TransferState>
+)->Result<HybridStatus,String>{
+    // No training or tests can start during final validation and replacement.
+    if state.inner.training.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err(){
+        return Err("Wait until Nova finishes teaching or testing".into());
+    }
+    let attempt=(||->Result<HybridStatus,String>{
+        let bytes=transfer.import_read()?;
+        let temp=path(&app)?.with_extension("checkpoint-import.tmp");
+        fs::write(&temp,&bytes).map_err(|e|e.to_string())?;
+        let candidate=HybridBrain::load(&temp);
+        let _=fs::remove_file(&temp);
+        let brain=candidate?;
+        let mut s=lock(&state)?;
+        if s.trained{snapshot_active_checkpoint(&app,&s.brain,"before-import")?;}
+        // Write the validated imported joint checkpoint atomically first.
+        brain.save(path(&app)?)?;
+        let marker=path(&app)?.with_extension("no-import");
+        if marker.exists(){fs::remove_file(marker).map_err(|e|e.to_string())?;}
+        // Old conversation history belongs to the former brain, and should
+        // never influence this independently restored one.
+        save_conversation(&app,&[])?;
+        s.brain=brain;s.trained=true;s.history.clear();
+        s.epoch=0;s.epochs=0;s.completed=0;s.total=0;
+        s.train_loss=None;s.heldout_loss=None;s.heldout_accuracy=None;
+        s.best_epoch=0;s.best_heldout_loss=None;s.early_stopped=false;
+        s.error=None;s.stage="Imported joint neural checkpoint".into();
+        s.retention_baseline=None;s.retention_accuracy=None;
+        diag::record(&app.state::<Diagnostics>(),"checkpoint_imported",serde_json::json!({
+            "steps":s.brain.transformer.step,"words":s.brain.tokenizer.words.len(),
+            "fingerprint":diag::weight_digest(&s.brain),
+            "rehearsalNote":"Archive is matched against imported joint weight fingerprint"
+        }));
+        let _=transfer.cancel();
+        Ok(status(&state,&s))
+    })();
+    state.inner.training.store(false,Ordering::Release);
+    attempt.map(|mut result|{result.training=false;result})
 }
 
 #[derive(Clone,Serialize)]
