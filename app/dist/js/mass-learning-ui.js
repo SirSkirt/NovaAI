@@ -11,6 +11,7 @@ if(android){
   // selected through Storage Access Framework. Let the native plugins hold
   // the transient document grant and read the bytes immediately.
   $("browserMassLessonPicker").hidden=true;
+  $("browserMassLessonPicker").style.display="none";
   $("massLessonZip").hidden=true;
   $("nativeMassLessonZip").hidden=false;
 }
@@ -33,10 +34,9 @@ async function pickNativeZip(){
     throw Error("Native Android file picker unavailable; update to the new Neural Nova build.");
   // Android returns a content:// URI, not a normal filesystem path.
   // Tauri's dialog plugin grants access to selected documents for plugin-fs.
-  const picked=await dialog.open({
-    multiple:false,directory:false,pickerMode:"document",
-    filters:[{name:"ZIP lesson archive",extensions:["application/zip","application/x-zip-compressed","zip"]}]
-  });
+  const picked=await dialog.open({multiple:false,directory:false,pickerMode:"document"});
+  // Do not rely on Android providers advertising a particular ZIP MIME type.
+  // The shared Rust ZIP validator checks the actual archive bytes.
   if(picked===null || picked===undefined)return; // Android Back / Cancel.
   if(typeof picked!=="string")throw Error("Unexpected result from Android document picker.");
   nativeZipBytes=null;nativeZipName=null;bundle=null;readyButtons();
