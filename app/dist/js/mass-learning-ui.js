@@ -3,8 +3,8 @@
 const $=id=>document.getElementById(id);
 const invoke=(command,args={})=>window.__TAURI__?.core?.invoke(command,args)
   ?? Promise.reject(Error("Installed native Neural Nova required"));
-let bundle=null,mode=null,selectedMode=null,active=false,stopping=false,at=0,success=0,failures=0;
-let nativeZipBytes=null,nativeZipName=null,bundleBytes=null,lastQueueLesson=0,lastQueueCompleted=0;
+let bundle=null,mode=null,selectedMode=null,active=false,stopping=false,at=0,success=0,skipped=0,failures=0;
+let nativeZipBytes=null,nativeZipName=null,bundleBytes=null,lastQueueLesson=0,lastQueueCompleted=0,lastQueueSkipped=0;
 const android=/Android/i.test(navigator.userAgent);
 if(android){
   // Android WebView File.arrayBuffer() can throw NotReadableError for files
@@ -73,7 +73,7 @@ async function preview(){
   if(data.byteLength===0||data.byteLength>4*1024*1024)
     throw Error("Selected ZIP must be between 1 byte and 4 MiB.");
   const result=await invoke("hybrid_zip_preview",{bytes:Array.from(data),mode:currentMode()});
-  bundle=result;bundleBytes=data;mode=result.mode;selectedMode=currentMode();at=0;success=0;failures=0;
+  bundle=result;bundleBytes=data;mode=result.mode;selectedMode=currentMode();at=0;success=0;skipped=0;failures=0;
   $("massLessonsLog").textContent="";
   result.lessons.forEach((lesson,i)=>addLog((i+1)+". "+lesson.name+" · "+
     lesson.mode+" · "+lesson.trainingSamples+" training / "+lesson.heldoutSamples+" held-out targets"));
@@ -108,7 +108,7 @@ async function nativeDone(){
 function showQueueStatus(p){
   if(!p)return;
   active=!!p.active;
-  at=p.current||0;success=p.completed||0;failures=p.failed||0;
+  at=p.current||0;success=p.completed||0;skipped=p.skipped||0;failures=p.failed||0;
   stopping=!!p.stopping;
   readyButtons();
   if(p.current>lastQueueLesson){
@@ -116,12 +116,16 @@ function showQueueStatus(p){
     lastQueueLesson=p.current;
   }
   if(p.completed>lastQueueCompleted){
-    addLog("ACCEPTED "+p.completed+"/"+p.total+" lesson(s); best checkpoint retained");
+    addLog("ACCEPTED "+p.completed+" lesson(s); best checkpoint retained");
     lastQueueCompleted=p.completed;
+  }
+  if((p.skipped||0)>lastQueueSkipped){
+    addLog("SKIPPED "+p.skipped+" lesson(s): no eligible validation improvement; baseline kept, continuing");
+    lastQueueSkipped=p.skipped;
   }
   view("Native background ZIP queue · "+(p.stage||"Working")+
     " · lesson "+(p.current||0)+"/"+(p.total||0)+
-    " · "+success+" accepted"+
+    " · "+success+" accepted · "+skipped+" skipped"+
     (p.error?" · ERROR: "+p.error:"")+
     (p.stopping?" · stopping":""));
 }
@@ -153,8 +157,8 @@ async function runQueue(){
   };
   const epochs=Number($("trainingEpochs").value);
   if(!Number.isInteger(epochs)||epochs<1||epochs>60)throw Error("Choose 1–60 epochs.");
-  active=true;stopping=false;at=0;success=0;failures=0;
-  lastQueueLesson=0;lastQueueCompleted=0;
+  active=true;stopping=false;at=0;success=0;skipped=0;failures=0;
+  lastQueueLesson=0;lastQueueCompleted=0;lastQueueSkipped=0;
   readyButtons();
   try{
     await window.NovaTrainingBackground?.start();
@@ -198,8 +202,10 @@ if(events?.listen){
   void events.listen("hybrid-zip-done",({payload})=>{
     showQueueStatus(payload);
     addLog(payload.error?"FAILED: "+payload.error:
-      payload.stopping?"STOPPED: saved best accepted checkpoints":
-      "COMPLETE: "+payload.completed+" lessons accepted.");
+      payload.stopping?"STOPPED: accepted checkpoints retained":
+      "COMPLETE: "+payload.completed+" accepted, "+(payload.skipped||0)+
+      " skipped (no eligible improvement; baseline retained)."+
+      (payload.completed===0?" No lessons were learned in this ZIP run.":""));
     void window.NovaTrainingBackground?.stop();
   }).catch(e=>console.error("ZIP completion events",e));
 }
