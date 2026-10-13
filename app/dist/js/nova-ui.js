@@ -714,6 +714,7 @@ async function listen(){
     });
     await events.listen("hybrid-done",({payload:p})=>{
       setRunning(false);
+      void window.NovaTrainingBackground?.stop();
       void updateRehearsalBank().catch(e=>report("WARN","Rehearsal archive",e));
       report("INFO","Training",p.cancelled?"Training stopped; best joint checkpoint restored.":
         p.earlyStopped?"Validation stalled; early stopped at best epoch "+p.bestEpoch+".":
