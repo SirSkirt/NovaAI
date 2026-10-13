@@ -917,6 +917,56 @@ mod tests {
         assert_eq!(model.weights,before);
     }
     #[test]
+    fn reciprocal_exchange_updates_dense_twice_and_gradients_are_exact(){
+        let mut model=Transformer::new(51);
+        let l=layout();
+        let dense_network=Network::new(crate::NetworkConfig::neural_nova_v1()).unwrap();
+        let history=b"U: Susie has two apples. Tim has four. Who has more?\nN: ";
+        let tokens=history.iter().map(|&v|v as u16).collect::<Vec<_>>();
+        let input=crate::encode_ascii_context(history).unwrap();
+        let baseline=dense_network.logits(&input).unwrap();
+        // Pretend the response projection has learned nonzero values.
+        // The first response affects the hidden state that queries dense again.
+        model.weights[l.feedback_response.start]=1.5;
+        model.weights[l.feedback_response.start+VOCAB]=0.7;
+        model.weights[l.feedback_query.start]=4.0;
+        let cache=model.forward_tokens_internal(&tokens,Some(&baseline),CONTEXT,&[],
+            Some((&dense_network,&input))).unwrap();
+        assert_eq!(cache.reasoning.iter().filter(|s|s.exchange.is_some()).count(),
+            EXCHANGE_ROUNDS);
+        let first=cache.reasoning[0].exchange.as_ref().unwrap();
+        let second=cache.reasoning[1].exchange.as_ref().unwrap();
+        assert_ne!(first.pre_exchange,second.pre_exchange,
+            "Transformer must evolve between two dense queries");
+        assert_ne!(first.input,second.input,
+            "later dense computation must receive the evolving Transformer state");
+        let mut dense_grad=Gradients::zeros(&dense_network);
+        let (_,tf_grad,_)=model.gradient_tokens_cooperative(
+            &tokens,b'T',&baseline,&[],&dense_network,&input,&mut dense_grad).unwrap();
+        let eps=0.005;
+        for index in [l.feedback_response.start,l.feedback_query.start,l.context_query.start]{
+            let mut plus=model.clone();plus.weights[index]+=eps;
+            let mut minus=model.clone();minus.weights[index]-=eps;
+            let objective=|m:&Transformer|{
+                -m.predict_cooperative(&tokens,&baseline,CONTEXT,&[],&dense_network,&input)
+                    .unwrap()[b'T' as usize].ln()
+            };
+            let numerical=(objective(&plus)-objective(&minus))/(2.0*eps);
+            assert!((tf_grad[index]-numerical).abs()<0.04,
+                "index {index}: analytic {} numerical {numerical}",tf_grad[index]);
+        }
+        let mut plus=dense_network.clone();plus.layers[0].weights[0]+=eps;
+        let mut minus=dense_network.clone();minus.layers[0].weights[0]-=eps;
+        let objective=|net:&Network|{
+            -model.predict_cooperative(&tokens,&baseline,CONTEXT,&[],net,&input)
+                .unwrap()[b'T' as usize].ln()
+        };
+        let numeric=(objective(&plus)-objective(&minus))/(2.0*eps);
+        assert!((dense_grad.layers[0].weights[0]-numeric).abs()<0.04,
+            "dense-backward analytic {} numerical {numeric}",
+            dense_grad.layers[0].weights[0]);
+    }
+    #[test]
     fn can_train_reply_character_and_restore_optimizer() {
         let mut model=Transformer::new(41);
         let example=vec![(b"U: Hello\nN: ".to_vec(),b'H')];
