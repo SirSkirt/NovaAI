@@ -154,6 +154,7 @@ async function runQueue(){
       }finally{at++;}
     }
   }finally{
+    await window.NovaTrainingBackground?.stop();
     active=false;readyButtons();
     view((stopping?"Stopped":"Finished")+" · "+success+" taught, "+failures+
       " failed, "+(bundle.lessons.length-at)+" not started. Checkpoint saved after each accepted lesson.");
