@@ -80,6 +80,8 @@ fn run()->Result<(),String>{
     }
     eprintln!("Training {} comparison steps took {} ms",
         steps,start.elapsed().as_millis());
+    let evaluation_weights=brain.transformer.weights.clone();
+    let evaluation_optimizer=brain.transformer.momentum.clone();
     let mut hits=[0usize;3];
     for c in &UNSEEN {
         for (idx,(mode,no_dense,no_exchange)) in [
@@ -92,9 +94,11 @@ fn run()->Result<(),String>{
     let retained=brain.evaluate(&[greeting])?.0;
     println!("SUMMARY\t{} steps; heldout exact full={} no-dense={} no-exchange={}/{}; old-greeting-loss {:.4}->{:.4}",
         steps,hits[0],hits[1],hits[2],UNSEEN.len(),retention_before,retained);
-    let old_hello=before.predict(b"U: Hello!\nN: ")?;
-    let after_old=before.predict(b"U: Hello!\nN: ")?;
-    assert_eq!(old_hello,after_old,"evaluation must not mutate the original checkpoint");
+    assert_eq!(brain.transformer.weights,evaluation_weights,
+        "evaluation or ablation must not change learned weights");
+    assert_eq!(brain.transformer.momentum,evaluation_optimizer,
+        "evaluation or ablation must not change optimizer history");
+    let _=before.predict(b"U: Hello!\\nN: ")?;
     Ok(())
 }
 fn main(){if let Err(e)=run(){eprintln!("{e}");std::process::exit(1);}}
