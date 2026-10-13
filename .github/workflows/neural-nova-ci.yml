@@ -37,3 +37,6 @@ jobs:
       - name: Compare same-start flat versus multi-objective education (diagnostic)
         working-directory: neural-nova
         run: cargo run --release --bin curriculum_eval -- 1
+      - name: Probe novel context/quantity combinations and hemisphere ablations (diagnostic)
+        working-directory: neural-nova
+        run: cargo run --release --bin curriculum_ab -- 6
