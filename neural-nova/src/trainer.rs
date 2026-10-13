@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 pub type Example = (Vec<u8>,u8);
+pub type ReasoningExample=(Vec<u8>,Vec<u8>,Vec<u8>);
 pub const MAX_SAMPLES:usize=50_000;
 pub const MAX_CORPUS_BYTES:usize=50_000;
 
@@ -21,6 +22,8 @@ pub struct PreparedLessons{
     pub training_text:String,
     pub memory_train:Vec<Vec<String>>,
     pub memory_validation:Vec<Vec<String>>,
+    pub reasoning_train:Vec<ReasoningExample>,
+    pub reasoning_validation:Vec<ReasoningExample>,
 }
 
 /// Canonicalize prompt *only to avoid train/validation contamination*.
@@ -182,6 +185,55 @@ fn memory_samples(sessions:&[Vec<DialoguePair>])->Result<(Vec<Example>,Vec<Vec<S
     }
     Ok((data,histories))
 }
+/// Teacher data for reasoning: premise TAB question TAB supported conclusion
+/// TAB contradicted conclusion. Only the inference-free curriculum builder
+/// uses the rejected answer. It never enters the user's chat prompt.
+fn prepare_reasoning(text:&str)->Result<PreparedLessons,String>{
+    let mut groups:BTreeMap<String,Vec<(DialoguePair,ReasoningExample)>>=BTreeMap::new();
+    for (index,line) in text.lines().filter(|s|!s.trim().is_empty()).enumerate(){
+        let fields=line.split('\t').collect::<Vec<_>>();
+        if fields.len()!=4 {return Err(format!(
+            "Reasoning line {} must have PREMISE TAB QUESTION TAB CORRECT TAB INCORRECT",index+1));}
+        let [fact,question,correct,wrong]=[fields[0].trim(),fields[1].trim(),
+            fields[2].trim(),fields[3].trim()];
+        if correct.is_empty()||wrong.is_empty()||correct==wrong||
+            correct.len()>96||wrong.len()>96{
+            return Err(format!("Reasoning line {} needs different, nonempty conclusions ≤96 characters",index+1));
+        }
+        let prompt=format!("{fact} {question}");
+        if prompt.len()>180||fact.is_empty()||question.is_empty(){
+            return Err(format!("Reasoning premise and question on line {} must fit in 180 characters",index+1));
+        }
+        let prefix=dialogue_prefix(&prompt)?;
+        let pair=DialoguePair{user:prompt.clone(),assistant:correct.to_string()};
+        groups.entry(prompt_group(&prompt)).or_default().push((pair,
+            (prefix,correct.as_bytes().to_vec(),wrong.as_bytes().to_vec())));
+    }
+    if groups.len()<5{return Err("Reasoning requires at least five distinct premise/question groups for held-out testing".into());}
+    let mut sorted=groups.into_iter().collect::<Vec<_>>();
+    sorted.sort_by(|a,b|stable_hash(&a.0).cmp(&stable_hash(&b.0)).then(a.0.cmp(&b.0)));
+    let cutoff=sorted.len()-(sorted.len()/5).max(1);
+    let mut train_pairs=Vec::new();let mut validation_pairs=Vec::new();
+    let mut reasoning_train=Vec::new();let mut reasoning_validation=Vec::new();
+    for (i,(_,group)) in sorted.into_iter().enumerate(){
+        for (pair,compare) in group{
+            if i<cutoff{train_pairs.push(pair);reasoning_train.push(compare);}
+            else{validation_pairs.push(pair);reasoning_validation.push(compare);}
+        }
+    }
+    let train=dialogue_examples(&train_pairs)?;
+    let validation=dialogue_examples(&validation_pairs)?;
+    if train.len()>MAX_SAMPLES||reasoning_train.len()>1000{
+        return Err("Reasoning lesson too large; split into smaller groups".into());
+    }
+    let training_text=train_pairs.iter().map(|p|format!("{} {}\n",p.user,p.assistant))
+        .collect::<String>();
+    Ok(PreparedLessons{train,validation,mode:"reasoning".into(),
+        train_lessons:train_pairs.len(),validation_lessons:validation_pairs.len(),
+        training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
+        reasoning_train,reasoning_validation})
+}
+
 pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
     if !text.is_ascii(){return Err("Current tokenizer supports ASCII only".into());}
     match mode{
@@ -214,8 +266,10 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
             let training_text=train_pairs.iter()
                 .map(|p|format!("{} {}\n",p.user,p.assistant)).collect::<String>();
             Ok(PreparedLessons{train,validation,train_lessons:train_pairs.len(),validation_lessons:valid_pairs.len(),
-                mode:mode.into(),training_text,memory_train:Vec::new(),memory_validation:Vec::new()})
+                mode:mode.into(),training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
+                reasoning_train:Vec::new(),reasoning_validation:Vec::new()})
         },
+        "reasoning"=>prepare_reasoning(text),
         "text"=>{
             if text.len()<120||text.len()>MAX_CORPUS_BYTES{
                 return Err(format!("Text lessons require 120–{MAX_CORPUS_BYTES} ASCII bytes per training run"));
@@ -235,9 +289,10 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
             if train.len()>MAX_SAMPLES{return Err("Too many conversation training characters".into());}
             Ok(PreparedLessons{train,validation,
                 train_lessons:sessions.len(),validation_lessons:held.len(),mode:mode.into(),
-                training_text,memory_train,memory_validation})
+                training_text,memory_train,memory_validation,
+                reasoning_train:Vec::new(),reasoning_validation:Vec::new()})
         },
-        _=>Err("Select dialogue, text, or conversation lessons".into())
+        _=>Err("Select dialogue, text, conversation, or reasoning lessons".into())
     }
 }
 /// Training schedule; does not choose any response or change neural inference.
@@ -373,6 +428,17 @@ mod tests{
             }
             if rate==0.0001{assert!(last<rate);}
         }
+    }
+    #[test]
+    fn reasoning_pair_split_does_not_train_on_rejected_answers(){
+        let data=(0..9).map(|i|format!(
+            "The box {i} is red.\tWhat color is box {i}?\tRed.\tBlue."
+        )).collect::<Vec<_>>().join("\n");
+        let p=prepare("reasoning",&data).unwrap();
+        assert_eq!(p.reasoning_train.len()+p.reasoning_validation.len(),9);
+        assert!(p.reasoning_train.iter().all(|(_,good,bad)|good==b"Red."&&bad==b"Blue."));
+        assert_eq!(p.train_lessons+p.validation_lessons,9);
+        assert!(!p.training_text.contains("Blue."));
     }
     #[test]
     fn text_validation_uses_whole_paragraphs_and_no_cross_split_context(){
