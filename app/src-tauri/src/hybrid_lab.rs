@@ -1501,15 +1501,20 @@ fn train_inner(
 )->Result<(bool,bool,u32),String>{
     let train:&[Example]=&lessons.train;
     let started=Instant::now();
-    let (mut best_brain,mut best_loss,mut best_accuracy,initially_trained)={
+    let (mut best_brain,mut best_loss,mut best_accuracy,initially_trained,
+        mut best_autonomous)={
         let mut s=lock(state)?;
         let (loss,accuracy,ranking_loss,ranking_accuracy)=current_validation(&s.brain,lessons)?;
         if !loss.is_finite(){return Err("Non-finite baseline validation loss".into());}
+        let autonomous=if lessons.mode=="unified"{
+            autonomous_validation(&s.brain,lessons)?
+        }else{None};
         s.heldout_loss=Some(loss);s.heldout_accuracy=Some(accuracy);
         s.best_heldout_loss=Some(loss);
         if diag::enabled(&app.state::<Diagnostics>()){
             diag::record(&app.state::<Diagnostics>(),"lesson_validation_baseline",serde_json::json!({
                 "loss":loss,"nextCharacterAccuracy":accuracy,
+                "autonomousHeldout":autonomous,
                 "reasoningRankingLoss":ranking_loss,"reasoningRankingAccuracy":ranking_accuracy,
                 "generatedHeldoutExactByCategory":if lessons.mode=="unified"{
                     generated_heldout(&s.brain,lessons).ok()
@@ -1529,9 +1534,10 @@ fn train_inner(
                 "step":s.brain.transformer.step,"wordUnits":s.brain.tokenizer.words.len(),
                 "weightsFingerprint":diag::weight_digest(&s.brain),
                 "selectionUsesOnlyCurrentLessonValidation":true,
+                "checkpointSelectionIncludesIndependentGeneration":lessons.mode=="unified",
             }));
         }
-        (s.brain.clone(),loss,accuracy,s.trained)
+        (s.brain.clone(),loss,accuracy,s.trained,autonomous)
     };
     // Diagnostic baseline is measured after existing vocabulary expansion.
     // The dedicated tokenizer-only A/B command measures the earlier stage.
@@ -1810,7 +1816,8 @@ fn train_inner(
         }
         if trained_count==0 {break;}
         let (validation_loss,validation_accuracy,prior_loss,retention_score,
-            eligible,improved,reasoning_ranking_loss,reasoning_ranking_accuracy)={
+            eligible,improved,reasoning_ranking_loss,reasoning_ranking_accuracy,
+            current_autonomous,autonomous_guard)={
             let mut s=lock(state)?;
             s.stage="Evaluating current and earlier held-out lessons".into();
             let (loss,accuracy,ranking_loss,ranking_accuracy)=current_validation(&s.brain,lessons)?;
@@ -1824,9 +1831,21 @@ fn train_inner(
             let eligible=!protect_previous ||
                 rehearsal::eligible_checkpoint(
                     old_loss,prior_baseline,loss_tolerance,teacher,teacher_baseline);
-            let improved=eligible && loss + MIN_IMPROVEMENT < best_loss;
+            // Screening via teacher-forced validation avoids expensive
+            // rollouts when an epoch obviously regressed. A candidate that
+            // qualifies must ALSO preserve autonomous first-character and
+            // full-answer performance on independent held-out examples.
+            let candidate=eligible && loss+MIN_IMPROVEMENT<best_loss;
+            let autonomous=if candidate && lessons.mode=="unified"{
+                autonomous_validation(&s.brain,lessons)?
+            }else{None};
+            let autonomous_guard=if candidate{
+                autonomous_selection_ok(best_autonomous,autonomous,best_loss,loss)
+            }else{false};
+            let improved=candidate && autonomous_guard;
             if improved{
                 best_loss=loss;best_accuracy=accuracy;best_epoch=epoch;
+                best_autonomous=autonomous;
                 best_brain=s.brain.clone();
                 s.brain.save(path(app)?)?;
             }
@@ -1834,7 +1853,8 @@ fn train_inner(
             s.best_heldout_loss=Some(best_loss);
             s.heldout_loss=Some(loss);
             s.heldout_accuracy=Some(accuracy);
-            (loss,accuracy,old_loss,teacher,eligible,improved,ranking_loss,ranking_accuracy)
+            (loss,accuracy,old_loss,teacher,eligible,improved,ranking_loss,
+                ranking_accuracy,autonomous,autonomous_guard)
         };
         if let Some(value)=retention_score{lock(state)?.retention_accuracy=Some(value);}
         let should_stop=schedule.observe_validation(improved);
@@ -1845,6 +1865,10 @@ fn train_inner(
             diag::record(&app.state::<Diagnostics>(),"train_epoch",serde_json::json!({
                 "epoch":epoch,"learningRate":learning_rate,
                 "trainingLoss":epoch_loss/trained_count as f64,
+                "autonomousHeldout":current_autonomous,
+                "selectedAutonomousHeldout":best_autonomous,
+                "autonomousGuardAccepted":autonomous_guard,
+                "autonomousSelectionUsesTeacherHeldoutOnly":true,
                 "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
                 "reasoningRankingLoss":reasoning_ranking_loss,"reasoningRankingAccuracy":reasoning_ranking_accuracy,
                 "generatedHeldoutExactByCategory":if lessons.mode=="unified"{
@@ -1882,6 +1906,9 @@ fn train_inner(
         let _=app.emit("hybrid-epoch",serde_json::json!({
             "epoch":epoch,"epochs":epochs,
             "trainLoss":epoch_loss/trained_count as f64,
+            "autonomousHeldout":current_autonomous,
+            "selectedAutonomousHeldout":best_autonomous,
+            "autonomousGuardAccepted":autonomous_guard,
             "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
             "bestLoss":best_loss,"bestEpoch":best_epoch,"improved":improved,
             "previousHeldoutLoss":prior_loss,"previousBaselineLoss":prior_baseline,
@@ -1913,6 +1940,7 @@ fn train_inner(
             .map(|p|p.to_string()).collect::<Vec<_>>();
         diag::record(&app.state::<Diagnostics>(),"training_selected_checkpoint",serde_json::json!({
             "requestedEpochs":epochs,"bestEpoch":best_epoch,"bestValidationLoss":best_loss,
+            "bestAutonomousHeldout":best_autonomous,
             "earlyStopped":early_stopped,"cancelled":cancelled,
             "selectedStep":best_brain.transformer.step,
             "weightsFingerprint":diag::weight_digest(&best_brain),
