@@ -131,6 +131,14 @@ impl ZipQueueState {
     pub(crate) fn is_active(&self)->bool{
         self.inner.active.load(Ordering::Acquire)
     }
+    /// Read-only progress for Android's service notification retry. The
+    /// lesson comes from the native ZIP queue, never JavaScript polling.
+    #[cfg(target_os="android")]
+    pub(crate) fn current_lesson(&self)->Option<(String,usize,usize)>{
+        let status=self.inner.progress.lock().ok()?;
+        if !status.active || status.current==0 || status.lesson.is_empty(){return None;}
+        Some((status.lesson.clone(),status.current,status.total))
+    }
     fn snapshot(&self)->Result<ZipTrainingStatus,String>{
         self.inner.progress.lock().map(|x|x.clone())
             .map_err(|_|"ZIP scheduler state lock poisoned".into())
