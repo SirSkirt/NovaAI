@@ -17,28 +17,35 @@ function harness(android){
   get("lessonMode").value="text";
   get("trainingEpochs").value="3";
   get("massLessonsLog").textContent="No bulk lessons loaded.";
-  let webReads=0,nativeReads=0,pickerCalls=0,validation=null;
+  let webReads=0,nativeReads=0,pickerCalls=0,validation=null,started=null;
   const selected={name:"01_lessons.zip",size:4,async arrayBuffer(){
     webReads++;return Uint8Array.from([80,75,3,4]).buffer;
   }};
   get("massLessonZip").files=android?[]:[selected];
   const window={
+    NovaTrainingBackground:{async start(){},async stop(){}},
     __TAURI__:{
       core:{async invoke(command,args){
+        if(command==="hybrid_status")return {training:false};
+        if(command==="hybrid_zip_status")return {active:!!started,total:1,current:started?1:0,
+          completed:0,failed:0,stage:started?"Training in native Rust":""};
+        if(command==="hybrid_zip_train"){started=args;return;}
+        if(command==="hybrid_zip_stop")return true;
         if(command!=="hybrid_zip_preview")throw Error("Unexpected "+command);
         validation=args;
         return {lessons:[{name:"01_test.txt",trainingSamples:24,heldoutSamples:6}],
           mode:"text",totalBytes:192};
       }},
+      event:{async listen(){return ()=>{};}},
       dialog:{async open(){pickerCalls++;return "content://provider/document/zip";}},
       fs:{async readFile(){nativeReads++;return Uint8Array.from([80,75,3,4]);}}
     }
   };
-  const context={window,document:{getElementById:get},
+  const context={window,document:{getElementById:get,addEventListener(){}},
     navigator:{userAgent:android?"Mozilla/5.0 (Linux; Android 16; SM-S938W) AppleWebKit/537.36":"Windows Chrome"},
     console,confirm:()=>true};
   vm.runInNewContext(script,context,{filename:"mass-learning-ui.js"});
-  return {get,window,selected,stats:()=>({webReads,nativeReads,pickerCalls,validation})};
+  return {get,window,selected,stats:()=>({webReads,nativeReads,pickerCalls,validation,started})};
 }
 (async()=>{
   const mobile=harness(true);
@@ -52,6 +59,12 @@ function harness(android){
   assert.deepEqual(Array.from(mobile.stats().validation.bytes),[80,75,3,4]);
   assert.equal(mobile.get("startMassLessons").disabled,false);
   assert.equal(mobile.stats().webReads,0,"native Android picker must bypass File.arrayBuffer");
+  await mobile.get("startMassLessons").callbacks.click();
+  assert.equal(mobile.stats().started.mode,"text");
+  assert.deepEqual(Array.from(mobile.stats().started.bytes),[80,75,3,4],
+    "the native queue must revalidate the original ZIP");
+  assert.equal(mobile.get("stopMassLessons").disabled,false,
+    "the native queue remains active after the JS start callback exits");
   const desktop=harness(false);
   await desktop.get("previewMassLessons").callbacks.click();
   assert.equal(desktop.stats().webReads,1);
