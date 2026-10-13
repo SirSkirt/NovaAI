@@ -396,6 +396,23 @@ mod tests{
         assert_eq!(original,extended);
     }
     #[test]
+    fn whole_answer_preference_updates_both_existing_networks(){
+        let mut brain=HybridBrain::new();
+        let prefix=b"U: The box is red. What color is it?\nN: ".to_vec();
+        let good=b"Red.".to_vec();let bad=b"Blue.".to_vec();
+        let prior_tf=brain.transformer.weights.clone();
+        let prior_dense=brain.dense.layers[0].weights.clone();
+        let before_tf=brain.transformer.step;
+        let result=brain.train_preference_batch(&[(prefix.clone(),good.clone(),bad.clone())],0.0001).unwrap();
+        assert!(result.is_finite());
+        assert_eq!(brain.transformer.step,before_tf+1);
+        assert_eq!(brain.dense_adam_steps(),1);
+        assert_ne!(brain.transformer.weights,prior_tf);
+        assert_ne!(brain.dense.layers[0].weights,prior_dense);
+        let (loss,_)=brain.reasoning_margin(&prefix,&good,&bad).unwrap();
+        assert!(loss.is_finite());
+    }
+    #[test]
     fn old_v03_joint_checkpoint_migrates_without_changing_short_context_results(){
         let mut trained=HybridBrain::new();
         trained.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.001).unwrap();
