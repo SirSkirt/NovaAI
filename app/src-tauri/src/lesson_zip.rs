@@ -18,7 +18,7 @@ pub struct ZipLesson{pub name:String,pub text:String,pub training_samples:usize,
 pub struct LessonBundle{pub mode:String,pub lessons:Vec<ZipLesson>,pub total_bytes:usize}
 pub fn read_bundle(data:&[u8],mode:&str)->Result<LessonBundle,String>{
     if !matches!(mode,"text"|"dialogue"|"conversation"|"reasoning"){
-        return Err("Select Text/Language, Dialogue or Conversation first".into());
+        return Err("Select Text/Language, Dialogue, Conversation or Reasoning first".into());
     }
     if data.is_empty() || data.len()>MAX_ZIP_BYTES{
         return Err("ZIP must contain data and be smaller than 4 MiB".into());
