@@ -276,7 +276,7 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
                 .map(|p|format!("{} {}\n",p.user,p.assistant)).collect::<String>();
             Ok(PreparedLessons{train,validation,train_lessons:train_pairs.len(),validation_lessons:valid_pairs.len(),
                 mode:mode.into(),training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
-                reasoning_train:Vec::new(),reasoning_validation:Vec::new()train_kinds:Vec::new(),validation_kinds:Vec::new(),
+                reasoning_train:Vec::new(),reasoning_validation:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],})
         },
         "reasoning"=>prepare_reasoning(text),
@@ -301,7 +301,7 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
             Ok(PreparedLessons{train,validation,
                 train_lessons:sessions.len(),validation_lessons:held.len(),mode:mode.into(),
                 training_text,memory_train,memory_validation,
-                reasoning_train:Vec::new(),reasoning_validation:Vec::new()train_kinds:Vec::new(),validation_kinds:Vec::new(),
+                reasoning_train:Vec::new(),reasoning_validation:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],})
         },
         _=>Err("Select dialogue, text, conversation, or reasoning lessons".into())
