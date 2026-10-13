@@ -145,6 +145,42 @@ fn parse_sessions(lines:&[String])->Result<Vec<Vec<DialoguePair>>,String>{
     if sessions.is_empty(){return Err("Multi-turn [examples] needs a [session]".into());}
     Ok(sessions)
 }
+/// Teacher-only contrast selection. Similar input wording with DIFFERENT
+/// teacher-provided answers makes context use relevant: the model must learn
+/// which situation supports which answer, not just prefer a familiar answer.
+fn lexical_features(text:&str)->BTreeSet<String>{
+    text.split(|c:char| !c.is_ascii_alphanumeric())
+        .filter(|w|!w.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+fn context_pair_similarity(a:&BTreeSet<String>,b:&BTreeSet<String>)->i64{
+    let shared=a.intersection(b).count() as i64;
+    let unmatched=a.symmetric_difference(b).count() as i64;
+    8*shared-unmatched
+}
+/// All candidates are from ONE split (training OR independent validation).
+/// Never synthesize a correct answer, infer a fact, or use the other split.
+fn select_context_negative(
+    source:usize,pairs:&[&DialoguePair],features:&[BTreeSet<String>],
+)->Option<usize>{
+    const MAX_CANDIDATES:usize=192; // Bounded teacher preprocessing on Android.
+    let n=pairs.len();
+    if n<=1{return None;}
+    let step=((n-1)+MAX_CANDIDATES-1)/MAX_CANDIDATES;
+    (1..n).step_by(step.max(1))
+        .filter_map(|offset|{
+            let i=(source+offset)%n;
+            if pairs[i].assistant==pairs[source].assistant{return None;}
+            let overlap=context_pair_similarity(&features[source],&features[i]);
+            let len_diff=(pairs[source].assistant.len() as i64-
+                pairs[i].assistant.len() as i64).abs();
+            Some((i,overlap*4-len_diff))
+        })
+        .max_by(|(a,score_a),(b,score_b)|
+            score_a.cmp(score_b).then_with(||b.cmp(a)))
+        .map(|(index,_)|index)
+}
 fn parse_comparison(line:&str)->Result<(DialoguePair,ReasoningExample),String>{
     let a=line.strip_prefix("Premise: ").ok_or("Reasoning example must start with Premise: ")?;
     let (fact,rest)=a.split_once(" Question: ").ok_or("Reasoning example requires Question: ")?;
@@ -318,15 +354,15 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
     for validation in [false,true]{
         let candidates=units.iter().filter(|unit|unit.kind==UNDERSTANDING &&
             held.contains(&unit.group)==validation).collect::<Vec<_>>();
+        let pairs=candidates.iter().map(|item|&item.turns[0]).collect::<Vec<_>>();
+        let features=pairs.iter().map(|pair|lexical_features(&pair.user))
+            .collect::<Vec<_>>();
         let mut comparisons=Vec::<ReasoningExample>::new();
-        for (i,item) in candidates.iter().enumerate(){
-            let pair=&item.turns[0];
-            if let Some(wrong)=candidates.iter().skip(i+1)
-                .chain(candidates.iter().take(i))
-                .map(|other|&other.turns[0].assistant)
-                .find(|candidate|**candidate!=pair.assistant){
+        for (i,pair) in pairs.iter().enumerate(){
+            if let Some(other)=select_context_negative(i,&pairs,&features){
                 comparisons.push((dialogue_prefix(&pair.user)?,
-                    pair.assistant.as_bytes().to_vec(),wrong.as_bytes().to_vec()));
+                    pair.assistant.as_bytes().to_vec(),
+                    pairs[other].assistant.as_bytes().to_vec()));
             }
         }
         if validation{prepared.understanding_validation=comparisons;}
@@ -380,6 +416,42 @@ mod tests{
             "Premise: Mira has a red ball. Question: What color is the ball? Supported: Red. Contradicted: Blue.\n",
             "[/examples]\n[/Reasoning Lesson]\n"
         ).to_string()
+    }
+    #[test]fn contrast_prefers_similar_questions_over_unrelated_answers(){
+        let data=[
+            DialoguePair{user:"Mira has a red ball. What color is Mira's ball?".into(),
+                         assistant:"Red.".into()},
+            DialoguePair{user:"Tim has a blue ball. What color is Tim's ball?".into(),
+                         assistant:"Blue.".into()},
+            DialoguePair{user:"Nora has four apples. How many apples does Nora have?".into(),
+                         assistant:"Four.".into()},
+        ];
+        let pairs=data.iter().collect::<Vec<_>>();
+        let features=pairs.iter().map(|x|lexical_features(&x.user)).collect::<Vec<_>>();
+        assert_eq!(select_context_negative(0,&pairs,&features),Some(1));
+        assert_eq!(select_context_negative(1,&pairs,&features),Some(0));
+        assert_ne!(select_context_negative(2,&pairs,&features),Some(2));
+    }
+    #[test]fn contextual_targets_never_cross_into_other_split(){
+        let mut examples=String::from(
+            "[Understanding Lesson]\\nEntities and their properties.\\n[examples]\\n");
+        for i in 0..18{
+            examples.push_str(&format!(
+                "Person{i} has a {} ball. What color is Person{i}'s ball?  {}.\\n",
+                if i%2==0{"red"}else{"blue"},
+                if i%2==0{"Red"}else{"Blue"}
+            ));
+        }
+        examples.push_str("[/examples]\\n[/Understanding Lesson]");
+        let p=prepare(&examples).unwrap();
+        for (prefix,good,bad) in &p.understanding_train{
+            assert_ne!(good,bad);
+            assert!(!p.understanding_validation.iter().any(|(held,_,_)|held==prefix));
+        }
+        for (prefix,good,bad) in &p.understanding_validation{
+            assert_ne!(good,bad);
+            assert!(!p.understanding_train.iter().any(|(train,_,_)|train==prefix));
+        }
     }
     #[test]fn combined_blocks_create_joint_objectives(){
         let p=prepare(&basic()).unwrap();
