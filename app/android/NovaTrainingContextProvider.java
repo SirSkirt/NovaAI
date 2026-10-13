@@ -2,10 +2,8 @@ package com.qtech.neuralnova.experimental;
 
 import android.app.Notification;
 import android.app.NotificationManager;
-import android.app.PendingIntent;
-import android.content.Intent;
 import android.content.SharedPreferences;
-import android.os.Build;
+import android.service.notification.StatusBarNotification;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
@@ -46,39 +44,26 @@ public final class NovaTrainingContextProvider extends ContentProvider {
         SharedPreferences preferences = context.getSharedPreferences(
             "bg_service", Context.MODE_PRIVATE);
         int notificationId = preferences.getInt("bg_notif_id", 9001);
-        String channelId = preferences.getString("bg_notif_channel_id", "bg_keepalive");
-        if (channelId == null || channelId.isEmpty()) channelId = "bg_keepalive";
-
-        // Never resurrect a stopped foreground-service notification.
-        // The Kotlin LifecycleService sets isForeground=true after promotion.
-        if (!app.tauri.backgroundservice.LifecycleService.Companion.isForeground()) {
-            return false;
-        }
+        // Update the actual active foreground notification rather than
+        // constructing a new one. Recovering its builder preserves the icon,
+        // channel, title, launch action, Android FGS flags and accessibility.
         NotificationManager manager = (NotificationManager) context.getSystemService(
             Context.NOTIFICATION_SERVICE);
         if (manager == null) return false;
-        Intent launch = context.getPackageManager().getLaunchIntentForPackage(
-            context.getPackageName());
-        PendingIntent pending = launch == null ? null : PendingIntent.getActivity(
-            context, 0, launch,
-            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        String detail = "Lesson " + index + "/" + total + ": " + lesson;
-        Notification.Builder builder = new Notification.Builder(context)
-            .setSmallIcon(context.getApplicationInfo().icon)
-            .setContentTitle(context.getApplicationInfo()
-                .loadLabel(context.getPackageManager()))
-            .setContentText(detail)
-            .setStyle(new Notification.BigTextStyle().bigText(detail))
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setSound(null)
-            .setDefaults(0)
-            .setPriority(Notification.PRIORITY_LOW)
-            .setCategory(Notification.CATEGORY_SERVICE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            builder.setChannelId(channelId);
+        Notification original = null;
+        for (StatusBarNotification posted : manager.getActiveNotifications()) {
+            if (posted.getId() == notificationId && posted.getTag() == null) {
+                original = posted.getNotification();
+                break;
+            }
         }
-        if (pending != null) builder.setContentIntent(pending);
+        if (original == null) return false; // service is not running; do not resurrect it.
+        String detail = "Lesson " + index + "/" + total + ": " + lesson;
+        Notification.Builder builder = Notification.Builder.recoverBuilder(
+            context, original);
+        builder.setContentText(detail)
+            .setStyle(new Notification.BigTextStyle().bigText(detail))
+            .setOnlyAlertOnce(true);
         Notification notification = builder.build();
         try {
             manager.notify(notificationId, notification);
