@@ -15,12 +15,28 @@ impl<R:Runtime> BackgroundService<R> for TrainingKeepalive {
     async fn run(&mut self,ctx:&ServiceContext<R>)->Result<(),ServiceError>{
         let mut observed_training=false;
         let launched=Instant::now();
+        // Foreground promotion can briefly race the first ZIP-lesson change.
+        // Recheck the actual service notification until Android accepts it.
+        let mut last_displayed:Option<(usize,String)>=None;
+        let mut last_attempt=Instant::now()-Duration::from_secs(10);
         loop{
             tokio::select!{
                 _=ctx.shutdown.cancelled()=>break,
                 _=tokio::time::sleep(Duration::from_secs(2))=>{
                     let running=ctx.app.state::<HybridState>().is_training()
                         || ctx.app.state::<ZipQueueState>().is_active();
+                    if let Some((name,index,total))=
+                        ctx.app.state::<ZipQueueState>().current_lesson(){
+                        let current=(index,name.clone());
+                        if last_displayed.as_ref()!=Some(&current) &&
+                            last_attempt.elapsed()>=Duration::from_secs(8){
+                            last_attempt=Instant::now();
+                            if crate::android_lesson_notification::show_zip_lesson(
+                                &name,index,total){
+                                last_displayed=Some(current);
+                            }
+                        }
+                    }
                     if running {observed_training=true;}
                     if observed_training&&!running {break;}
                     // A rejected lesson or cancelled file picker must not leave
