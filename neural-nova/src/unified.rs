@@ -264,6 +264,15 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
     }
     // Never allocate every unique unit to validation.
     if held.len()==names.len(){held.remove(&names[0]);}
+    // Do not strand an objective with validation only. Each represented
+    // category must have at least one independent training unit.
+    for kind in 0..=3{
+        let belonging=names.iter().filter(|name|grouped[*name].iter()
+            .any(|&i|units[i].kind==kind)).collect::<Vec<_>>();
+        if !belonging.is_empty() && belonging.iter().all(|name|held.contains(*name)){
+            held.remove(*belonging[0]);
+        }
+    }
     let mut prepared=PreparedLessons{
         train:Vec::new(),validation:Vec::new(),train_lessons:0,
         validation_lessons:0,mode:"unified".into(),training_text:String::new(),
@@ -397,6 +406,17 @@ mod tests{
         assert!(prepare(&basic().replace("[/session]","")).is_err());
         assert!(prepare(&basic().replace(" Supported: Tim."," Answer: Tim.")).is_err());
         assert!(prepare(&basic().replace("[/examples]","[/unknown]")).is_err());
+    }
+    #[test]fn every_objective_has_training_examples_even_with_overlapping_groups(){
+        let p=prepare(&basic()).unwrap();
+        for kind in 0..4{
+            assert!(p.category_train[kind]>0,
+                "Objective {kind} was assigned exclusively to validation");
+        }
+        for (prefix,_,_,_) in &p.heldout_replies{
+            assert!(!p.reasoning_train.iter().any(|(prompt,_,_)|prompt==prefix));
+            assert!(!p.understanding_train.iter().any(|(prompt,_,_)|prompt==prefix));
+        }
     }
     #[test]fn stable_holdouts_never_create_reply_or_preference_targets(){
         let raw=basic();
