@@ -678,6 +678,71 @@ mod tests {
         assert!((p.iter().sum::<f32>()-1.0).abs()<1e-5);
     }
     #[test]
+    fn recurrent_path_is_neutral_then_learns_from_prediction(){
+        let mut model=Transformer::new(19);
+        let l=layout();
+        let before=model.predict(b"U: hello\nN: ").unwrap();
+        assert_eq!(model.reasoning_activity(&[b'H' as u16],&[0.0;VOCAB],&[]).unwrap(),
+            vec![0.0;REASONING_STEPS]);
+        let before_reader=model.weights[l.reason_read.clone()].to_vec();
+        model.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.003).unwrap();
+        assert_ne!(&model.weights[l.reason_update.clone()],&vec![0.0;l.reason_update.len()]);
+        assert_eq!(model.weights[l.reason_read.clone()],before_reader,
+            "first gradient updates the neutral output projection; reader gets gradients afterward");
+        model.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.003).unwrap();
+        assert_ne!(model.weights[l.reason_read.clone()],before_reader);
+        let after=model.predict(b"U: hello\nN: ").unwrap();
+        assert_ne!(before,after);
+        assert!(model.reasoning_activity(&[b'H' as u16],&[0.0;VOCAB],&[])
+            .unwrap().iter().any(|x|*x>0.0));
+    }
+    #[test]
+    fn recurrent_bptt_matches_finite_difference(){
+        let mut model=Transformer::new(55);
+        let l=layout();
+        // Mimic a few learned recurrent steps to make reader derivatives nonzero.
+        for i in 0..D{
+            model.weights[l.reason_update.start+i*D+i]=0.3;
+            model.weights[l.reason_bias.start+i]=0.02;
+        }
+        let context=b"U: red box\nN: ".iter().map(|c|*c as u16).collect::<Vec<_>>();
+        let dense=(0..VOCAB).map(|i|if i%2==0{0.08}else{-0.04}).collect::<Vec<_>>();
+        let (_,g,dinput)=model.gradient_tokens_with_memory(&context,b'R',Some(&dense),&[]).unwrap();
+        let delta=0.002;
+        for i in [l.reason_update.start+D+1,l.reason_read.start+D*3+4,l.reason_bias.start+2,
+            l.bridge.start+7*VOCAB+11]{
+            let mut positive=model.clone();positive.weights[i]+=delta;
+            let mut negative=model.clone();negative.weights[i]-=delta;
+            let objective=|m:&Transformer|{
+                -m.forward_tokens_with_memory(&context,Some(&dense),CONTEXT,&[])
+                    .unwrap().probabilities[b'R' as usize].ln()
+            };
+            let numeric=(objective(&positive)-objective(&negative))/(2.0*delta);
+            assert!((g[i]-numeric).abs()<0.025,
+                "recurrent weight {i}: analytic {} numerical {numeric}",g[i]);
+        }
+        let mut positive=dense.clone();positive[7]+=delta;
+        let mut negative=dense.clone();negative[7]-=delta;
+        let objective=|x:&[f32]|-model.forward_tokens_with_memory(&context,Some(x),CONTEXT,&[])
+            .unwrap().probabilities[b'R' as usize].ln();
+        let numeric=(objective(&positive)-objective(&negative))/(2.0*delta);
+        assert!((dinput[7]-numeric).abs()<0.025,
+            "recurrent dense input derivative: {} numerical {numeric}",dinput[7]);
+    }
+    #[test]
+    fn previous_full_transformer_import_is_bitwise_prediction_compatible(){
+        let trained=Transformer::new(73);
+        let legacy=Transformer::previous_parameter_count();
+        assert!(trained.parameter_count()>legacy);
+        let mut migrated=Transformer::new(999);
+        migrated.import_compatible_arrays(&trained.weights[..legacy],
+            &trained.momentum[..legacy],&trained.variance[..legacy]).unwrap();
+        assert_eq!(trained.predict(b"U: Hi\nN: ").unwrap(),
+            migrated.predict(b"U: Hi\nN: ").unwrap());
+        assert_eq!(&migrated.momentum[..legacy],&trained.momentum[..legacy]);
+        assert_eq!(&migrated.variance[..legacy],&trained.variance[..legacy]);
+    }
+    #[test]
     fn gradient_matches_finite_difference() {
         let model=Transformer::new(9);
         let history=b"Hello!";
