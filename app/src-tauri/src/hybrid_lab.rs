@@ -1195,7 +1195,6 @@ fn train_inner(
         prior_batches.sort_by_key(|(i,_,kind)|(*kind,*i));
         let mut interleaved=Vec::with_capacity(prior_batches.len());
         while !prior_batches.is_empty(){
-            let mut remaining=Vec::new();
             for kind in 0..=4{
                 if let Some(index)=prior_batches.iter().position(|x|x.2==kind){
                     interleaved.push(prior_batches.remove(index));
@@ -1203,7 +1202,6 @@ fn train_inner(
             }
             // All entries have a valid kind. Keep the loop finite.
             if interleaved.is_empty(){break;}
-            remaining.clear();
         }
         let prior_batches=interleaved;
         let mut replay_batches=0usize;
