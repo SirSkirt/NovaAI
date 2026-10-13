@@ -1,3 +1,11 @@
+NEURAL NOVA v0.12.0 — FINAL PRE-RELEASE NOTES (2026-10-13)
+- Native Android TXT import added to Teach screen: app/dist/index.html and nova-ui.js now show native dialog/fs picker on Android, avoid WebView File.text access failure, enforce 50k ASCII max, auto-detect self-identifying lesson blocks. Desktop keeps old TXT picker. Same Tauri dialog/fs permissions as existing native ZIP import.
+- app/src-tauri/src/rehearsal.rs now preserves up to 128 source lessons on disk but materializes at most 12 category/age-balanced historical curricula during a lesson. This avoids expanding up to 128 large 50k-byte curricula simultaneously into RAM and overwhelming phone memory. Retention panel then checks representative held-out samples across these 12 (<=64 tokens per old lesson). Nonselected lessons are NOT erased; active subset evolves with incoming lessons. This is bounded sampling, NOT exhaustive recall verification.
+- Final app verification is GitHub Actions #377: https://github.com/SirSkirt/NovaAI/actions/runs/38417206478 ; status pending at time of note. Check Android APK, signing verification and Windows installer individually. Do not claim success until CI reports it.
+- Rust core #98 previously passed 56 tests and both evaluators; after last native/UI changes, the full app job reruns Rust validation. Existing model checkpoint layout, package identity and permanent test certificate unchanged. Keep Visualize untouched.
+
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA v0.12.0 — UNIFIED EDUCATION & RETENTION HANDOFF (2026-10-13)
 
 AUTHORITATIVE USER REQUIREMENTS
