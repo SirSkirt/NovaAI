@@ -133,6 +133,7 @@ fn prepare_text_sections(text:&str)->Result<PreparedLessons,String>{
         validation_lessons:valid_units.len(),mode:"text".into(),
         training_text:train_units.join("\n\n"),
         memory_train:Vec::new(),memory_validation:Vec::new(),
+        reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
     })
 }
 
