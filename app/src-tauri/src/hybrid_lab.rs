@@ -949,6 +949,7 @@ pub fn hybrid_train(
                 "learningRate":starting_lr,"patience":patience,
                 "lessonLengthBytes":lesson.text.len(),"lessonFingerprint":diag::fingerprint(&lesson.text),
                 "trainingExamples":plan.train.len(),"validationExamples":plan.validation.len(),
+                "supervisedResponseInitials":supervised_initials(&plan),
                 "trainingSections":plan.train_lessons,"heldoutSections":plan.validation_lessons,
                 "categoryTrainingUnits":plan.category_train,
                 "categoryHeldoutUnits":plan.category_validation,
@@ -1258,6 +1259,63 @@ fn greeting_first_character_bias(brain:&HybridBrain)->Option<serde_json::Value>{
         "entropy":-p.iter().filter(|&&x|x>0.0).map(|&x|x*x.ln()).sum::<f32>(),
     }))
 }
+/// Read-only teacher metric: answer likelihoods for the SAME held-out
+/// contextual question, comparing full neural cooperation against suppressing
+/// dense features or iterative exchange. No correct conclusion is calculated
+/// here and no answer key is ever supplied to model inference.
+fn heldout_context_ablation(
+    brain:&HybridBrain,lessons:&PreparedLessons,
+)->Result<Option<serde_json::Value>,String>{
+    let Some((prompt,good,bad))=lessons.understanding_validation.first() else {
+        return Ok(None);
+    };
+    let score=|answer:&[u8],dense_off:bool,exchange_off:bool|
+        ->Result<f32,String>{
+        let mut history=prompt.clone();
+        let mut logp=0.0f32;
+        for target in answer.iter().copied().chain(std::iter::once(b'\n')){
+            let probabilities=brain.predict_ablation_with_memory(
+                &history,256,&[],dense_off,exchange_off)?;
+            logp+=probabilities[target as usize].max(1.0e-30).ln();
+            history.push(target);
+            if history.len()>512{history.drain(..history.len()-512);}
+        }
+        Ok(logp/(answer.len()+1) as f32)
+    };
+    let mut margins=[0.0f32;3];
+    for (i,(dense_off,exchange_off)) in
+        [(false,false),(true,false),(false,true)].iter().copied().enumerate(){
+        margins[i]=score(good,dense_off,exchange_off)?-
+            score(bad,dense_off,exchange_off)?;
+    }
+    Ok(Some(serde_json::json!({
+        "samples":1,"fullAnswerMargin":margins[0],
+        "denseSuppressedMargin":margins[1],
+        "exchangeSuppressedMargin":margins[2],
+        "denseContribution":margins[0]-margins[1],
+        "iterativeContribution":margins[0]-margins[2],
+        "teacherOnlyHeldoutAnswers":true,
+        "note":"One read-only heldout comparison; differences are not evidence of general reasoning by themselves"
+    })))
+}
+/// Teacher-only response initial distribution. This diagnoses a bias such as
+/// 'Yello!' from actual supervised targets, not invented input/answer rules.
+fn supervised_initials(lesson:&PreparedLessons)->serde_json::Value{
+    let mut target_totals=[0usize;5];
+    let mut starts_y=[0usize;5];
+    let mut starts_h=[0usize;5];
+    for ((history,target),kind) in lesson.train.iter().zip(&lesson.train_kinds){
+        let k=*kind as usize;
+        if k>=5 || !history.ends_with(b"\nN: "){continue;}
+        target_totals[k]+=1;
+        if *target==b'Y'{starts_y[k]+=1;}
+        if *target==b'H'{starts_h[k]+=1;}
+    }
+    serde_json::json!({"firstResponseTargetsByObjective":target_totals,
+        "startsWithYByObjective":starts_y,
+        "startsWithHByObjective":starts_h,
+        "explanationsAreNotReplyTargets":true})
+}
 fn understanding_validation(brain:&HybridBrain,lessons:&PreparedLessons)
     ->Result<(f32,f32),String>{
     understanding_validation_limited(brain,lessons,16)
@@ -1318,6 +1376,9 @@ fn train_inner(
                 "greetingFirstCharacterBias":greeting_first_character_bias(&s.brain),
                 "understandingContrast":if lessons.mode=="unified"{
                     understanding_validation(&s.brain,lessons).ok()
+                }else{None},
+                "heldoutContextAblation":if lessons.mode=="unified"{
+                    heldout_context_ablation(&s.brain,lessons).ok().flatten()
                 }else{None},
                 "categoryLoss":if lessons.mode=="unified"{
                     mixed_validation(&s.brain,lessons,
@@ -1598,6 +1659,10 @@ fn train_inner(
                 "greetingFirstCharacterBias":greeting_first_character_bias(&brain),
                 "understandingContrast":if lessons.mode=="unified"{
                     understanding_validation(&brain,lessons).ok()
+                }else{None},
+                "heldoutContextAblation":if lessons.mode=="unified" &&
+                    (epoch==1 || epoch%3==0 || should_stop){
+                    heldout_context_ablation(&brain,lessons).ok().flatten()
                 }else{None},
                 "categoryHeldoutLoss":if lessons.mode=="unified"{
                     mixed_validation(&brain,lessons,
@@ -2191,6 +2256,30 @@ mod test_runner_tests{
             ids.iter().all(|&i|i<archive[*source].train.len())));
         let follow=balanced_replay_schedule(&archive,2,10);
         assert_ne!(many,follow,"category/source order must vary across epochs");
+    }
+    #[test]
+    fn contextual_ablation_is_readonly_and_uses_teacher_heldout_rows(){
+        let lesson=neural_nova::trainer::prepare("unified",concat!(
+            "[Understanding Lesson]\nProperties are represented in sentences.\n[examples]\n",
+            "Mira has red shoes. What color are Mira's shoes?  Red.\n",
+            "Tim has blue shoes. What color are Tim's shoes?  Blue.\n",
+            "Nora has green shoes. What color are Nora's shoes?  Green.\n",
+            "Al has black shoes. What color are Al's shoes?  Black.\n",
+            "Dee has orange shoes. What color are Dee's shoes?  Orange.\n",
+            "[/examples]\n[/Understanding Lesson]"
+        )).unwrap();
+        let brain=HybridBrain::new();
+        let before=brain.transformer.weights.clone();
+        let before_step=brain.transformer.step;
+        let result=heldout_context_ablation(&brain,&lesson).unwrap();
+        if let Some(report)=result{
+            assert_eq!(report["teacherOnlyHeldoutAnswers"],true);
+            assert!(report["fullAnswerMargin"].as_f64().unwrap().is_finite());
+        }
+        assert_eq!(brain.transformer.weights,before);
+        assert_eq!(brain.transformer.step,before_step);
+        let counts=supervised_initials(&lesson);
+        assert_eq!(counts["explanationsAreNotReplyTargets"],true);
     }
     #[test]
     fn small_corrective_example_improves_target_probability_in_one_joint_brain(){
