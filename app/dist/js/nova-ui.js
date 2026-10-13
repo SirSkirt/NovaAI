@@ -42,7 +42,17 @@ const conversationSample=[
 "",
 "U: The tree is tall.","N: The tree is tall.","U: What did I say was tall?","N: The tree."
 ].join("\n");
-const datasets={dialogue:dialogueSample,text:textSample,conversation:conversationSample};
+const reasoningSample=[
+"The amber key opens the amber door.\tWhich key opens the amber door?\tThe amber key.\tThe violet key.",
+"The violet key opens the violet door.\tWhich key opens the violet door?\tThe violet key.\tThe amber key.",
+"The silver box contains an apple.\tWhat is in the silver box?\tAn apple.\tA stone.",
+"The green box contains a stone.\tWhat is in the green box?\tA stone.\tAn apple.",
+"Mira is north of Tavik.\tWho is south of Mira?\tTavik.\tMira.",
+"Tavik is south of Mira.\tWho is north of Tavik?\tMira.\tTavik.",
+"The copper switch turns on the lamp.\tWhat turns on the lamp?\tThe copper switch.\tThe bell.",
+"The bell rings when touched.\tWhat rings when touched?\tThe bell.\tThe copper switch."
+].join("\n");
+const datasets={dialogue:dialogueSample,text:textSample,conversation:conversationSample,reasoning:reasoningSample};
 const TOKENIZER_BASELINE_KEY="neural-nova-tokenizer-experiment-v1";
 let latestTokenizerProbe=null;
 
@@ -136,13 +146,15 @@ function status(s){
 }
 function rememberDataset(){datasets[activeMode]=$("lessonData").value;try{localStorage.setItem("nova-hybrid-"+activeMode,datasets[activeMode]);}catch(_){}}
 function modeChanged(mode){
-  if(!(mode in datasets))datasets[mode]=mode==="dialogue"?dialogueSample:mode==="conversation"?conversationSample:textSample;
+  if(!(mode in datasets))datasets[mode]=mode==="dialogue"?dialogueSample:mode==="conversation"?conversationSample:mode==="reasoning"?reasoningSample:textSample;
   activeMode=mode;
   $("lessonData").value=datasets[mode];
   $("lessonHint").textContent=mode==="dialogue"
     ?"Up to 1,024 dialogue pairs, 384 ASCII characters per reply; one TAB between question and answer. Validation holds out whole question groups."
     :mode==="conversation"
     ?"Multi-turn: write U: and N: lines, separate sessions with blank lines or ---. At least 5 independent sessions, each with 2+ turns. Held-out sessions test neural memory."
+    :mode==="reasoning"
+    ?"Reasoning: one TAB-separated PREMISE, QUESTION, SUPPORTED answer, and CONTRADICTED answer per line. At least five distinct problems. The shared brain learns a whole-answer preference in addition to ordinary text."
     :"120–50,000 ASCII bytes, with at least five distinct paragraphs (blank-line separated), sentences, or lines. Entire sections are independently held out by a stable split; no training context crosses into validation.";
   countData();
 }
@@ -236,7 +248,7 @@ $("lessonFile").addEventListener("change",()=>safe(async()=>{
   report("INFO","Lesson","Loaded "+file.name+".");
 },"File import"));
 $("sampleLesson").addEventListener("click",()=>{
-  $("lessonData").value=activeMode==="dialogue"?dialogueSample:activeMode==="conversation"?conversationSample:textSample;
+  $("lessonData").value=activeMode==="dialogue"?dialogueSample:activeMode==="conversation"?conversationSample:activeMode==="reasoning"?reasoningSample:textSample;
   rememberDataset();countData();
 });
 $("clearLesson").addEventListener("click",()=>{$("lessonData").value="";rememberDataset();countData();});
@@ -256,7 +268,7 @@ function history(line){
   $("epochHistory").textContent=line+"\n"+(prev==="No completed epochs yet."?"":prev);
 }
 $("startTraining").addEventListener("click",()=>safe(async()=>{
-  if(running)return;
+  if(running||window.NovaMassLearning?.active)return;
   const epochs=Number($("trainingEpochs").value);
   const text=$("lessonData").value;
   const learningRate=Number($("trainingRate").value);
