@@ -116,13 +116,13 @@ Java_app_tauri_backgroundservice_HeadlessBridge_startCore(
     // generic boot auto-restart. Never hold a CPU wake lock after an OS
     // restart without an explicit user-triggered native training session.
     if (reason == NULL)
-        return result(env, "{\\"ok\\":false,\\"state\\":\\"failed\\",\\"code\\":\\"resume_training_in_app\\",\\"recoverable\\":true}");
+        return result(env, "{\"ok\":false,\"state\":\"failed\",\"code\":\"resume_training_in_app\",\"recoverable\":true}");
     const char *why = (*env)->GetStringUTFChars(env, reason, NULL);
-    if (why == NULL) return result(env, "{\\"ok\\":false,\\"state\\":\\"failed\\",\\"code\\":\\"invalid_start_reason\\"}");
+    if (why == NULL) return result(env, "{\"ok\":false,\"state\":\"failed\",\"code\":\"invalid_start_reason\"}");
     int manual = strcmp(why, "manual_start") == 0;
     (*env)->ReleaseStringUTFChars(env, reason, why);
     if (!manual)
-        return result(env, "{\\"ok\\":false,\\"state\\":\\"failed\\",\\"code\\":\\"resume_training_in_app\\",\\"recoverable\\":true}");
+        return result(env, "{\"ok\":false,\"state\":\"failed\",\"code\":\"resume_training_in_app\",\"recoverable\":true}");
     if (!acquire_wake_lock(env))
         return result(env, "{\"ok\":false,\"state\":\"failed\",\"code\":\"nova_wakelock_failed\",\"message\":\"Cannot acquire Android CPU wake lock for training\",\"recoverable\":true}");
     return result(env, "{\"ok\":true,\"state\":\"running\",\"recoverable\":false}");
