@@ -2460,6 +2460,63 @@ pub fn hybrid_test_review(app:AppHandle,state:State<'_,HybridState>,
 mod test_runner_tests{
     use super::*;
     #[test]
+    fn autonomous_checkpoint_selection_rejects_character_only_progress(){
+        let original=AutonomousValidation{
+            self_conditioned_loss:3.0,first_character_accuracy:0.50,
+            generated_prefix_accuracy:0.25,complete_answers_correct:1,
+            complete_answers_checked:2,represented_categories:2,
+            max_characters_per_probe:12,
+        };
+        let worse=AutonomousValidation{
+            self_conditioned_loss:3.5,first_character_accuracy:0.0,
+            complete_answers_correct:0,..original
+        };
+        // Next-character validation improved a lot, but Nova would no
+        // longer generate the earlier complete answer or its first letter.
+        assert!(!autonomous_selection_ok(Some(original),Some(worse),4.0,3.5));
+        let recovered=AutonomousValidation{
+            self_conditioned_loss:2.8,first_character_accuracy:0.50,
+            generated_prefix_accuracy:0.40,
+            complete_answers_correct:1,..original
+        };
+        assert!(autonomous_selection_ok(Some(original),Some(recovered),4.0,3.9));
+        // No hidden answer solver, no hardcoded requirement for already-fluent
+        // output: 0/2 complete answers can still make measurable progress.
+        let novice=AutonomousValidation{
+            self_conditioned_loss:4.8,first_character_accuracy:0.0,
+            complete_answers_correct:0,..original
+        };
+        let improving=AutonomousValidation{
+            self_conditioned_loss:4.5,generated_prefix_accuracy:0.12,..novice
+        };
+        assert!(autonomous_selection_ok(Some(novice),Some(improving),5.0,4.8));
+    }
+    #[test]
+    fn autonomous_heldout_is_readonly_and_reproducible(){
+        let raw=concat!(
+            "[Dialogue Lesson]\nGreetings teach reply beginnings and endings.\n",
+            "[examples]\nhello  Hello!\nhi  Hi!\nbye  Goodbye!\n",
+            "thanks  Thank you!\ngood night  Good night!\n",
+            "[/examples]\n[/Dialogue Lesson]"
+        );
+        let lessons=prepare("unified",raw).unwrap();
+        let brain=HybridBrain::new();
+        let weights=brain.transformer.weights.clone();
+        let momentum=brain.transformer.momentum.clone();
+        let step=brain.transformer.step;
+        let a=autonomous_validation(&brain,&lessons).unwrap().unwrap();
+        let b=autonomous_validation(&brain,&lessons).unwrap().unwrap();
+        assert_eq!(a.self_conditioned_loss,b.self_conditioned_loss);
+        assert_eq!(a.first_character_accuracy,b.first_character_accuracy);
+        assert_eq!(a.generated_prefix_accuracy,b.generated_prefix_accuracy);
+        assert_eq!(a.represented_categories,1);
+        assert!(a.complete_answers_checked>=1);
+        assert!(a.complete_answers_correct<=a.complete_answers_checked);
+        assert_eq!(brain.transformer.weights,weights);
+        assert_eq!(brain.transformer.momentum,momentum);
+        assert_eq!(brain.transformer.step,step);
+    }
+    #[test]
     fn unified_boundary_training_uses_only_supervised_answer_tokens(){
         let raw=concat!(
             "[Dialogue Lesson]\nGreetings are used to begin conversations.\n",
