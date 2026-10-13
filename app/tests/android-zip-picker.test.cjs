@@ -18,6 +18,7 @@ function harness(android){
   get("trainingEpochs").value="3";
   get("massLessonsLog").textContent="No bulk lessons loaded.";
   let webReads=0,nativeReads=0,pickerCalls=0,validation=null,started=null;
+  const listeners=new Map();
   const selected={name:"01_lessons.zip",size:4,async arrayBuffer(){
     webReads++;return Uint8Array.from([80,75,3,4]).buffer;
   }};
@@ -36,7 +37,10 @@ function harness(android){
         return {lessons:[{name:"01_test.txt",trainingSamples:24,heldoutSamples:6}],
           mode:"text",totalBytes:192};
       }},
-      event:{async listen(){return ()=>{};}},
+      event:{async listen(name,handler){
+        listeners.set(name,handler);
+        return ()=>listeners.delete(name);
+      }},
       dialog:{async open(){pickerCalls++;return "content://provider/document/zip";}},
       fs:{async readFile(){nativeReads++;return Uint8Array.from([80,75,3,4]);}}
     }
@@ -45,10 +49,16 @@ function harness(android){
     navigator:{userAgent:android?"Mozilla/5.0 (Linux; Android 16; SM-S938W) AppleWebKit/537.36":"Windows Chrome"},
     console,confirm:()=>true};
   vm.runInNewContext(script,context,{filename:"mass-learning-ui.js"});
-  return {get,window,selected,stats:()=>({webReads,nativeReads,pickerCalls,validation,started})};
+  return {get,window,selected,
+    emit:(name,payload)=>listeners.get(name)?.({payload}),
+    stats:()=>({webReads,nativeReads,pickerCalls,validation,started})};
 }
 (async()=>{
   const mobile=harness(true);
+  // Allow asynchronous event listeners to register before simulating native
+  // background ZIP lesson transitions (same code runs on Windows).
+  await Promise.resolve();
+  await Promise.resolve();
   assert.equal(mobile.get("browserMassLessonPicker").style.display,"none");
   assert.equal(mobile.get("nativeMassLessonZip").hidden,false);
   await mobile.get("nativeMassLessonZip").callbacks.click();
@@ -65,6 +75,25 @@ function harness(android){
     "the native queue must revalidate the original ZIP");
   assert.equal(mobile.get("stopMassLessons").disabled,false,
     "the native queue remains active after the JS start callback exits");
+  mobile.emit("hybrid-zip-progress",{
+    active:true,current:1,total:2,completed:0,skipped:1,failed:0,
+    lesson:"01_foundations.txt",stage:"Baseline retained; continuing"});
+  assert.match(mobile.get("massLessonsStatus").textContent,/1 skipped/,
+    "a baseline-only lesson must be reported as skipped, not failed or learned");
+  assert.equal(mobile.get("stopMassLessons").disabled,false,
+    "a baseline rollback must NOT stop the native queue");
+  mobile.emit("hybrid-zip-progress",{
+    active:true,current:2,total:2,completed:1,skipped:1,failed:0,
+    lesson:"02_greetings.txt",stage:"Accepted epoch 2"});
+  assert.match(mobile.get("massLessonsStatus").textContent,/2\/2/,
+    "the ZIP must continue to lesson 2 even after lesson 1 baseline rollback");
+  assert.match(mobile.get("massLessonsLog").textContent,/SKIPPED/);
+  assert.match(mobile.get("massLessonsLog").textContent,/ACCEPTED/);
+  mobile.emit("hybrid-zip-done",{
+    active:false,current:2,total:2,completed:1,skipped:1,failed:0,
+    lesson:"02_greetings.txt",stage:"Finished ZIP education"});
+  assert.equal(mobile.get("stopMassLessons").disabled,true,
+    "completed ZIP restores controls");
   const desktop=harness(false);
   await desktop.get("previewMassLessons").callbacks.click();
   assert.equal(desktop.stats().webReads,1);
