@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Configure stable development signing + foreground-service manifest for generated Tauri Android project.
-Runs ONLY after: npm run android:init -- --ci --skip-targets-install
-No keystores/passwords/private keys are present in the public repository.
+"""Configure persistent EXPLICITLY PUBLIC Android debug signing + foreground service.
+The pinned experimental development keystore is checked into this repository.
+Never use this key for release or production distribution.
+Runs only after Tauri android init has generated the Gradle project.
 """
 import base64
 import os
@@ -15,36 +16,38 @@ gradle=root/"app"/"build.gradle.kts"
 manifest=root/"app"/"src"/"main"/"AndroidManifest.xml"
 if not gradle.is_file() or not manifest.is_file():
     sys.exit("Android generator output absent: run npm run android:init first")
-secret=os.environ.get("NOVA_ANDROID_KEYSTORE_BASE64","").strip()
-password=os.environ.get("NOVA_ANDROID_KEYSTORE_PASSWORD","").strip()
-if not secret or not password:
-    sys.exit("Stable Android development signing is not configured. Set repository Actions secrets NOVA_ANDROID_KEYSTORE_BASE64 and NOVA_ANDROID_KEYSTORE_PASSWORD. Refusing ephemeral debug signing.")
-if any(c in password for c in "\n\r\\"):
-    sys.exit("Invalid Android signing password for .properties format")
-try: keystore=base64.b64decode(secret,validate=True)
-except Exception as exc: sys.exit(f"Invalid base64 keystore data: {exc}")
+# Intentionally PUBLIC development-only key. Persistent across machines and CI
+# runs; convenient for sideloaded experimental builds but insecure for release.
+encoded=root.parent.parent/"keys"/"experimental-debug.jks.base64"
+if not encoded.is_file():
+    sys.exit("The checked-in experimental debug key is missing: "+str(encoded))
+password="android"
+try:
+    keystore=base64.b64decode(encoded.read_text().strip(),validate=True)
+except Exception as exc:
+    sys.exit(f"Invalid checked-in experimental debug key: {exc}")
 if len(keystore)<100:
-    sys.exit("Signing key contents are unexpectedly short")
+    sys.exit("Experimental debug key unexpectedly short")
 file=root/"nova-development.jks"
 file.write_bytes(keystore)
 file.chmod(0o600)
 # The certificate must match the one used for every future Nova update.
 # Verify before touching Gradle so users can't accidentally rotate the key.
-EXPECTED_SHA256="215dd8ef18bc794b4e52d6a369d22dc106a984123ffcada35333974129e24ae3"
+EXPECTED_SHA256="070b1e684da8087d6c30874c16c9be831b7cbce49264d61040ee73ecb5652ade"
 try:
     listed=subprocess.run([
         "keytool","-list","-v","-keystore",str(file),
         "-alias","nova-experimental-dev",
-        "-storepass:env","NOVA_ANDROID_KEYSTORE_PASSWORD",
+        "-storepass",password,
     ],capture_output=True,text=True,check=True,timeout=30)
 except (OSError,subprocess.SubprocessError) as exc:
     file.unlink(missing_ok=True)
-    sys.exit("Development keystore could not be opened using the supplied password/alias. Check that both secrets match the original Nova key. "+str(exc))
+    sys.exit("Pinned experimental debug keystore could not be opened. "+str(exc))
 found=re.search(r"SHA256:\s*([0-9a-fA-F:]+)",listed.stdout)
 digest=found.group(1).replace(":","").lower() if found else ""
 if digest!=EXPECTED_SHA256:
     file.unlink(missing_ok=True)
-    sys.exit("Signing certificate mismatch: the keystore is not the existing Nova development key. Keep the original keystore; rotating the key prevents in-place updates. Expected fingerprint: "+EXPECTED_SHA256)
+    sys.exit("Pinned experimental debug key does not match its expected certificate; refusing to silently change update signature. Expected fingerprint: "+EXPECTED_SHA256)
 prop=root/"keystore.properties"
 prop.write_text(f"keyAlias=nova-experimental-dev\nkeyPassword={password}\nstorePassword={password}\nstoreFile={file.as_posix()}\n")
 prop.chmod(0o600)
@@ -98,4 +101,4 @@ if property_name not in text:
         '''
     text=text.replace("</application>",service+"</application>",1)
 manifest.write_text(text)
-print("Configured stable Android development signing, foreground specialUse service and runtime notification permission.")
+print("Configured PINNED public experimental debug signing, foreground specialUse service and notification permission.")
