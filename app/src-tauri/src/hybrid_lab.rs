@@ -1040,45 +1040,73 @@ fn evaluate_memory(brain:&HybridBrain,valid:&[Example],memory:&[Vec<String>])->R
     }
     Ok(((loss/valid.len() as f64) as f32,correct as f32/valid.len() as f32))
 }
-/// Equal weight per earlier lesson. Archive validation is never put into
-/// supervised training; only each archived lesson's own TRAIN split is replayed.
+/// Category-balanced representative heldout retention panel. The entire
+/// source archive remains saved; this sampled check is not exhaustive.
 fn previous_validation_loss(brain:&HybridBrain,previous:&[PreparedLessons])
     ->Result<Option<f32>,String>{
     if previous.is_empty(){return Ok(None);}
-    let mut sum=0.0f64;
-    for lesson in previous{
+    let mut totals=[0.0f64;5];
+    let mut counts=[0usize;5];
+    for index in rehearsal::retention_plan_indices(previous){
+        let lesson=&previous[index];
         let indices=rehearsal::prior_validation_selection(lesson);
-        let selected=indices.iter().map(|&i|lesson.validation[i].clone()).collect::<Vec<_>>();
-        let (loss,_) = if lesson.mode=="unified"{
-            let (l,a,_)=mixed_validation(brain,lesson,&indices)?;
-            (l,a)
-        }else if lesson.mode=="conversation"{
-            let histories=indices.iter().map(|&i|lesson.memory_validation[i].clone())
-                .collect::<Vec<_>>();
-            evaluate_memory(brain,&selected,&histories)?
-        }else{brain.evaluate(&selected)?};
-        if !loss.is_finite(){return Err("Non-finite previous-lesson validation loss".into());}
-        let ranking_loss=if lesson.mode=="reasoning"||lesson.mode=="unified"{
-            0.4*reasoning_validation(brain,lesson)?.0
-        }else{0.0};
-        let context_loss=if lesson.mode=="unified"{
-            0.2*understanding_validation(brain,lesson)?.0
-        }else{0.0};
-        sum+=(loss+ranking_loss+context_loss) as f64;
+        if indices.is_empty(){continue;}
+        if lesson.mode=="unified"{
+            let (_,_,per)=mixed_validation(brain,lesson,&indices)?;
+            for (kind,loss) in per.iter().enumerate(){
+                if let Some(value)=loss{
+                    if !value.is_finite(){return Err("Non-finite category retention loss".into());}
+                    totals[kind]+=*value as f64;counts[kind]+=1;
+                }
+            }
+            if !lesson.reasoning_validation.is_empty(){
+                totals[3]+=(0.4*reasoning_validation_limited(brain,lesson,2)?.0) as f64;
+            }
+            if !lesson.understanding_validation.is_empty(){
+                totals[1]+=(0.2*understanding_validation_limited(brain,lesson,2)?.0) as f64;
+            }
+        }else{
+            let selected=indices.iter().map(|&i|lesson.validation[i].clone()).collect::<Vec<_>>();
+            let (loss,_) = if lesson.mode=="conversation"{
+                let histories=indices.iter().map(|&i|lesson.memory_validation[i].clone())
+                    .collect::<Vec<_>>();
+                evaluate_memory(brain,&selected,&histories)?
+            }else{brain.evaluate(&selected)?};
+            if !loss.is_finite(){return Err("Non-finite previous validation loss".into());}
+            let kind=match lesson.mode.as_str(){
+                "dialogue"=>0,"conversation"=>2,"reasoning"=>3,"text"=>4,
+                _=>return Err("Unknown archive lesson mode".into())
+            };
+            totals[kind]+=loss as f64;
+            counts[kind]+=1;
+            if kind==3{
+                totals[3]+=(0.4*reasoning_validation_limited(brain,lesson,2)?.0) as f64;
+            }
+        }
     }
-    Ok(Some((sum/previous.len() as f64) as f32))
+    let present=counts.iter().filter(|&&count|count>0).count();
+    if present==0{return Ok(None);}
+    let mut total=0.0f64;
+    for kind in 0..5{
+        if counts[kind]>0 {total+=totals[kind]/counts[kind] as f64;}
+    }
+    Ok(Some((total/present as f64) as f32))
 }
 fn reasoning_validation(brain:&HybridBrain,lessons:&PreparedLessons)
+    ->Result<(f32,f32),String>{
+    reasoning_validation_limited(brain,lessons,16)
+}
+fn reasoning_validation_limited(brain:&HybridBrain,lessons:&PreparedLessons,limit:usize)
     ->Result<(f32,f32),String>{
     if lessons.reasoning_validation.is_empty(){return Ok((0.0,0.0));}
     let mut sum=0.0f32;
     let mut wins=0usize;
-    for (context,good,bad) in lessons.reasoning_validation.iter().take(16){
+    for (context,good,bad) in lessons.reasoning_validation.iter().take(limit){
         let (loss,win)=brain.reasoning_margin(context,good,bad)?;
         if !loss.is_finite(){return Err("Non-finite reasoning validation loss".into());}
         sum+=loss;if win{wins+=1;}
     }
-    let n=lessons.reasoning_validation.len().min(16);
+    let n=lessons.reasoning_validation.len().min(limit);
     Ok((sum/n as f32,wins as f32/n as f32))
 }
 /// Category-aware unit scheduling. Keep mini-batches homogeneous, and rotate
@@ -1172,14 +1200,18 @@ fn greeting_first_character_bias(brain:&HybridBrain)->Option<serde_json::Value>{
 }
 fn understanding_validation(brain:&HybridBrain,lessons:&PreparedLessons)
     ->Result<(f32,f32),String>{
+    understanding_validation_limited(brain,lessons,16)
+}
+fn understanding_validation_limited(brain:&HybridBrain,lessons:&PreparedLessons,limit:usize)
+    ->Result<(f32,f32),String>{
     if lessons.understanding_validation.is_empty(){return Ok((0.0,0.0));}
     let mut sum=0.0f32;let mut wins=0usize;
-    for (context,correct,wrong) in lessons.understanding_validation.iter().take(16){
+    for (context,correct,wrong) in lessons.understanding_validation.iter().take(limit){
         let (loss,win)=brain.reasoning_margin(context,correct,wrong)?;
         if !loss.is_finite(){return Err("Non-finite contextual understanding loss".into());}
         sum+=loss;wins+=usize::from(win);
     }
-    let n=lessons.understanding_validation.len().min(16);
+    let n=lessons.understanding_validation.len().min(limit);
     Ok((sum/n as f32,wins as f32/n as f32))
 }
 fn current_validation(brain:&HybridBrain,lessons:&PreparedLessons)
