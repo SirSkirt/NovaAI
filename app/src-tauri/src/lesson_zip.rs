@@ -12,13 +12,13 @@ const MAX_LESSONS:usize=40;
 const MAX_TOTAL_BYTES:usize=1_600_000;
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
-pub struct ZipLesson{pub name:String,pub text:String,pub training_samples:usize,pub heldout_samples:usize}
+pub struct ZipLesson{pub name:String,pub mode:String,pub text:String,pub training_samples:usize,pub heldout_samples:usize}
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
 pub struct LessonBundle{pub mode:String,pub lessons:Vec<ZipLesson>,pub total_bytes:usize}
 pub fn read_bundle(data:&[u8],mode:&str)->Result<LessonBundle,String>{
-    if !matches!(mode,"text"|"dialogue"|"conversation"|"reasoning"){
-        return Err("Select Text/Language, Dialogue, Conversation or Reasoning first".into());
+    if !matches!(mode,"auto"|"unified"|"text"|"dialogue"|"conversation"|"reasoning"){
+        return Err("ZIP format must be auto/unified or an explicit legacy format".into());
     }
     if data.is_empty() || data.len()>MAX_ZIP_BYTES{
         return Err("ZIP must contain data and be smaller than 4 MiB".into());
@@ -62,14 +62,35 @@ pub fn read_bundle(data:&[u8],mode:&str)->Result<LessonBundle,String>{
         if !text.is_ascii(){return Err(format!("{raw_name}: Nova currently requires ASCII lessons"));}
         let text=text.replace("\r\n","\n");
         if text.contains('\r'){return Err(format!("{raw_name}: unsupported line endings"));}
-        let parsed=prepare(mode,&text).map_err(|error|format!("{raw_name}: {error}"))?;
-        lessons.push(ZipLesson{name:raw_name,text,
+        // The presence of a valid block opener requests strict structured parsing,
+        // even if a legacy mode happens to remain selected in the editor.
+        // Do not silently reinterpret legacy data as structured examples.
+        let structured=text.lines().any(|line|matches!(line.trim(),
+            "[Dialogue Lesson]"|"[Understanding Lesson]"|
+            "[Multi-Turn Conversation Lesson]"|"[Reasoning Lesson]"));
+        let resolved=if structured{"unified"}else if mode=="auto"||mode=="unified"{
+            return Err(format!("{raw_name}: not a structured lesson; select its explicit legacy mode to import this older dataset"));
+        }else{mode};
+        let parsed=prepare(resolved,&text).map_err(|error|format!("{raw_name}: {error}"))?;
+        lessons.push(ZipLesson{name:raw_name,mode:resolved.to_string(),text,
             training_samples:parsed.train.len(),heldout_samples:parsed.validation.len()});
     }
     if lessons.is_empty(){return Err("No TXT lessons found inside ZIP".into());}
-    lessons.sort_by(|a,b|
-        a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
-    Ok(LessonBundle{mode:mode.to_string(),lessons,total_bytes:total})
+    lessons.sort_by(|a,b|{
+        let ordinal=|name:&str|name.split('/').last().unwrap_or(name)
+            .chars().take_while(|c|c.is_ascii_digit())
+            .collect::<String>().parse::<u64>().ok();
+        match (ordinal(&a.name),ordinal(&b.name)){
+            (Some(x),Some(y))=>x.cmp(&y).then(a.name.cmp(&b.name)),
+            _=>a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase())
+        }
+    });
+    let bundle_mode=if lessons.iter().all(|x|x.mode=="unified"){
+        "unified".to_string()
+    }else if lessons.iter().all(|x|x.mode==lessons[0].mode){
+        lessons[0].mode.clone()
+    }else{"mixed".to_string()};
+    Ok(LessonBundle{mode:bundle_mode,lessons,total_bytes:total})
 }
 #[command]
 pub fn hybrid_zip_preview(bytes:Vec<u8>,mode:String)->Result<LessonBundle,String>{
@@ -119,6 +140,21 @@ mod tests{
         assert_eq!(bundle.lessons.len(),1);
         assert!(bundle.lessons[0].training_samples>0);
         assert!(bundle.lessons[0].heldout_samples>0);
+    }
+    #[test]fn auto_detects_mixed_block_lessons_and_numeric_sort(){
+        let template=concat!(
+            "[Dialogue Lesson]\nGreetings help start conversation.\n[examples]\n",
+            "hello  Hi!\nbye  Goodbye!\n",
+            "[/examples]\n[/Dialogue Lesson]\n"
+        );
+        let bytes=make_zip(&[("10_final.txt",template),("02_second.txt",template),
+            ("01_first.txt",template)]);
+        let parsed=read_bundle(&bytes,"auto").unwrap();
+        assert_eq!(parsed.mode,"unified");
+        assert_eq!(parsed.lessons.iter().map(|x|x.name.as_str()).collect::<Vec<_>>(),
+            vec!["01_first.txt","02_second.txt","10_final.txt"]);
+        assert!(parsed.lessons.iter().all(|x|x.mode=="unified"));
+        assert!(read_bundle(&make_zip(&[("01_old.txt","hello\\tHi!")]),"auto").is_err());
     }
     #[test]fn require_real_distinct_text_sections(){
         let data=make_zip(&[("weak.txt",&"abcde ".repeat(100))]);
