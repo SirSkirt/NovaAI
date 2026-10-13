@@ -2175,11 +2175,11 @@ mod test_runner_tests{
     #[test]
     fn replay_even_tiny_lessons_and_rotate_distinct_archive_sources(){
         let archive=vec![
-            prepare("dialogue","hi\\tHello!\\nbye\\tGoodbye!\\ncat\\tCat.\\ndog\\tDog.\\n").unwrap(),
-            prepare("dialogue","hello\\tHey!\\nthanks\\tWelcome.\\nsun\\tWarm.\\nsnow\\tCold.\\n").unwrap(),
+            prepare("dialogue","hi\tHello!\nbye\tGoodbye!\ncat\tCat.\ndog\tDog.\n").unwrap(),
+            prepare("dialogue","hello\tHey!\nthanks\tWelcome.\nsun\tWarm.\nsnow\tCold.\n").unwrap(),
             prepare("reasoning",&(0..6).map(|n|format!(
-                "Person {n} has red shoes.\\tWhat color are the shoes?\\tRed.\\tBlue."
-            )).collect::<Vec<_>>().join("\\n")).unwrap(),
+                "Person {n} has red shoes.\tWhat color are the shoes?\tRed.\tBlue."
+            )).collect::<Vec<_>>().join("\n")).unwrap(),
         ];
         let single=balanced_replay_schedule(&archive,1,1);
         assert_eq!(single.len(),1,"one new batch must still rehearse");
