@@ -1134,6 +1134,42 @@ fn mixed_validation(brain:&HybridBrain,lesson:&PreparedLessons,indices:&[usize])
         per.iter().flatten().count().max(1) as f32;
     Ok((average,correct as f32/indices.len().max(1) as f32,per))
 }
+/// Read-only exact *generated* response evaluation, including prior turns.
+/// Separates whole-answer competency from next-character teacher forcing.
+fn generated_heldout(brain:&HybridBrain,lesson:&PreparedLessons)
+    ->Result<[Option<f32>;4],String>{
+    let mut counts=[0usize;4];let mut correct=[0usize;4];
+    for (prefix,expected,memory,kind) in &lesson.heldout_replies{
+        let category=*kind as usize;
+        if category>=4 || counts[category]>=2{continue;}
+        counts[category]+=1;
+        let mut prompt=prefix.clone();
+        let mut output=Vec::new();
+        let mut finished=false;
+        for _ in 0..expected.len().min(96)+1{
+            let p=brain.predict_with_memory(&prompt,256,memory)?;
+            let next=p.iter().enumerate().max_by(|a,b|a.1.partial_cmp(b.1)
+                .unwrap_or(std::cmp::Ordering::Equal))
+                .ok_or("No neural prediction")?.0 as u8;
+            if next==b'\n'{finished=true;break;}
+            output.push(next);prompt.push(next);
+        }
+        if finished&&output==*expected{correct[category]+=1;}
+    }
+    Ok(std::array::from_fn(|i|if counts[i]==0{None}
+        else{Some(correct[i] as f32/counts[i] as f32)}))
+}
+/// Genuine neural first-character distribution, not a guessed cause of Yello.
+fn greeting_first_character_bias(brain:&HybridBrain)->Option<serde_json::Value>{
+    let p=brain.predict(b"U: hello\nN: ").ok()?;
+    let top=p.iter().enumerate().max_by(|a,b|a.1.partial_cmp(b.1)
+        .unwrap_or(std::cmp::Ordering::Equal))?.0;
+    Some(serde_json::json!({
+        "topAscii":top,"pY":p[b'Y' as usize],"pH":p[b'H' as usize],
+        "pI":p[b'I' as usize],
+        "entropy":-p.iter().filter(|&&x|x>0.0).map(|&x|x*x.ln()).sum::<f32>(),
+    }))
+}
 fn understanding_validation(brain:&HybridBrain,lessons:&PreparedLessons)
     ->Result<(f32,f32),String>{
     if lessons.understanding_validation.is_empty(){return Ok((0.0,0.0));}
@@ -1184,6 +1220,10 @@ fn train_inner(
             diag::record(&app.state::<Diagnostics>(),"lesson_validation_baseline",serde_json::json!({
                 "loss":loss,"nextCharacterAccuracy":accuracy,
                 "reasoningRankingLoss":ranking_loss,"reasoningRankingAccuracy":ranking_accuracy,
+                "generatedHeldoutExactByCategory":if lessons.mode=="unified"{
+                    generated_heldout(&s.brain,lessons).ok()
+                }else{None},
+                "greetingFirstCharacterBias":greeting_first_character_bias(&s.brain),
                 "understandingContrast":if lessons.mode=="unified"{
                     understanding_validation(&s.brain,lessons).ok()
                 }else{None},
@@ -1477,6 +1517,10 @@ fn train_inner(
                 "trainingLoss":epoch_loss/trained_count as f64,
                 "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
                 "reasoningRankingLoss":reasoning_ranking_loss,"reasoningRankingAccuracy":reasoning_ranking_accuracy,
+                "generatedHeldoutExactByCategory":if lessons.mode=="unified"{
+                    generated_heldout(&brain,lessons).ok()
+                }else{None},
+                "greetingFirstCharacterBias":greeting_first_character_bias(&brain),
                 "understandingContrast":if lessons.mode=="unified"{
                     understanding_validation(&brain,lessons).ok()
                 }else{None},
