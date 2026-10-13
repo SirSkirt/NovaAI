@@ -1061,7 +1061,10 @@ fn previous_validation_loss(brain:&HybridBrain,previous:&[PreparedLessons])
         let ranking_loss=if lesson.mode=="reasoning"||lesson.mode=="unified"{
             0.4*reasoning_validation(brain,lesson)?.0
         }else{0.0};
-        sum+=(loss+ranking_loss) as f64;
+        let context_loss=if lesson.mode=="unified"{
+            0.2*understanding_validation(brain,lesson)?.0
+        }else{0.0};
+        sum+=(loss+ranking_loss+context_loss) as f64;
     }
     Ok(Some((sum/previous.len() as f64) as f32))
 }
@@ -1131,6 +1134,18 @@ fn mixed_validation(brain:&HybridBrain,lesson:&PreparedLessons,indices:&[usize])
         per.iter().flatten().count().max(1) as f32;
     Ok((average,correct as f32/indices.len().max(1) as f32,per))
 }
+fn understanding_validation(brain:&HybridBrain,lessons:&PreparedLessons)
+    ->Result<(f32,f32),String>{
+    if lessons.understanding_validation.is_empty(){return Ok((0.0,0.0));}
+    let mut sum=0.0f32;let mut wins=0usize;
+    for (context,correct,wrong) in lessons.understanding_validation.iter().take(16){
+        let (loss,win)=brain.reasoning_margin(context,correct,wrong)?;
+        if !loss.is_finite(){return Err("Non-finite contextual understanding loss".into());}
+        sum+=loss;wins+=usize::from(win);
+    }
+    let n=lessons.understanding_validation.len().min(16);
+    Ok((sum/n as f32,wins as f32/n as f32))
+}
 fn current_validation(brain:&HybridBrain,lessons:&PreparedLessons)
     ->Result<(f32,f32,f32,f32),String>{
     let (next_loss,accuracy)=if lessons.mode=="unified"{
@@ -1141,8 +1156,11 @@ fn current_validation(brain:&HybridBrain,lessons:&PreparedLessons)
         evaluate_memory(brain,&lessons.validation,&lessons.memory_validation)?
     }else{brain.evaluate(&lessons.validation)?};
     let (ranking,ranking_acc)=reasoning_validation(brain,lessons)?;
+    let context=if lessons.mode=="unified"{
+        0.2*understanding_validation(brain,lessons)?.0
+    }else{0.0};
     let selected_loss=if lessons.mode=="reasoning"||lessons.mode=="unified"{
-        next_loss+0.4*ranking
+        next_loss+0.4*ranking+context
     }else{next_loss};
     Ok((selected_loss,accuracy,ranking,ranking_acc))
 }
@@ -1166,6 +1184,9 @@ fn train_inner(
             diag::record(&app.state::<Diagnostics>(),"lesson_validation_baseline",serde_json::json!({
                 "loss":loss,"nextCharacterAccuracy":accuracy,
                 "reasoningRankingLoss":ranking_loss,"reasoningRankingAccuracy":ranking_accuracy,
+                "understandingContrast":if lessons.mode=="unified"{
+                    understanding_validation(&s.brain,lessons).ok()
+                }else{None},
                 "categoryLoss":if lessons.mode=="unified"{
                     mixed_validation(&s.brain,lessons,
                         &(0..lessons.validation.len()).collect::<Vec<_>>())
@@ -1237,6 +1258,7 @@ fn train_inner(
         }
         let prior_batches=interleaved;
         let mut replay_batches=0usize;
+        let mut contextual_batches=0usize;
         let mut epoch_loss=0.0f64;
         let mut trained_count=0usize;
         let mut batches=0usize;
@@ -1304,6 +1326,30 @@ fn train_inner(
                             "bothNetworksUpdated":true}));
                 }
             }
+            // A separate teacher-provided contextual contrast objective
+            // compares complete answers to other independent training examples
+            // with different facts. It optimizes the SAME cooperative brain.
+            if lessons.mode=="unified" && lessons.train_kinds[ids[0]]==1 &&
+                !lessons.understanding_train.is_empty() &&
+                (contextual_batches==0 || (new_batch_index+1)%4==0){
+                let index=(contextual_batches+epoch as usize-1)%
+                    lessons.understanding_train.len();
+                let mut s=lock(state)?;
+                let contextual_lr=(learning_rate*0.5).max(0.0001);
+                let comparison_loss=s.brain.train_preference_batch(
+                    &[lessons.understanding_train[index].clone()],contextual_lr)?;
+                if !comparison_loss.is_finite(){
+                    return Err("Non-finite understanding preference objective".into());
+                }
+                if diag::enabled(&app.state::<Diagnostics>()){
+                    diag::record(&app.state::<Diagnostics>(),"understanding_contrast",serde_json::json!({
+                        "epoch":epoch,"optimizerStep":s.brain.transformer.step,
+                        "loss":comparison_loss,"learningRate":contextual_lr,
+                        "bothHemisphereGradients":true,"teacherOnlyComparison":true
+                    }));
+                }
+                contextual_batches+=1;
+            }
             trained_count+=batch.len();
             batches+=1;
             transformer_grad_norm+=diag.transformer_norm as f64;
@@ -1333,6 +1379,14 @@ fn train_inner(
                         s.brain.train_memory_batch(&with_memory,learning_rate)?
                     }else{s.brain.train_batch(&replay,learning_rate)?};
                     if !replay_loss.is_finite(){return Err("Non-finite rehearsal loss".into());}
+                    if old.mode=="unified" && objective==1 &&
+                        !old.understanding_train.is_empty(){
+                        let id=(replay_batches+epoch as usize-1)%old.understanding_train.len();
+                        let extra=s.brain.train_preference_batch(
+                            &[old.understanding_train[id].clone()],
+                            (learning_rate*0.5).max(0.0001))?;
+                        if !extra.is_finite(){return Err("Non-finite contextual rehearsal".into());}
+                    }
                     if (old.mode=="reasoning" || old.mode=="unified") && objective==3 &&
                         !old.reasoning_train.is_empty(){
                         // Preserve conclusion comparison as well as the wording
@@ -1423,6 +1477,9 @@ fn train_inner(
                 "trainingLoss":epoch_loss/trained_count as f64,
                 "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
                 "reasoningRankingLoss":reasoning_ranking_loss,"reasoningRankingAccuracy":reasoning_ranking_accuracy,
+                "understandingContrast":if lessons.mode=="unified"{
+                    understanding_validation(&brain,lessons).ok()
+                }else{None},
                 "categoryHeldoutLoss":if lessons.mode=="unified"{
                     mixed_validation(&brain,lessons,
                         &(0..lessons.validation.len()).collect::<Vec<_>>())
