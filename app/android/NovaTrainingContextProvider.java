@@ -5,7 +5,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import androidx.core.app.NotificationCompat;
+import android.os.Build;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
@@ -63,18 +63,21 @@ public final class NovaTrainingContextProvider extends ContentProvider {
             context, 0, launch,
             PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         String detail = "Lesson " + index + "/" + total + ": " + lesson;
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(
-            context, channelId)
+        Notification.Builder builder = new Notification.Builder(context)
             .setSmallIcon(context.getApplicationInfo().icon)
             .setContentTitle(context.getApplicationInfo()
                 .loadLabel(context.getPackageManager()))
             .setContentText(detail)
-            .setStyle(new NotificationCompat.BigTextStyle().bigText(detail))
+            .setStyle(new Notification.BigTextStyle().bigText(detail))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE);
+            .setSound(null)
+            .setDefaults(0)
+            .setPriority(Notification.PRIORITY_LOW)
+            .setCategory(Notification.CATEGORY_SERVICE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder.setChannelId(channelId);
+        }
         if (pending != null) builder.setContentIntent(pending);
         Notification notification = builder.build();
         try {
