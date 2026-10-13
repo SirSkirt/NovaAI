@@ -4,7 +4,7 @@ const $=id=>document.getElementById(id);
 const invoke=(command,args={})=>window.__TAURI__?.core?.invoke(command,args)
   ?? Promise.reject(Error("Installed native Neural Nova required"));
 let bundle=null,mode=null,selectedMode=null,active=false,stopping=false,at=0,success=0,failures=0;
-let nativeZipBytes=null,nativeZipName=null;
+let nativeZipBytes=null,nativeZipName=null,bundleBytes=null,lastQueueLesson=0,lastQueueCompleted=0;
 const android=/Android/i.test(navigator.userAgent);
 if(android){
   // Android WebView File.arrayBuffer() can throw NotReadableError for files
@@ -39,7 +39,7 @@ async function pickNativeZip(){
   // The shared Rust ZIP validator checks the actual archive bytes.
   if(picked===null || picked===undefined)return; // Android Back / Cancel.
   if(typeof picked!=="string")throw Error("Unexpected result from Android document picker.");
-  nativeZipBytes=null;nativeZipName=null;bundle=null;readyButtons();
+  nativeZipBytes=null;nativeZipName=null;bundleBytes=null;bundle=null;readyButtons();
   view("Reading ZIP with Android's native document access…");
   let data;
   try{data=await fs.readFile(picked);}
@@ -73,7 +73,7 @@ async function preview(){
   if(data.byteLength===0||data.byteLength>4*1024*1024)
     throw Error("Selected ZIP must be between 1 byte and 4 MiB.");
   const result=await invoke("hybrid_zip_preview",{bytes:Array.from(data),mode:currentMode()});
-  bundle=result;mode=result.mode;selectedMode=currentMode();at=0;success=0;failures=0;
+  bundle=result;bundleBytes=data;mode=result.mode;selectedMode=currentMode();at=0;success=0;failures=0;
   $("massLessonsLog").textContent="";
   result.lessons.forEach((lesson,i)=>addLog((i+1)+". "+lesson.name+" · "+
     lesson.mode+" · "+lesson.trainingSamples+" training / "+lesson.heldoutSamples+" held-out targets"));
@@ -103,12 +103,45 @@ async function nativeDone(){
     resolveDone({cancelled:true,bestEpoch:0});
   }};
 }
+// This is an Android-safe native Rust queue: JS events are only for display.
+// Rust advances between lessons even if the WebView is paused with screen off.
+function showQueueStatus(p){
+  if(!p)return;
+  active=!!p.active;
+  at=p.current||0;success=p.completed||0;failures=p.failed||0;
+  stopping=!!p.stopping;
+  readyButtons();
+  if(p.current>lastQueueLesson){
+    addLog("START "+p.current+"/"+p.total+": "+p.lesson);
+    lastQueueLesson=p.current;
+  }
+  if(p.completed>lastQueueCompleted){
+    addLog("ACCEPTED "+p.completed+"/"+p.total+" lesson(s); best checkpoint retained");
+    lastQueueCompleted=p.completed;
+  }
+  view("Native background ZIP queue · "+(p.stage||"Working")+
+    " · lesson "+(p.current||0)+"/"+(p.total||0)+
+    " · "+success+" accepted"+
+    (p.error?" · ERROR: "+p.error:"")+
+    (p.stopping?" · stopping":""));
+}
+async function recoverQueue(){
+  try{
+    const p=await invoke("hybrid_zip_status");
+    showQueueStatus(p);
+    if(!p.active && p.stage && p.stage!=="Idle"){
+      // The Rust worker may have completed while JS was suspended.
+      await window.NovaTrainingBackground?.stop();
+    }
+  }catch(e){console.warn("Neural Nova ZIP queue status",e);}
+}
 async function runQueue(){
-  if(active||!bundle)throw Error("Validate a ZIP before starting.");
+  if(active||!bundle||!bundleBytes)throw Error("Validate a ZIP before starting.");
   if(selectedMode!==currentMode())throw Error("Legacy fallback type changed. Validate the ZIP again.");
   const started=await invoke("hybrid_status");
   if(started.training)throw Error("Another training session is already running.");
-  if(!confirm("Teach "+bundle.lessons.length+" "+mode+" lessons one at a time? Each lesson updates the ONE active joint neural checkpoint."))return;
+  if(!confirm("Teach "+bundle.lessons.length+" "+mode+
+    " lessons as ONE native background session? Existing checkpoints will be retained between lessons."))return;
   const cfg={
     adaptiveLearningRate:$("adaptiveTraining").checked,
     earlyStopping:$("earlyStopping").checked,
@@ -121,43 +154,20 @@ async function runQueue(){
   const epochs=Number($("trainingEpochs").value);
   if(!Number.isInteger(epochs)||epochs<1||epochs>60)throw Error("Choose 1–60 epochs.");
   active=true;stopping=false;at=0;success=0;failures=0;
+  lastQueueLesson=0;lastQueueCompleted=0;
   readyButtons();
   try{
     await window.NovaTrainingBackground?.start();
-    for(const lesson of bundle.lessons){
-      if(stopping)break;
-      view("Lesson "+(at+1)+"/"+bundle.lessons.length+": "+lesson.name+" · training");
-      addLog("START "+(at+1)+"/"+bundle.lessons.length+": "+lesson.name);
-      try{
-        // Ensure progress and completion listeners are installed before
-        // starting native Rust work, including tiny lessons.
-        const watch=await nativeDone();
-        try{await invoke("hybrid_train",{lesson:{mode:lesson.mode,text:lesson.text,epochs},options:cfg});}
-        catch(e){watch.cancel();throw e;}
-        const result=await watch.finished;
-        if(result.cancelled||stopping){
-          stopping=true;addLog("STOPPED: "+lesson.name+" · best available checkpoint kept");
-          break;
-        }
-        if(!result.bestEpoch){
-          failures++;stopping=true;
-          addLog("NO ACCEPTED EPOCH "+lesson.name+
-            " · prior brain restored; stopped queue to avoid silently skipping a lesson");
-          break;
-        }
-        success++;
-        addLog("COMPLETE "+lesson.name+" · selected epoch "+result.bestEpoch);
-      }catch(error){
-        failures++;
-        addLog("FAILED "+lesson.name+" · "+String(error));
-        stopping=true;break;
-      }finally{at++;}
-    }
-  }finally{
-    await window.NovaTrainingBackground?.stop();
+    // Native validates the ZIP again; it never trusts the JS preview.
+    await invoke("hybrid_zip_train",{bytes:Array.from(bundleBytes),
+      mode:selectedMode,epochs,options:cfg});
+    view("Native ZIP education started. You can switch apps or turn the screen off. "+
+      "Android may still stop the process under extreme battery/memory pressure.");
+    await recoverQueue();
+  }catch(e){
     active=false;readyButtons();
-    view((stopping?"Stopped":"Finished")+" · "+success+" taught, "+failures+
-      " failed, "+(bundle.lessons.length-at)+" not started. Checkpoint saved after each accepted lesson.");
+    await window.NovaTrainingBackground?.stop();
+    throw e;
   }
 }
 async function safe(task){
@@ -165,7 +175,7 @@ async function safe(task){
   catch(error){view("Error: "+String(error));console.error("Nova bulk lesson queue",error);}
 }
 $("massLessonZip").addEventListener("change",()=>{
-  nativeZipBytes=null;nativeZipName=null;
+  nativeZipBytes=null;nativeZipName=null;bundleBytes=null;
   bundle=null;readyButtons();view("ZIP selected. Structured lesson blocks are detected automatically. Validate before starting.");
 });
 $("nativeMassLessonZip").addEventListener("click",()=>safe(pickNativeZip));
@@ -176,10 +186,26 @@ $("previewMassLessons").addEventListener("click",()=>safe(preview));
 $("startMassLessons").addEventListener("click",()=>safe(runQueue));
 $("stopMassLessons").addEventListener("click",()=>safe(async()=>{
   stopping=true;
-  view("Stopping current lesson. The trainer will restore its best checkpoint.");
-  await invoke("hybrid_stop");
+  view("Stopping the native ZIP session after the current lesson; the best eligible checkpoint will be restored.");
+  await invoke("hybrid_zip_stop");
 }));
 $("stopTraining").addEventListener("click",()=>{if(active)stopping=true;});
 window.NovaMassLearning={get active(){return active;}};
+const events=window.__TAURI__?.event;
+if(events?.listen){
+  void events.listen("hybrid-zip-progress",({payload})=>showQueueStatus(payload))
+    .catch(e=>console.error("ZIP status events",e));
+  void events.listen("hybrid-zip-done",({payload})=>{
+    showQueueStatus(payload);
+    addLog(payload.error?"FAILED: "+payload.error:
+      payload.stopping?"STOPPED: saved best accepted checkpoints":
+      "COMPLETE: "+payload.completed+" lessons accepted.");
+    void window.NovaTrainingBackground?.stop();
+  }).catch(e=>console.error("ZIP completion events",e));
+}
+document.addEventListener("neural-nova-booted",()=>{void recoverQueue();});
+document.addEventListener("visibilitychange",()=>{
+  if(!document.hidden)void recoverQueue();
+});
 readyButtons();
 })();
