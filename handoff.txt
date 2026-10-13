@@ -1,3 +1,11 @@
+NEURAL NOVA v0.12.3 — FINAL VERIFIED BUILD (2026-10-13)
+GitHub Actions https://github.com/SirSkirt/NovaAI/actions/runs/38447126526 FULL SUCCESS. Android debug APK, Windows NSIS and JavaScript/Rust tests ALL passed. Android passed explicit all-four-ABI native libapp_core.so packaging verification, pinned debug signing certificate check, and artifact upload.
+Artifacts: Neural-Nova-Experimental-Android (ID 11838782675), Neural-Nova-Experimental-Windows (ID 11838692639). Release version remains v0.12.3; Android identifier/signing key unchanged, checkpoint/visualizer unchanged.
+Native Rust app test replay_even_tiny_lessons initially failed because fixture supplied only four dialogue questions; corrected to five before final build. An unrelated transient Android NDK zip corruption was addressed by CI fallback to validated preinstalled NDK and retries. Final verified workflow successfully compiled and packaged with that policy.
+Core CI https://github.com/SirSkirt/NovaAI/actions/runs/38446467178 SUCCESS, including reproducible equal-start curriculum_ab -- 6 heldout/ablation probe. Both fresh tiny curricula scored 0/3 exact novel responses after only six updates; do not present as learned generalized reasoning. Rather, parser/trainer tests, experiment infrastructure, and model ablations are operational.
+USER SHOULD TEST: After saving/exporting trained .nhyb and waiting for current ZIP training to finish, install new Android APK over old pinned-signature version. Confirm foreground notification #2 reports actual Lesson X/Y: filename.txt, updating at lesson transitions and surviving screen-off/switch-app, while notification #1 says batch loss and app heldout loss is labeled Held-out composite loss. Some Android notification presentation can only be verified on real Samsung/Android 16 device.
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA v0.12.3 — UNIFIED TRAINER / NOTIFICATION REFINEMENTS (2026-10-13)
 
 USER REQUEST: Improve previously identified weaknesses (unbalanced older lesson replay, unrelated understanding negatives, insufficient novel-situation evaluation) AND fix misleading notification where "loss 0.5231" was latest training batch while held-out 7.7078 was last completed epoch's composite validation. Preserve two-way neural brain, original brain visualizer and checkpoint/signing identity.
