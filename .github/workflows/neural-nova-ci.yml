@@ -34,3 +34,6 @@ jobs:
       - name: Measure generated answers on held-out cases (diagnostic; no accuracy threshold)
         working-directory: neural-nova
         run: cargo run --release --bin cooperative_eval -- 4
+      - name: Compare same-start flat versus multi-objective education (diagnostic)
+        working-directory: neural-nova
+        run: cargo run --release --bin curriculum_eval -- 1
