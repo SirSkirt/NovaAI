@@ -9,7 +9,8 @@
   "plugins": {
     "background-service": {
       "androidForegroundServiceTypes": ["specialUse"],
-      "androidValidateForegroundServiceType": true
+      "androidValidateForegroundServiceType": true,
+      "androidShowStopAction": false
     }
   },
   "app": {
