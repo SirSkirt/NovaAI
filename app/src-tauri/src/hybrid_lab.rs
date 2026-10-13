@@ -896,6 +896,8 @@ pub fn hybrid_train(
                 "lessonLengthBytes":lesson.text.len(),"lessonFingerprint":diag::fingerprint(&lesson.text),
                 "trainingExamples":plan.train.len(),"validationExamples":plan.validation.len(),
                 "trainingSections":plan.train_lessons,"heldoutSections":plan.validation_lessons,
+                "categoryTrainingUnits":plan.category_train,
+                "categoryHeldoutUnits":plan.category_validation,
                 "validationStrategy":if lesson.mode=="text"{
                     "stable-hash whole paragraph/sentence groups; cross-boundary contexts forbidden"
                 }else{"mode-specific independent examples"},
@@ -1015,13 +1017,16 @@ fn previous_validation_loss(brain:&HybridBrain,previous:&[PreparedLessons])
     for lesson in previous{
         let indices=rehearsal::prior_validation_selection(lesson);
         let selected=indices.iter().map(|&i|lesson.validation[i].clone()).collect::<Vec<_>>();
-        let (loss,_) = if lesson.mode=="conversation"{
+        let (loss,_) = if lesson.mode=="unified"{
+            let (l,a,_)=mixed_validation(brain,lesson,&indices)?;
+            (l,a)
+        }else if lesson.mode=="conversation"{
             let histories=indices.iter().map(|&i|lesson.memory_validation[i].clone())
                 .collect::<Vec<_>>();
             evaluate_memory(brain,&selected,&histories)?
         }else{brain.evaluate(&selected)?};
         if !loss.is_finite(){return Err("Non-finite previous-lesson validation loss".into());}
-        let ranking_loss=if lesson.mode=="reasoning"{
+        let ranking_loss=if lesson.mode=="reasoning"||lesson.mode=="unified"{
             0.4*reasoning_validation(brain,lesson)?.0
         }else{0.0};
         sum+=(loss+ranking_loss) as f64;
@@ -1041,13 +1046,70 @@ fn reasoning_validation(brain:&HybridBrain,lessons:&PreparedLessons)
     let n=lessons.reasoning_validation.len().min(16);
     Ok((sum/n as f32,wins as f32/n as f32))
 }
+/// Category-aware unit scheduling. Keep mini-batches homogeneous, and rotate
+/// objectives so a long Dialogue block cannot drown out one Reasoning block.
+fn objective_batches(lesson:&PreparedLessons,epoch:u32)->Vec<Vec<usize>>{
+    let order=training_order(&lesson.train,epoch,&lesson.mode);
+    if lesson.mode!="unified"{return order.chunks(BATCH).map(|c|c.to_vec()).collect();}
+    let mut queues=vec![Vec::<Vec<usize>>::new();5];
+    for id in order{
+        let kind=lesson.train_kinds[id] as usize;
+        queues[kind].push(vec![id]);
+    }
+    for queue in &mut queues{
+        let flattened=queue.iter().map(|x|x[0]).collect::<Vec<_>>();
+        *queue=flattened.chunks(BATCH).map(|c|c.to_vec()).collect();
+    }
+    let mut result=Vec::new();
+    let mut cursor=[0usize;5];
+    loop{
+        let mut progress=false;
+        for category in 0..5{
+            if cursor[category]<queues[category].len(){
+                result.push(queues[category][cursor[category]].clone());
+                cursor[category]+=1;progress=true;
+            }
+        }
+        if !progress{break;}
+    }
+    result
+}
+/// Score precisely the requested mixed held-out rows, including memory inputs.
+fn mixed_validation(brain:&HybridBrain,lesson:&PreparedLessons,indices:&[usize])
+    ->Result<(f32,f32,[Option<f32>;5]),String>{
+    let mut loss=[0f64;5];let mut count=[0usize;5];let mut correct=0usize;
+    for &i in indices{
+        let (context,target)=&lesson.validation[i];
+        let kind=lesson.validation_kinds[i] as usize;
+        let memory=if kind==neural_nova::unified::CONVERSATION{
+            &lesson.memory_validation[i][..]
+        }else{&[][..]};
+        let p=brain.predict_with_memory(context,256,memory)?;
+        loss[kind]-=p[*target as usize].max(1e-30).ln() as f64;
+        count[kind]+=1;
+        if p.iter().enumerate().max_by(|a,b|a.1.partial_cmp(b.1)
+            .unwrap_or(std::cmp::Ordering::Equal)).map(|x|x.0)==Some(*target as usize){
+            correct+=1;
+        }
+    }
+    let per=std::array::from_fn(|i|if count[i]>0{
+        Some((loss[i]/count[i] as f64) as f32)
+    }else{None});
+    let average=per.iter().flatten().sum::<f32>()/
+        per.iter().flatten().count().max(1) as f32;
+    Ok((average,correct as f32/indices.len().max(1) as f32,per))
+}
 fn current_validation(brain:&HybridBrain,lessons:&PreparedLessons)
     ->Result<(f32,f32,f32,f32),String>{
-    let (next_loss,accuracy)=if lessons.mode=="conversation"{
+    let (next_loss,accuracy)=if lessons.mode=="unified"{
+        let ids=(0..lessons.validation.len()).collect::<Vec<_>>();
+        let (loss,correct,_)=mixed_validation(brain,lessons,&ids)?;
+        (loss,correct)
+    }else if lessons.mode=="conversation"{
         evaluate_memory(brain,&lessons.validation,&lessons.memory_validation)?
     }else{brain.evaluate(&lessons.validation)?};
     let (ranking,ranking_acc)=reasoning_validation(brain,lessons)?;
-    let selected_loss=if lessons.mode=="reasoning"{
+    let selected_loss=if lessons.mode=="reasoning"||lessons.mode=="unified"{
         next_loss+0.4*ranking
     }else{next_loss};
     Ok((selected_loss,accuracy,ranking,ranking_acc))
@@ -1072,6 +1134,11 @@ fn train_inner(
             diag::record(&app.state::<Diagnostics>(),"lesson_validation_baseline",serde_json::json!({
                 "loss":loss,"nextCharacterAccuracy":accuracy,
                 "reasoningRankingLoss":ranking_loss,"reasoningRankingAccuracy":ranking_accuracy,
+                "categoryLoss":if lessons.mode=="unified"{
+                    mixed_validation(&s.brain,lessons,
+                        &(0..lessons.validation.len()).collect::<Vec<_>>())
+                        .ok().map(|x|x.2)
+                }else{None},
                 "step":s.brain.transformer.step,"wordUnits":s.brain.tokenizer.words.len(),
                 "weightsFingerprint":diag::weight_digest(&s.brain),
                 "selectionUsesOnlyCurrentLessonValidation":true,
@@ -1116,10 +1183,29 @@ fn train_inner(
             "Warm-up: short contexts first"
         }else{"Practice: shuffled examples"};
         let learning_rate=schedule.learning_rate;
-        let order=training_order(train,epoch,&lessons.mode);
-        let prior_orders=previous.iter().map(|p|training_order(&p.train,epoch,&p.mode))
-            .collect::<Vec<_>>();
-        let mut prior_cursors=vec![0usize;previous.len()];
+        let batches_new=objective_batches(lessons,epoch);
+        // Balance archived categories across whole earlier-lesson bank, not
+        // merely one archive at a time. Never replay validation indices.
+        let mut prior_batches=previous.iter().enumerate().flat_map(|(i,p)|
+            objective_batches(p,epoch).into_iter().map(move |ids|
+                (i,ids.clone(),if p.mode=="unified"{p.train_kinds[ids[0]]}
+                    else if p.mode=="conversation"{2}
+                    else if p.mode=="reasoning"{3}else{0}))
+        ).collect::<Vec<_>>();
+        prior_batches.sort_by_key(|(i,_,kind)|(*kind,*i));
+        let mut interleaved=Vec::with_capacity(prior_batches.len());
+        while !prior_batches.is_empty(){
+            let mut remaining=Vec::new();
+            for kind in 0..=4{
+                if let Some(index)=prior_batches.iter().position(|x|x.2==kind){
+                    interleaved.push(prior_batches.remove(index));
+                }
+            }
+            // All entries have a valid kind. Keep the loop finite.
+            if interleaved.is_empty(){break;}
+            remaining.clear();
+        }
+        let prior_batches=interleaved;
         let mut replay_batches=0usize;
         let mut epoch_loss=0.0f64;
         let mut trained_count=0usize;
@@ -1133,12 +1219,15 @@ fn train_inner(
             let mut s=lock(state)?;
             s.epoch=epoch;s.stage=stage.into();s.learning_rate=learning_rate;
         }
-        for (new_batch_index,ids) in order.chunks(BATCH).enumerate(){
+        for (new_batch_index,ids) in batches_new.iter().enumerate(){
             if state.inner.stop.load(Ordering::Acquire){cancelled=true;break;}
             let batch:Vec<Example>=ids.iter().map(|&i|train[i].clone()).collect();
             let (loss,step,diag)={
                 let mut s=lock(state)?;
-                let loss=if lessons.mode=="conversation"{
+                let memory_batch=lessons.mode=="conversation" ||
+                    (lessons.mode=="unified"&&lessons.train_kinds[ids[0]]
+                        ==neural_nova::unified::CONVERSATION);
+                let loss=if memory_batch{
                     let extended=ids.iter().map(|&i|(train[i].0.clone(),train[i].1,
                         lessons.memory_train[i].clone())).collect::<Vec<_>>();
                     s.brain.train_memory_batch(&extended,learning_rate)?
@@ -1158,14 +1247,18 @@ fn train_inner(
                     "bridgeGradientNorm":diag.bridge_norm,
                     "transformerClipped":diag.transformer_clipped,
                     "denseClipped":diag.dense_clipped,
-                    "usesEpisodicMemory":lessons.mode=="conversation",
+                    "usesEpisodicMemory":lessons.mode=="conversation"||
+                        (lessons.mode=="unified" && lessons.train_kinds[ids[0]]==2),
+                    "learningObjective":if lessons.mode=="unified"{
+                        Some(lessons.train_kinds[ids[0]])}else{None},
                 }));
             }
             // Every fourth new batch additionally optimizes a DIFFERENT
             // sequence-level loss: prefer supported conclusions to explicitly
             // contradicted conclusions. There is still only one shared brain.
-            if lessons.mode=="reasoning" && !lessons.reasoning_train.is_empty()
-                && (new_batch_index+1)%4==0{
+            if (lessons.mode=="reasoning"||lessons.mode=="unified") &&
+                !lessons.reasoning_train.is_empty() &&
+                ((new_batch_index+1)%4==0 || new_batch_index+1==batches_new.len()){
                 let index=(new_batch_index/4+epoch as usize-1)%lessons.reasoning_train.len();
                 let item=lessons.reasoning_train[index].clone();
                 let (rank_loss,reasoning_step)={
@@ -1195,24 +1288,23 @@ fn train_inner(
             // Both pathways receive the same actual gradients. The held-out
             // portions of archived lessons are NEVER sampled here.
             if rehearsal_enabled && !previous.is_empty() && (new_batch_index+1)%3==0 {
-                let source=replay_batches%previous.len();
+                let (source,ids,objective)=prior_batches[
+                    (replay_batches+epoch as usize-1)%prior_batches.len()].clone();
                 let old=&previous[source];
-                let chosen=&prior_orders[source];
-                let start=prior_cursors[source];
-                let ids=(0..BATCH).map(|k|chosen[(start+k)%chosen.len()]).collect::<Vec<_>>();
-                prior_cursors[source]=(start+BATCH)%chosen.len();
                 replay_batches+=1;
                 let replay:Vec<Example>=ids.iter().map(|&i|old.train[i].clone()).collect();
                 let (replay_loss,step,grad)={
                     let mut s=lock(state)?;
-                    let replay_loss=if old.mode=="conversation"{
+                    let replay_loss=if old.mode=="conversation" ||
+                        (old.mode=="unified"&&objective==2){
                         let with_memory=ids.iter().map(|&i|(
                             old.train[i].0.clone(),old.train[i].1,old.memory_train[i].clone()
                         )).collect::<Vec<_>>();
                         s.brain.train_memory_batch(&with_memory,learning_rate)?
                     }else{s.brain.train_batch(&replay,learning_rate)?};
                     if !replay_loss.is_finite(){return Err("Non-finite rehearsal loss".into());}
-                    if old.mode=="reasoning" && !old.reasoning_train.is_empty(){
+                    if (old.mode=="reasoning" || old.mode=="unified") && objective==3 &&
+                        !old.reasoning_train.is_empty(){
                         // Preserve conclusion comparison as well as the wording
                         // when an older reasoning lesson gets replayed.
                         let id=(replay_batches+epoch as usize-1)%old.reasoning_train.len();
@@ -1236,7 +1328,8 @@ fn train_inner(
                     diag::record(&app.state::<Diagnostics>(),"rehearsal_batch",serde_json::json!({
                         "epoch":epoch,"sourceIndex":source,"sourceMode":old.mode,
                         "optimizerStep":step,"examples":replay.len(),"loss":replay_loss,
-                        "learningRate":learning_rate,"usesEpisodicMemory":old.mode=="conversation",
+                        "learningRate":learning_rate,"usesEpisodicMemory":old.mode=="conversation"||objective==2,
+                        "learningObjective":objective,
                         "gradientTransformer":grad.transformer_norm,"gradientDense":grad.dense_norm
                     }));
                 }
@@ -1300,6 +1393,11 @@ fn train_inner(
                 "trainingLoss":epoch_loss/trained_count as f64,
                 "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
                 "reasoningRankingLoss":reasoning_ranking_loss,"reasoningRankingAccuracy":reasoning_ranking_accuracy,
+                "categoryHeldoutLoss":if lessons.mode=="unified"{
+                    mixed_validation(&brain,lessons,
+                        &(0..lessons.validation.len()).collect::<Vec<_>>())
+                        .ok().map(|x|x.2)
+                }else{None},
                 "bestValidationLoss":best_loss,"bestEpoch":best_epoch,"improved":improved,
                 "priorHeldoutLoss":prior_loss,"priorBaselineLoss":prior_baseline,
                 "retentionGuardAccepted":eligible,"rehearsalBatches":replay_batches,
