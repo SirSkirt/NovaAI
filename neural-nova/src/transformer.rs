@@ -13,6 +13,9 @@ pub const CONTEXT:usize=256;
 pub const ORIGINAL_CONTEXT:usize=128;
 pub const D:usize=32;
 pub const FF:usize=64;
+/// Repeated trainable processing of the one fused latent representation.
+pub const REASONING_STEPS:usize=3;
+const REASONING_INPUT_SCALE:f32=1.0/32.0;
 const MAGIC:&[u8;8]=b"NTRF0200";
 
 #[derive(Clone)]
@@ -21,7 +24,8 @@ struct Layout {
     q:Range<usize>, k:Range<usize>, v:Range<usize>, o:Range<usize>,
     f1:Range<usize>, b1:Range<usize>, f2:Range<usize>, b2:Range<usize>,
     output:Range<usize>, bout:Range<usize>, bridge:Range<usize>,
-    words:Range<usize>,memory_write:Range<usize>,memory_read:Range<usize>,len:usize,
+    words:Range<usize>,memory_write:Range<usize>,memory_read:Range<usize>,
+    reason_read:Range<usize>,reason_bias:Range<usize>,reason_update:Range<usize>,len:usize,
 }
 fn allocate(cursor:&mut usize,n:usize)->Range<usize> {
     let start=*cursor;*cursor+=n;start..*cursor
@@ -45,7 +49,12 @@ fn layout_for(window:usize)->Layout {
     let words=allocate(&mut n,MAX_WORDS*D);
     let memory_write=allocate(&mut n,D*D);
     let memory_read=allocate(&mut n,D*D);
-    Layout{tok,pos,q,k,v,o,f1,b1,f2,b2,output,bout,bridge,words,memory_write,memory_read,len:n}
+    // Append new matrices so every previously trained index is preserved.
+    let reason_read=allocate(&mut n,D*D);
+    let reason_bias=allocate(&mut n,D);
+    let reason_update=allocate(&mut n,D*D);
+    Layout{tok,pos,q,k,v,o,f1,b1,f2,b2,output,bout,bridge,words,memory_write,memory_read,
+        reason_read,reason_bias,reason_update,len:n}
 }
 fn random(seed:&mut u64)->f32 {
     *seed^=*seed>>12;*seed^=*seed<<25;*seed^=*seed>>27;
@@ -91,8 +100,12 @@ struct Cache {
     memory_sources:Vec<Vec<u16>>, memory_means:Vec<Vec<f32>>,
     memory_activations:Vec<Vec<f32>>, memory_context:Vec<f32>,
     memory_query:Vec<f32>, memory_attention:Vec<f32>,
+    reasoning:Vec<ReasoningCache>,
     hidden_before_bridge_norm:f32,dense_features_norm:f32,bridge_norm:f32,hidden_after_bridge_norm:f32,
 }
+// Internal states used for exact reverse-mode differentiation through all
+// recurrent latent steps. No text templates, rules or alternate decoder.
+struct ReasoningCache {input:Vec<f32>,candidate:Vec<f32>}
 #[derive(Clone,Debug)]
 pub struct BridgeMeasurement{
     pub transformer_norm:f32,pub dense_norm:f32,pub projected_bridge_norm:f32,
@@ -119,7 +132,7 @@ impl Transformer {
         for (r,input_size) in [
             (&l.q,D),(&l.k,D),(&l.v,D),(&l.o,D),
             (&l.f1,D),(&l.f2,FF),(&l.output,D),(&l.bridge,VOCAB),
-            (&l.words,D),(&l.memory_write,D),(&l.memory_read,D)
+            (&l.words,D),(&l.memory_write,D),(&l.memory_read,D),(&l.reason_read,D)
         ] {
             let radius=(2.0/input_size as f32).sqrt()*0.5;
             for w in &mut weights[r.clone()] {
@@ -130,6 +143,10 @@ impl Transformer {
         // read projection. This protects migrated dialogue weights from
         // random memory output when users reopen an existing conversation.
         weights[l.memory_read.clone()].fill(0.0);
+        // Identity at migration/startup: the learned output projection begins
+        // at zero, but receives nonzero gradients from the first lesson.
+        // This is not an inference fallback or hard-coded reasoning policy.
+        weights[l.reason_update.clone()].fill(0.0);
         Self {
             weights, momentum:vec![0.0;l.len],variance:vec![0.0;l.len],step:0
         }
@@ -222,12 +239,27 @@ impl Transformer {
             let added=mv(&self.weights,&l.memory_read,D,D,&memory_context);
             for j in 0..D{hidden[j]+=added[j];}
         }
+        // Shared trainable latent reasoning. Recurrent transformations operate
+        // after dense/Transformer/memory fusion. No symbolic rules or text
+        // generator is used here. The SAME hidden state produces the answer.
+        let mut reasoning=Vec::with_capacity(REASONING_STEPS);
+        for _ in 0..REASONING_STEPS{
+            let old=hidden.clone();
+            let mut raw=mv(&self.weights,&l.reason_read,D,D,&old);
+            for j in 0..D{
+                raw[j]= (raw[j]*REASONING_INPUT_SCALE+
+                    self.weights[l.reason_bias.start+j]).tanh();
+            }
+            let update=mv(&self.weights,&l.reason_update,D,D,&raw);
+            for j in 0..D{hidden[j]+=update[j]/REASONING_STEPS as f32;}
+            reasoning.push(ReasoningCache{input:old,candidate:raw});
+        }
         let mut logits=mv(&self.weights,&l.output,VOCAB,D,&hidden);
         for j in 0..VOCAB {logits[j]+=self.weights[l.bout.start+j];}
         let probabilities=stable_softmax(&logits);
         Ok(Cache{tokens,inputs,query,keys,values,attention,context,mid,pre,act,hidden,probabilities,
             memory_sources:memory.iter().skip(memory.len().saturating_sub(12)).cloned().collect(),
-            memory_means,memory_activations,memory_context,memory_query,memory_attention,
+            memory_means,memory_activations,memory_context,memory_query,memory_attention,reasoning,
             hidden_before_bridge_norm,dense_features_norm,bridge_norm,hidden_after_bridge_norm})
     }
     pub fn predict(&self,context:&[u8])->Result<Vec<f32>,String> {
@@ -256,6 +288,21 @@ impl Transformer {
         delta[target as usize]-=1.0;
         for (j,d) in delta.iter().enumerate() {grad[l.bout.start+j]+=*d;}
         let mut dh=back_mv(&self.weights,&l.output,VOCAB,D,&c.hidden,&delta,&mut grad);
+        // Exact BPTT across the recurrent reasoning steps. Each residual
+        // update contributes to the same fused state's gradient.
+        for step in c.reasoning.iter().rev(){
+            let dup=dh.iter().map(|x|x/REASONING_STEPS as f32).collect::<Vec<_>>();
+            let dc=back_mv(&self.weights,&l.reason_update,D,D,
+                &step.candidate,&dup,&mut grad);
+            let dz=dc.iter().zip(&step.candidate)
+                .map(|(d,c)|d*(1.0-c*c)).collect::<Vec<_>>();
+            for j in 0..D{grad[l.reason_bias.start+j]+=dz[j];}
+            let input_scaled=step.input.iter()
+                .map(|x|x*REASONING_INPUT_SCALE).collect::<Vec<_>>();
+            let upstream=back_mv(&self.weights,&l.reason_read,D,D,
+                &input_scaled,&dz,&mut grad);
+            for j in 0..D{dh[j]+=upstream[j]*REASONING_INPUT_SCALE;}
+        }
         // Memory attention uses the post-bridge hidden state as its query.
         // Include the memory-query derivative in dh BEFORE backpropagating
         // through the dense bridge; otherwise the dense pathway misses it.
@@ -399,6 +446,14 @@ impl Transformer {
             self.variance.copy_from_slice(variance);
             return Ok(());
         }
+        // v0.8 full hybrid Transformer has no recurrent latent matrices.
+        // Append neutral, trainable parameters without perturbing predictions.
+        if weights.len()==current.reason_read.start{
+            self.weights[..weights.len()].copy_from_slice(weights);
+            self.momentum[..weights.len()].copy_from_slice(momentum);
+            self.variance[..weights.len()].copy_from_slice(variance);
+            return Ok(());
+        }
         // The previous 256-character model has no learned word or memory
         // matrices. Append these without disturbing existing parameters.
         if weights.len()==current.words.start{
@@ -527,7 +582,7 @@ impl Transformer {
         // original parameters/moments are retained; the appended trainable
         // bridge receives fresh initialization and zero optimizer moments.
         let old=layout_for(ORIGINAL_CONTEXT);
-        if stored_count!=layout().len && stored_count!=layout().words.start && stored_count!=old.words.start && stored_count!=old.bridge.start {
+        if stored_count!=layout().len && stored_count!=layout().reason_read.start && stored_count!=layout().words.start && stored_count!=old.words.start && stored_count!=old.bridge.start {
             return Err("Transformer checkpoint parameter count mismatch".into());
         }
         let mut step=[0u8;8];
