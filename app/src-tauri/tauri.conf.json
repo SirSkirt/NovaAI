@@ -6,6 +6,12 @@
   "build": {
     "frontendDist": "../dist"
   },
+  "plugins": {
+    "background-service": {
+      "androidForegroundServiceTypes": ["specialUse"],
+      "androidValidateForegroundServiceType": true
+    }
+  },
   "app": {
     "security": {
       "csp": null
