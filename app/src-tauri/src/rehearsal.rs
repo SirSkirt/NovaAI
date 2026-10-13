@@ -7,6 +7,7 @@ use std::{fs,path::Path};
 pub const MAX_ARCHIVED_LESSONS:usize=128;
 pub const RETENTION_VALIDATION_LIMIT:usize=64;
 pub const RETENTION_PLANS_PER_CHECK:usize=16;
+pub const MAX_ACTIVE_REPLAY_LESSONS:usize=12;
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct LessonRecord{
@@ -72,8 +73,50 @@ pub fn append(bank:&mut RehearsalBank,record:LessonRecord,ending_fingerprint:Str
 }
 /// The replay set contains only previous TRAIN splits. Held-out material is
 /// reserved exclusively for checkpoint evaluation.
+/// Keep all 128 original TXT sources on disk, but only materialize a
+/// bounded category-balanced historical panel in RAM for this lesson.
+pub fn active_replay_indices(bank:&RehearsalBank)->Vec<usize>{
+    let mut selected=std::collections::BTreeSet::new();
+    let tagged=|record:&LessonRecord,category:usize|{
+        if record.mode=="unified"{
+            let tag=match category{
+                0=>"[Dialogue Lesson]",1=>"[Understanding Lesson]",
+                2=>"[Multi-Turn Conversation Lesson]",3=>"[Reasoning Lesson]",
+                _=>return true,
+            };
+            record.text.contains(tag)
+        }else{
+            matches!((category,record.mode.as_str()),
+                (0,"dialogue")|(2,"conversation")|(3,"reasoning")|(4,"text"))
+        }
+    };
+    for kind in 0..5{
+        if let Some(i)=bank.lessons.iter().position(|v|tagged(v,kind)){
+            selected.insert(i);
+        }
+        if let Some(i)=bank.lessons.iter().rposition(|v|tagged(v,kind)){
+            selected.insert(i);
+        }
+    }
+    if bank.lessons.is_empty(){return Vec::new();}
+    let n=bank.lessons.len();
+    for step in 0..MAX_ACTIVE_REPLAY_LESSONS{
+        if selected.len()>=MAX_ACTIVE_REPLAY_LESSONS{break;}
+        let i=if MAX_ACTIVE_REPLAY_LESSONS==1{0}
+            else{step*(n-1)/(MAX_ACTIVE_REPLAY_LESSONS-1)};
+        selected.insert(i);
+    }
+    if selected.len()<MAX_ACTIVE_REPLAY_LESSONS{
+        for i in 0..n{
+            if selected.len()>=MAX_ACTIVE_REPLAY_LESSONS{break;}
+            selected.insert(i);
+        }
+    }
+    selected.into_iter().take(MAX_ACTIVE_REPLAY_LESSONS).collect()
+}
 pub fn previous_plans(bank:&RehearsalBank)->Result<Vec<PreparedLessons>,String>{
-    bank.lessons.iter().map(|v|prepare(&v.mode,&v.text)).collect()
+    active_replay_indices(bank).into_iter()
+        .map(|i|prepare(&bank.lessons[i].mode,&bank.lessons[i].text)).collect()
 }
 /// Bounded, deterministic long-term retention panel. Each observed category
 /// contributes oldest + newest examples first, then evenly spaced archive
@@ -162,6 +205,15 @@ mod tests{
         assert!(append(&mut bank,lesson("overflow"),"bad".into()).is_err());
         assert_eq!(bank.lessons.len(),old.len());
         assert_eq!(bank.lessons[0].text,old[0].text);
+    }
+    #[test]fn active_replay_is_bounded_but_archive_is_not_truncated(){
+        let mut bank=RehearsalBank::default();
+        for i in 0..70{append(&mut bank,lesson(&i.to_string()),format!("fp-{i}")).unwrap();}
+        let ids=active_replay_indices(&bank);
+        assert!(ids.len()<=MAX_ACTIVE_REPLAY_LESSONS);
+        assert_eq!(bank.lessons.len(),70);
+        assert_eq!(ids.first().copied(),Some(0));
+        assert_eq!(ids.last().copied(),Some(69));
     }
     #[test]fn replay_never_trains_on_its_holdout(){
         let mut bank=RehearsalBank::default();
