@@ -1,3 +1,12 @@
+NEURAL NOVA v0.12.1 — FINAL CI RESULT (2026-10-13)
+
+Build https://github.com/SirSkirt/NovaAI/actions/runs/38428092991 PASSED ALL THREE JOBS: JS+Rust tests, Windows installer and Android debug APK. Android job individually PASSED: Build Android foreground lifecycle adapter (all four ABI variants), Build experimental Android APK, Verify packaged libapp_core.so in each ABI, Verify persistent original signing certificate, Upload Android artifact. Both platform artifacts available:
+- Neural-Nova-Experimental-Android (artifact ID 11829064505; package signing identity unchanged)
+- Neural-Nova-Experimental-Windows (artifact ID 11829028774).
+Android packaging/library failure from screenshot is addressed in this build. Actual background/screen-locked runtime on user's Samsung Android 16 has NOT yet been tested. Ask user to export .nhyb, update APK, allow notifications, set battery mode Unrestricted when applicable, and test a small ZIP while switching apps/locking screen. Confirm lesson counts, progress notification, saved checkpoint and resumed UI. Force-stop/OS kills can still interrupt; no process-death queue restoration yet.
+
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA v0.12.1 — ANDROID BACKGROUND TRAINING / ZIP QUEUE FIX (2026-10-13)
 
 USER ERROR: native_library_load_failed libapp_core.so not found even though POST_NOTIFICATIONS allowed. This is NOT a notification-permission error. tauri-plugin-background-service 1.0.1 Android LifecycleService invokes optional HeadlessBridge.startCore JNI on every start, despite Nova only needing a foreground process keepalive.
