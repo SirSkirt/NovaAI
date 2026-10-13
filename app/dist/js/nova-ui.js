@@ -283,6 +283,7 @@ $("startTraining").addEventListener("click",()=>safe(async()=>{
   $("trainingFill").style.width="0%";
   setRunning(true);
   try{
+    await window.NovaTrainingBackground?.start();
     await invoke("hybrid_train",{
       lesson:{mode:activeMode,text,epochs},
       options:{adaptiveLearningRate,earlyStopping,learningRate,patience:6,
