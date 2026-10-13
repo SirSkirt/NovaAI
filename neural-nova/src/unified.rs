@@ -265,6 +265,7 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
         validation_lessons:0,mode:"unified".into(),training_text:String::new(),
         memory_train:Vec::new(),memory_validation:Vec::new(),
         reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
+        understanding_train:Vec::new(),understanding_validation:Vec::new(),
         train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],
     };
@@ -296,6 +297,26 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
             if validation{prepared.reasoning_validation.push(item.clone());}
             else{prepared.reasoning_train.push(item.clone());}
         }
+    }
+    // Contrast context-conditioned answers from DIFFERENT independent
+    // understanding examples. All targets originate from teacher examples;
+    // no scripted inference, semantic rule or synthetic correct answer.
+    for validation in [false,true]{
+        let candidates=units.iter().filter(|unit|unit.kind==UNDERSTANDING &&
+            held.contains(&unit.group)==validation).collect::<Vec<_>>();
+        let mut comparisons=Vec::<ReasoningExample>::new();
+        for (i,item) in candidates.iter().enumerate(){
+            let pair=&item.turns[0];
+            if let Some(wrong)=candidates.iter().skip(i+1)
+                .chain(candidates.iter().take(i))
+                .map(|other|&other.turns[0].assistant)
+                .find(|candidate|**candidate!=pair.assistant){
+                comparisons.push((dialogue_prefix(&pair.user)?,
+                    pair.assistant.as_bytes().to_vec(),wrong.as_bytes().to_vec()));
+            }
+        }
+        if validation{prepared.understanding_validation=comparisons;}
+        else{prepared.understanding_train=comparisons;}
     }
     // Explanations contribute lightly through *language* prediction only.
     // They are NOT labeled as Nova's replies, nor converted to prewritten
@@ -355,6 +376,8 @@ mod tests{
         assert!(p.train_kinds.contains(&REASONING));
         assert!(p.train_kinds.contains(&EXPLANATION));
         assert!(!p.reasoning_train.is_empty() || !p.reasoning_validation.is_empty());
+        assert!(!p.understanding_train.is_empty());
+        assert!(p.understanding_train.iter().all(|(_,good,bad)|good!=bad));
         assert_eq!(p.train.len(),p.memory_train.len());
         assert_eq!(p.train.len(),p.train_kinds.len());
         assert_eq!(p.validation.len(),p.validation_kinds.len());
