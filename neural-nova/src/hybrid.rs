@@ -433,6 +433,29 @@ mod tests{
         assert!(loss.is_finite());
     }
     #[test]
+    fn preference_training_updates_the_shared_recurrent_state_not_a_second_brain(){
+        let mut brain=HybridBrain::new();
+        let prompt=b"U: The copper box contains a stone. What is in the copper box?\nN: ".to_vec();
+        let good=b"A stone.".to_vec();
+        let bad=b"An apple.".to_vec();
+        let initially=brain.reasoning_activity(&prompt).unwrap();
+        let tf_start=brain.transformer.weights.clone();
+        let dense_start=brain.dense.layers[0].weights.clone();
+        let step=brain.transformer.step;
+        for _ in 0..2{
+            brain.train_preference_batch(&[(prompt.clone(),good.clone(),bad.clone())],
+                0.0003).unwrap();
+        }
+        assert_eq!(brain.transformer.step,step+2);
+        assert_ne!(brain.transformer.weights,tf_start);
+        assert_ne!(brain.dense.layers[0].weights,dense_start);
+        let activity=brain.reasoning_activity(&prompt).unwrap();
+        assert_eq!(activity.len(),crate::transformer::REASONING_STEPS);
+        assert!(initially.iter().all(|value|*value==0.0));
+        assert!(activity.iter().any(|value|*value>0.0));
+        assert!(brain.reasoning_margin(&prompt,&good,&bad).unwrap().0.is_finite());
+    }
+    #[test]
     fn pre_reasoning_joint_checkpoint_import_preserves_predictions_optimizer_and_tokenizer(){
         let mut brain=HybridBrain::new();
         brain.learn_token_units("hello hello morning morning");
