@@ -114,10 +114,26 @@ pub struct ZipTrainingStatus {
     total:usize,
     current:usize,
     completed:usize,
+    skipped:usize,
     failed:usize,
     lesson:String,
     stage:String,
     error:Option<String>,
+}
+/// Teacher scheduler outcome, not a neural answer or cognition rule.
+#[derive(Debug,PartialEq,Eq)]
+enum LessonDisposition {
+    Accepted(u32),
+    BaselineRetained,
+}
+/// A protected baseline is a VALID training outcome: it means no candidate
+/// beat the held-out/retention criteria, not that the training worker failed.
+/// Never count it as learned or add it to the rehearsal archive.
+fn classify_lesson_outcome(best_epoch:u32,error:Option<String>)
+    ->Result<LessonDisposition,String>{
+    if let Some(problem)=error{return Err(problem);}
+    if best_epoch==0{Ok(LessonDisposition::BaselineRetained)}
+    else{Ok(LessonDisposition::Accepted(best_epoch))}
 }
 #[derive(Default)]
 struct ZipQueueShared {
@@ -227,17 +243,31 @@ pub fn hybrid_zip_train(app:AppHandle,brain:State<'_,HybridState>,
                 }
                 let (best_epoch,error)=hybrid_lab::completed_training_outcome(
                     &app.state::<HybridState>())?;
-                if let Some(problem)=error{
-                    return Err(format!("{}: {}",lesson.name,problem));
-                }
+                // Explicit stop takes priority over baseline classification:
+                // cancellation is neither a learned lesson nor a validation
+                // failure and must not start the next lesson.
                 if queue.inner.stopping.load(Ordering::Acquire){break;}
-                if best_epoch==0{
-                    return Err(format!("{}: no eligible epoch accepted; queue stopped to protect the previous checkpoint",lesson.name));
+                match classify_lesson_outcome(best_epoch,error)
+                    .map_err(|e|format!("{}: {}",lesson.name,e))? {
+                    LessonDisposition::Accepted(epoch)=>{
+                        queue.update(&app,|s|{
+                            s.completed+=1;
+                            s.stage=format!("Accepted {} (epoch {}); preparing next lesson",
+                                lesson.name,epoch);
+                        });
+                    },
+                    LessonDisposition::BaselineRetained=>{
+                        // The trainer already restored its protected baseline.
+                        // Do NOT archive or count the rejected lesson as learned.
+                        // Move to the next independently validated lesson.
+                        queue.update(&app,|s|{
+                            s.skipped+=1;
+                            s.stage=format!(
+                                "No eligible improvement in {}; original checkpoint retained. Continuing to next lesson",
+                                lesson.name);
+                        });
+                    }
                 }
-                queue.update(&app,|s|{
-                    s.completed+=1;s.stage=format!(
-                        "Accepted {} (epoch {}); preparing next lesson",lesson.name,best_epoch);
-                });
             }
             Ok(())
         })();
@@ -252,7 +282,8 @@ pub fn hybrid_zip_train(app:AppHandle,brain:State<'_,HybridState>,
             s.active=false;
             s.stage=if result.is_err(){"Stopped after error".into()}
                 else if stopping{"Stopped by teacher".into()}
-                else{"Finished ZIP education".into()};
+                else{format!("Finished ZIP education: {} accepted, {} skipped (baseline retained)",
+                    s.completed,s.skipped)};
         });
         if let Ok(status)=queue.snapshot(){
             let _=app.emit("hybrid-zip-done",status);
@@ -280,6 +311,17 @@ mod tests{
     fn curriculum()->String{
         (0..8).map(|n|format!("Unique text section {n} describes a new event with different details."))
             .collect::<Vec<_>>().join("\n\n")
+    }
+    #[test]fn protected_baseline_allows_following_zip_lessons(){
+        assert_eq!(classify_lesson_outcome(0,None).unwrap(),
+            LessonDisposition::BaselineRetained);
+        assert_eq!(classify_lesson_outcome(3,None).unwrap(),
+            LessonDisposition::Accepted(3));
+        let failed=classify_lesson_outcome(0,Some("checkpoint save failed".into()));
+        assert_eq!(failed.unwrap_err(),"checkpoint save failed");
+        // A protected baseline is deliberately NOT an accepted lesson.
+        // The caller increments 'skipped' and starts the next lesson;
+        // real errors still fail closed.
     }
     #[test]fn sorted_and_validated_lessons(){
         let c=curriculum();
