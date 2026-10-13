@@ -5,7 +5,8 @@ use serde::{Serialize,Deserialize};
 use std::{fs,path::Path};
 
 pub const MAX_ARCHIVED_LESSONS:usize=128;
-pub const RETENTION_VALIDATION_LIMIT:usize=256;
+pub const RETENTION_VALIDATION_LIMIT:usize=64;
+pub const RETENTION_PLANS_PER_CHECK:usize=16;
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct LessonRecord{
@@ -73,6 +74,41 @@ pub fn append(bank:&mut RehearsalBank,record:LessonRecord,ending_fingerprint:Str
 /// reserved exclusively for checkpoint evaluation.
 pub fn previous_plans(bank:&RehearsalBank)->Result<Vec<PreparedLessons>,String>{
     bank.lessons.iter().map(|v|prepare(&v.mode,&v.text)).collect()
+}
+/// Bounded, deterministic long-term retention panel. Each observed category
+/// contributes oldest + newest examples first, then evenly spaced archive
+/// positions. The full archive remains intact and available for rehearsal.
+/// Results are explicitly a sample, NOT an exhaustive memory guarantee.
+pub fn retention_plan_indices(plans:&[PreparedLessons])->Vec<usize>{
+    let mut chosen=std::collections::BTreeSet::new();
+    for kind in 0..5usize{
+        let represented=|plan:&PreparedLessons|{
+            if plan.mode=="unified"{
+                plan.category_train[kind]>0||plan.category_validation[kind]>0
+            }else{
+                match (kind,plan.mode.as_str()){
+                    (0,"dialogue")|(2,"conversation")|(3,"reasoning")|(4,"text")=>true,
+                    _=>false,
+                }
+            }
+        };
+        if let Some(i)=plans.iter().position(represented){chosen.insert(i);}
+        if let Some(i)=plans.iter().rposition(represented){chosen.insert(i);}
+    }
+    if plans.is_empty(){return Vec::new();}
+    let steps=RETENTION_PLANS_PER_CHECK.min(plans.len());
+    for i in 0..steps{
+        if chosen.len()>=RETENTION_PLANS_PER_CHECK{break;}
+        let index=if steps==1{0}else{i*(plans.len()-1)/(steps-1)};
+        chosen.insert(index);
+    }
+    if chosen.len()<RETENTION_PLANS_PER_CHECK{
+        for i in 0..plans.len(){
+            if chosen.len()>=RETENTION_PLANS_PER_CHECK{break;}
+            chosen.insert(i);
+        }
+    }
+    chosen.into_iter().collect()
 }
 /// Deterministic bounded per-prior-lesson validation score. Not a response
 /// fallback and not put into train samples.
@@ -143,6 +179,22 @@ mod tests{
         assert!(!eligible_checkpoint(Some(1.3),Some(1.0),0.10,None,None));
         assert!(!eligible_checkpoint(Some(0.9),Some(1.0),0.10,Some(0.5),Some(1.0)));
         assert!(eligible_checkpoint(None,None,0.10,None,None));
+    }
+    #[test]fn retention_panel_covers_older_and_newer_categories(){
+        let mut plans=Vec::new();
+        let dialogue=prepare("dialogue",&lesson("one").text).unwrap();
+        let example=(0..7).map(|n|format!(
+            "Room {n} stores a copper object and its associated location."
+        )).collect::<Vec<_>>().join("\n");
+        let text=prepare("text",&example).unwrap();
+        for _ in 0..60{plans.push(dialogue.clone());}
+        plans.insert(3,text.clone());
+        plans.push(text);
+        let indices=retention_plan_indices(&plans);
+        assert!(indices.len()<=RETENTION_PLANS_PER_CHECK);
+        assert!(indices.contains(&0));
+        assert!(indices.contains(&(plans.len()-1)));
+        assert!(indices.contains(&3));
     }
     #[test]fn selection_is_bounded_and_deterministic(){
         let corpus=(0..300).map(|i|format!(
