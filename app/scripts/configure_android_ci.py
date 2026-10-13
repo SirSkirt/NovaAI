@@ -82,6 +82,9 @@ for perm in (
     "android.permission.FOREGROUND_SERVICE",
     "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
     "android.permission.POST_NOTIFICATIONS",
+    # PowerManager.PARTIAL_WAKE_LOCK keeps Rust CPU training progressing with
+    # the display off; released on foreground-service stop, not held idly.
+    "android.permission.WAKE_LOCK",
 ):
     if perm not in text:
         text=text.replace("<application",f'<uses-permission android:name="{perm}" />\n    <application',1)
