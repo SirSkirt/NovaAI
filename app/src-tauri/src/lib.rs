@@ -14,6 +14,7 @@ use transformer_lab::TransformerState;
 use hybrid_lab::HybridState;
 use diagnostic_log::Diagnostics;
 use checkpoint_transfer::TransferState;
+use lesson_zip::ZipQueueState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -30,6 +31,7 @@ pub fn run() {
         .manage(NeuralState::default())
         .manage(TransformerState::default())
         .manage(HybridState::default())
+        .manage(ZipQueueState::default())
         .manage(Diagnostics::default())
         .manage(TransferState::default())
         .invoke_handler(tauri::generate_handler![
@@ -56,6 +58,9 @@ pub fn run() {
             diagnostic_log::nova_log_read,
             hybrid_lab::hybrid_train,
             lesson_zip::hybrid_zip_preview,
+            lesson_zip::hybrid_zip_train,
+            lesson_zip::hybrid_zip_stop,
+            lesson_zip::hybrid_zip_status,
             hybrid_lab::hybrid_checkpoint_export_begin,
             hybrid_lab::hybrid_checkpoint_export_chunk,
             hybrid_lab::hybrid_checkpoint_import_begin,
