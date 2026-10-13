@@ -422,6 +422,60 @@ mod tests{
         assert!(loss.is_finite());
     }
     #[test]
+    fn pre_reasoning_joint_checkpoint_import_preserves_predictions_optimizer_and_tokenizer(){
+        let mut brain=HybridBrain::new();
+        brain.learn_token_units("hello hello morning morning");
+        for _ in 0..2{
+            brain.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.001).unwrap();
+        }
+        let prompt=b"U: hello\nN: ";
+        let before=brain.predict_window(prompt,256).unwrap();
+        let old_count=Transformer::previous_parameter_count();
+        let path=std::env::temp_dir().join(format!("nova-v08-reason-migration-{}-{}.nhyb",
+            std::process::id(),brain.transformer.step));
+        let mut file=File::create(&path).unwrap();
+        file.write_all(MAGIC).unwrap();
+        write_u32(&mut file,old_count as u32).unwrap();
+        file.write_all(&brain.transformer.step.to_le_bytes()).unwrap();
+        for array in [&brain.transformer.weights,&brain.transformer.momentum,&brain.transformer.variance]{
+            write_floats(&mut file,&array[..old_count]).unwrap();
+        }
+        let dimensions=brain.dense.dimensions();
+        write_u32(&mut file,dimensions.len() as u32).unwrap();
+        for d in dimensions{write_u32(&mut file,d as u32).unwrap();}
+        write_u32(&mut file,brain.dense_adam.step).unwrap();
+        for layer in &brain.dense.layers{
+            write_floats(&mut file,&layer.weights).unwrap();
+            write_floats(&mut file,&layer.biases).unwrap();
+        }
+        for moments in [&brain.dense_adam.m,&brain.dense_adam.v]{
+            for layer in &moments.layers{
+                write_floats(&mut file,&layer.weights).unwrap();
+                write_floats(&mut file,&layer.biases).unwrap();
+            }
+        }
+        file.write_all(b"WORDUNIT").unwrap();
+        write_u32(&mut file,brain.tokenizer.words.len() as u32).unwrap();
+        for word in &brain.tokenizer.words{
+            write_u32(&mut file,word.len() as u32).unwrap();
+            file.write_all(word.as_bytes()).unwrap();
+        }
+        file.sync_all().unwrap();drop(file);
+        let restored=HybridBrain::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(restored.predict_window(prompt,256).unwrap(),before);
+        assert_eq!(restored.transformer.step,brain.transformer.step);
+        assert_eq!(restored.tokenizer.words,brain.tokenizer.words);
+        assert_eq!(restored.dense_adam.step,brain.dense_adam.step);
+        assert_eq!(restored.transformer.momentum[..old_count],
+            brain.transformer.momentum[..old_count]);
+        assert_eq!(restored.transformer.variance[..old_count],
+            brain.transformer.variance[..old_count]);
+        assert_eq!(restored.dense.layers[0].weights,brain.dense.layers[0].weights);
+        let before_training=restored.reasoning_activity(prompt).unwrap();
+        assert_eq!(before_training,vec![0.0;crate::transformer::REASONING_STEPS]);
+    }
+    #[test]
     fn old_v03_joint_checkpoint_migrates_without_changing_short_context_results(){
         let mut trained=HybridBrain::new();
         trained.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.001).unwrap();
