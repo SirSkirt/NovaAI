@@ -96,6 +96,143 @@ pub fn read_bundle(data:&[u8],mode:&str)->Result<LessonBundle,String>{
 pub fn hybrid_zip_preview(bytes:Vec<u8>,mode:String)->Result<LessonBundle,String>{
     read_bundle(&bytes,&mode)
 }
+
+// Native ZIP sequencing: the WebView is NOT responsible for starting lessons
+// after each completion. Android may suspend JS with the display off.
+use crate::hybrid_lab::{self,HybridState,TrainOptions};
+use crate::transformer_lab::Lesson;
+use std::sync::{Arc,Mutex};
+use std::sync::atomic::{AtomicBool,Ordering};
+use std::time::Duration;
+use tauri::{AppHandle,Emitter,Manager,State};
+
+#[derive(Clone,Default,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct ZipTrainingStatus {
+    active:bool,
+    stopping:bool,
+    total:usize,
+    current:usize,
+    completed:usize,
+    failed:usize,
+    lesson:String,
+    stage:String,
+    error:Option<String>,
+}
+#[derive(Default)]
+struct ZipQueueShared {
+    active:AtomicBool,
+    stopping:AtomicBool,
+    progress:Mutex<ZipTrainingStatus>,
+}
+#[derive(Clone,Default)]
+pub struct ZipQueueState { inner:Arc<ZipQueueShared> }
+impl ZipQueueState {
+    pub(crate) fn is_active(&self)->bool{
+        self.inner.active.load(Ordering::Acquire)
+    }
+    fn snapshot(&self)->Result<ZipTrainingStatus,String>{
+        self.inner.progress.lock().map(|x|x.clone())
+            .map_err(|_|"ZIP scheduler state lock poisoned".into())
+    }
+    fn update(&self,app:&AppHandle,update:impl FnOnce(&mut ZipTrainingStatus)){
+        if let Ok(mut status)=self.inner.progress.lock(){
+            update(&mut status);
+            status.active=self.is_active();
+            status.stopping=self.inner.stopping.load(Ordering::Acquire);
+            let _=app.emit("hybrid-zip-progress",status.clone());
+        }
+    }
+}
+#[tauri::command]
+pub fn hybrid_zip_status(queue:State<'_,ZipQueueState>)->Result<ZipTrainingStatus,String>{
+    queue.snapshot()
+}
+#[tauri::command]
+pub fn hybrid_zip_stop(app:AppHandle,queue:State<'_,ZipQueueState>,
+    brain:State<'_,HybridState>)->bool{
+    if !queue.is_active(){return false;}
+    queue.inner.stopping.store(true,Ordering::Release);
+    queue.update(&app,|s|s.stage="Stopping after current lesson".into());
+    let _=hybrid_lab::hybrid_stop(brain);
+    true
+}
+/// Re-validates the original ZIP on the Rust side. No JS events are required
+/// to advance the queue, preserve checkpoint selection, or archive lessons.
+#[tauri::command]
+pub fn hybrid_zip_train(app:AppHandle,brain:State<'_,HybridState>,
+    queue:State<'_,ZipQueueState>,bytes:Vec<u8>,mode:String,epochs:u32,
+    options:Option<TrainOptions>)->Result<(),String>{
+    if !(1..=60).contains(&epochs){return Err("Choose 1–60 epochs".into());}
+    if brain.is_training(){return Err("A neural training session is already active".into());}
+    let prepared=read_bundle(&bytes,&mode)?;
+    if queue.inner.active.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire)
+        .is_err(){return Err("ZIP training queue is already running".into());}
+    queue.inner.stopping.store(false,Ordering::Release);
+    let queue=queue.inner().clone();
+    queue.update(&app,|s|{
+        *s=ZipTrainingStatus{active:true,total:prepared.lessons.len(),
+            stage:"Starting native ZIP training".into(),..Default::default()};
+    });
+    tauri::async_runtime::spawn_blocking(move||{
+        let result=(||->Result<(),String>{
+            for (i,lesson) in prepared.lessons.iter().enumerate(){
+                if queue.inner.stopping.load(Ordering::Acquire){break;}
+                queue.update(&app,|s|{
+                    s.current=i+1;s.lesson=lesson.name.clone();
+                    s.stage="Training in native Rust".into();
+                });
+                // hybrid_train retains the existing rehearsal, heldout testing,
+                // best-checkpoint rollback and accepted-lesson archiving.
+                hybrid_lab::hybrid_train(
+                    app.clone(),app.state::<HybridState>(),
+                    Lesson{mode:lesson.mode.clone(),text:lesson.text.clone(),epochs},
+                    options.clone())?;
+                // Only Rust waits and starts the NEXT lesson. A suspended or
+                // closed WebView cannot interrupt the sequence.
+                loop {
+                    if queue.inner.stopping.load(Ordering::Acquire){
+                        let _=hybrid_lab::hybrid_stop(app.state::<HybridState>());
+                    }
+                    if !app.state::<HybridState>().is_training(){break;}
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                let (best_epoch,error)=hybrid_lab::completed_training_outcome(
+                    &app.state::<HybridState>())?;
+                if let Some(problem)=error{
+                    return Err(format!("{}: {}",lesson.name,problem));
+                }
+                if queue.inner.stopping.load(Ordering::Acquire){break;}
+                if best_epoch==0{
+                    return Err(format!("{}: no eligible epoch accepted; queue stopped to protect the previous checkpoint",lesson.name));
+                }
+                queue.update(&app,|s|{
+                    s.completed+=1;s.stage=format!(
+                        "Accepted {} (epoch {}); preparing next lesson",lesson.name,best_epoch);
+                });
+            }
+            Ok(())
+        })();
+        if let Err(ref error)=result{
+            queue.update(&app,|s|{
+                s.failed+=1;s.error=Some(error.clone());s.stage="ZIP training failed".into();
+            });
+        }
+        let stopping=queue.inner.stopping.load(Ordering::Acquire);
+        queue.inner.active.store(false,Ordering::Release);
+        queue.update(&app,|s|{
+            s.active=false;
+            s.stage=if result.is_err(){"Stopped after error".into()}
+                else if stopping{"Stopped by teacher".into()}
+                else{"Finished ZIP education".into()};
+        });
+        if let Ok(status)=queue.snapshot(){
+            let _=app.emit("hybrid-zip-done",status);
+        }
+    });
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
