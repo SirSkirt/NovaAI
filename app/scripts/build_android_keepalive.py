@@ -48,8 +48,8 @@ for abi, triple in targets:
     destination = project / "app/src/main/jniLibs" / abi / "libapp_core.so"
     destination.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run([str(compiler), "-std=c11", "-O2", "-fPIC", "-shared",
-                    "-Wall", "-Wextra", "-Werror", "-o", str(destination),
-                    str(source), "-lpthread"], check=True)
+                    "-Wall", "-Wextra", "-Werror", "-pthread", "-o", str(destination),
+                    str(source)], check=True)
     if destination.stat().st_size < 1024:
         sys.exit("JNI lifecycle adapter unexpectedly small: " + str(destination))
     print(f"Built foreground lifecycle JNI adapter {abi}: {destination.stat().st_size} bytes")
