@@ -376,10 +376,18 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
     for (idx,block) in blocks.iter().enumerate(){
         if !has_train[idx]{continue;}
         let bytes=block.explanation.as_bytes();
-        for offset in 1..bytes.len().min(33){
-            prepared.train.push((bytes[..offset].to_vec(),bytes[offset]));
+        // The trainer's instructional prose belongs to a DIFFERENT
+        // conditioning context than Nova's conversation replies. Both use
+        // the same neural output head and both receive real gradients; the
+        // teacher marker prevents treating bare explanation continuations as
+        // answer-like prompts. It is a training-input scaffold, not a model
+        // response rule or symbolic interpreter.
+        let mut prefix=b"T: ".to_vec();
+        for &target in bytes.iter().take(32){
+            prepared.train.push((prefix.clone(),target));
             prepared.memory_train.push(Vec::new());
             prepared.train_kinds.push(EXPLANATION);
+            prefix.push(target);
         }
         prepared.category_train[EXPLANATION as usize]+=1;
         prepared.training_text.push_str(&block.explanation);
@@ -489,6 +497,17 @@ mod tests{
             assert!(!p.reasoning_train.iter().any(|(prompt,_,_)|prompt==prefix));
             assert!(!p.understanding_train.iter().any(|(prompt,_,_)|prompt==prefix));
         }
+    }
+    #[test]fn instructional_prose_is_conditioned_as_teacher_not_as_nova_reply(){
+        let plan=prepare(&basic()).unwrap();
+        let examples=plan.train.iter().zip(&plan.train_kinds)
+            .filter(|(_,kind)|**kind==EXPLANATION).collect::<Vec<_>>();
+        assert!(!examples.is_empty());
+        assert!(examples.iter().all(|((context,_),_)|
+            context.starts_with(b"T: ") && !context.ends_with(b"\\nN: ")));
+        assert!(plan.heldout_replies.iter().all(|(_,_,_,kind)|*kind!=EXPLANATION));
+        assert!(plan.train.iter().zip(&plan.train_kinds)
+            .any(|((context,_),kind)|*kind==DIALOGUE && context.ends_with(b"\\nN: ")));
     }
     #[test]fn stable_holdouts_never_create_reply_or_preference_targets(){
         let raw=basic();
