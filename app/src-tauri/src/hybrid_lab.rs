@@ -1005,7 +1005,10 @@ fn previous_validation_loss(brain:&HybridBrain,previous:&[PreparedLessons])
             evaluate_memory(brain,&selected,&histories)?
         }else{brain.evaluate(&selected)?};
         if !loss.is_finite(){return Err("Non-finite previous-lesson validation loss".into());}
-        sum+=loss as f64;
+        let ranking_loss=if lesson.mode=="reasoning"{
+            0.4*reasoning_validation(brain,lesson)?.0
+        }else{0.0};
+        sum+=(loss+ranking_loss) as f64;
     }
     Ok(Some((sum/previous.len() as f64) as f32))
 }
@@ -1191,6 +1194,14 @@ fn train_inner(
                         s.brain.train_memory_batch(&with_memory,learning_rate)?
                     }else{s.brain.train_batch(&replay,learning_rate)?};
                     if !replay_loss.is_finite(){return Err("Non-finite rehearsal loss".into());}
+                    if old.mode=="reasoning" && !old.reasoning_train.is_empty(){
+                        // Preserve conclusion comparison as well as the wording
+                        // when an older reasoning lesson gets replayed.
+                        let id=(replay_batches+epoch as usize-1)%old.reasoning_train.len();
+                        let extra=s.brain.train_preference_batch(
+                            &[old.reasoning_train[id].clone()],learning_rate)?;
+                        if !extra.is_finite(){return Err("Non-finite reasoning rehearsal loss".into());}
+                    }
                     s.completed=completed+replay.len();
                     s.train_loss=Some(replay_loss);
                     (replay_loss,s.brain.transformer.step,
