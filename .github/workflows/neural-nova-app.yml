@@ -75,6 +75,19 @@ jobs:
       ANDROID_NDK_VERSION: 27.2.12479018
     steps:
       - uses: actions/checkout@v4
+      # Validate configuration before NDK/Rust compilation, not seven minutes
+      # into the job. No signing material is ever printed.
+      - name: Check persistent signing secrets before compiling
+        shell: bash
+        env:
+          NOVA_ANDROID_KEYSTORE_BASE64: ${{ secrets.NOVA_ANDROID_KEYSTORE_BASE64 }}
+          NOVA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.NOVA_ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [[ -z "${NOVA_ANDROID_KEYSTORE_BASE64}" || -z "${NOVA_ANDROID_KEYSTORE_PASSWORD}" ]]; then
+            echo "::error title=Android signing not configured::Create Actions secrets NOVA_ANDROID_KEYSTORE_BASE64 and NOVA_ANDROID_KEYSTORE_PASSWORD under Settings > Secrets and variables > Actions. Use the original persistent Nova development keystore; do not create a different key for each build. See app/docs/android-signing.md."
+            exit 1
+          fi
+          echo "Persistent signing secrets are configured (values not displayed)."
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
