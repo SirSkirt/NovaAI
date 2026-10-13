@@ -77,19 +77,8 @@ jobs:
       ANDROID_NDK_VERSION: 27.2.12479018
     steps:
       - uses: actions/checkout@v4
-      # Validate configuration before NDK/Rust compilation, not seven minutes
-      # into the job. No signing material is ever printed.
-      - name: Check persistent signing secrets before compiling
-        shell: bash
-        env:
-          NOVA_ANDROID_KEYSTORE_BASE64: ${{ secrets.NOVA_ANDROID_KEYSTORE_BASE64 }}
-          NOVA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.NOVA_ANDROID_KEYSTORE_PASSWORD }}
-        run: |
-          if [[ -z "${NOVA_ANDROID_KEYSTORE_BASE64}" || -z "${NOVA_ANDROID_KEYSTORE_PASSWORD}" ]]; then
-            echo "::error title=Android signing not configured::Create Actions secrets NOVA_ANDROID_KEYSTORE_BASE64 and NOVA_ANDROID_KEYSTORE_PASSWORD under Settings > Secrets and variables > Actions. Use the original persistent Nova development keystore; do not create a different key for each build. See app/docs/android-signing.md."
-            exit 1
-          fi
-          echo "Persistent signing secrets are configured (values not displayed)."
+      # All experimental CI builds share the intentionally public debug key
+      # in app/keys/. No repository secrets or user configuration is needed.
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -123,10 +112,7 @@ jobs:
       - name: Compile Android native code (no APK published with temporary signing)
         working-directory: app
         run: npm run android:debug-apk -- --ci
-      - name: Configure durable Android development signature and foreground service
-        env:
-          NOVA_ANDROID_KEYSTORE_BASE64: ${{ secrets.NOVA_ANDROID_KEYSTORE_BASE64 }}
-          NOVA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.NOVA_ANDROID_KEYSTORE_PASSWORD }}
+      - name: Configure pinned experimental debug signature and foreground service
         run: python3 app/scripts/configure_android_ci.py
       - name: Build experimental Android APK
         working-directory: app
@@ -142,7 +128,7 @@ jobs:
           for apk in "${APKS[@]}"; do
             "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/apk-signing.txt"
             cat "$RUNNER_TEMP/apk-signing.txt" | grep -E 'Verified|Signer #1 certificate DN:|Signer #1 certificate SHA-256 digest:'
-            grep -Eiq 'Signer #1 certificate SHA-256 digest: 215dd8ef18bc794b4e52d6a369d22dc106a984123ffcada35333974129e24ae3' "$RUNNER_TEMP/apk-signing.txt"
+            grep -Eiq 'Signer #1 certificate SHA-256 digest: 070b1e684da8087d6c30874c16c9be831b7cbce49264d61040ee73ecb5652ade' "$RUNNER_TEMP/apk-signing.txt"
           done
       - uses: actions/upload-artifact@v4
         with:
