@@ -85,15 +85,8 @@ for perm in (
 ):
     if perm not in text:
         text=text.replace("<application",f'<uses-permission android:name="{perm}" />\n    <application',1)
-# The library manifest defines LifecycleService; host manifest supplies the
-# specifically declared special-use subtype for user initiated offline training.
-property_name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-if property_name not in text:
-    service='''<service android:name="app.tauri.backgroundservice.LifecycleService">
-            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                      android:value="On-device neural network training initiated by the user" />
-        </service>
-        '''
-    text=text.replace("</application>",service+"</application>",1)
+# The background-service plugin already provides LifecycleService and the
+# specialUse property with its own manifest. Do NOT redeclare them here:
+# Android rejects two different values for the same property during merge.
 manifest.write_text(text)
-print("Configured PINNED public experimental debug signing, foreground specialUse service and notification permission.")
+print("Configured pinned experimental debug signing and Android foreground/notification permissions (service owned by plugin).")
