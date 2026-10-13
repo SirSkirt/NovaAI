@@ -47,7 +47,8 @@
           <textarea id="lessonData" spellcheck="false" rows="9" aria-describedby="lessonHint"></textarea>
           <p id="lessonHint" class="muted">One TXT can contain all four [Dialogue Lesson], [Understanding Lesson], [Multi-Turn Conversation Lesson], and [Reasoning Lesson] blocks, each with a nested [examples] section. No mode selection needed.</p>
           <div class="row wrap">
-            <label class="file-button" for="lessonFile">＋ Import .txt</label><input type="file" id="lessonFile" accept=".txt,text/plain">
+            <label class="file-button" id="browserLessonFileLabel" for="lessonFile">＋ Import .txt</label><input type="file" id="lessonFile" accept=".txt,text/plain">
+            <button type="button" id="nativeLessonFile" class="secondary compact" hidden>＋ Import TXT from Android Files</button>
             <button type="button" id="sampleLesson" class="secondary compact">Example data</button>
             <button type="button" id="clearLesson" class="secondary compact">Clear editor</button>
           </div>
