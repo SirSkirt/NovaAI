@@ -179,6 +179,22 @@ impl Network {
     pub(crate) fn accumulate_logits_gradients(
         &self,input:&[f32],output_derivative:&[f32],gradients:&mut Gradients
     )->Result<(),String>{
+        self.accumulate_logits_gradients_optional_input(input,output_derivative,gradients,None)
+    }
+    /// Backpropagate through this SAME dense network, returning the derivative
+    /// with respect to its contextual input for learned Transformer queries.
+    pub(crate) fn accumulate_logits_gradients_with_input(
+        &self,input:&[f32],output_derivative:&[f32],gradients:&mut Gradients
+    )->Result<Vec<f32>,String>{
+        let mut input_gradient=vec![0.0;self.layers[0].inputs];
+        self.accumulate_logits_gradients_optional_input(input,output_derivative,gradients,
+            Some(&mut input_gradient))?;
+        Ok(input_gradient)
+    }
+    fn accumulate_logits_gradients_optional_input(
+        &self,input:&[f32],output_derivative:&[f32],gradients:&mut Gradients,
+        mut input_gradient:Option<&mut [f32]>
+    )->Result<(),String>{
         if output_derivative.len()!=self.layers.last().unwrap().outputs
             || output_derivative.iter().any(|x|!x.is_finite()){
             return Err("Dense upstream derivative shape/value mismatch".into());
@@ -197,6 +213,14 @@ impl Network {
                 grad.biases[out]+=delta[out];
                 let offset=out*layer.inputs;
                 for i in 0..layer.inputs{grad.weights[offset+i]+=delta[out]*previous[i];}
+            }
+            if layer_idx==0 {
+                if let Some(ref mut dx)=input_gradient {
+                    for out in 0..layer.outputs{
+                        let offset=out*layer.inputs;
+                        for i in 0..layer.inputs{dx[i]+=layer.weights[offset+i]*delta[out];}
+                    }
+                }
             }
             if layer_idx>0{
                 let mut upstream=vec![0.0;layer.inputs];
