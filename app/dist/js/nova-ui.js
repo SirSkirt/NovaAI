@@ -52,11 +52,29 @@ const reasoningSample=[
 "The copper switch turns on the lamp.\tWhat turns on the lamp?\tThe copper switch.\tThe bell.",
 "The bell rings when touched.\tWhat rings when touched?\tThe bell.\tThe copper switch."
 ].join("\n");
-const datasets={dialogue:dialogueSample,text:textSample,conversation:conversationSample,reasoning:reasoningSample};
+const unifiedSample=[
+"[Dialogue Lesson]","Greetings help begin a conversation.","[examples]",
+"hello  Hello!","hi nova  Hi!","how are you  I am learning.",
+"[/examples]","[/Dialogue Lesson]","",
+"[Understanding Lesson]","Sentences give information about entities and objects.","[examples]",
+"Mira has a red ball. What color is the ball?  Red.",
+"Tim has four apples. How many apples does Tim have?  Four.",
+"Nora opened a door. Who opened it?  Nora.",
+"[/examples]","[/Understanding Lesson]","",
+"[Multi-Turn Conversation Lesson]","Prior turns may matter later.","[examples]",
+"[session]","User: Hello, Nova.","Nova: Hello!","User: My name is Mira.",
+"Nova: Nice to meet you, Mira.","User: What is my name?","Nova: Mira.","[/session]",
+"[/examples]","[/Multi-Turn Conversation Lesson]","",
+"[Reasoning Lesson]","Compare supported conclusions against contradictory ones.","[examples]",
+"Premise: Susie has two apples. Tim has four apples. Question: Who has more apples? Supported: Tim. Contradicted: Susie.",
+"Premise: Mira has a red ball. Question: What color is Mira's ball? Supported: Red. Contradicted: Blue.",
+"[/examples]","[/Reasoning Lesson]"
+].join("\n");
+const datasets={unified:unifiedSample,dialogue:dialogueSample,text:textSample,conversation:conversationSample,reasoning:reasoningSample};
 const TOKENIZER_BASELINE_KEY="neural-nova-tokenizer-experiment-v1";
 let latestTokenizerProbe=null;
 
-let activeMode="dialogue", initialized=false,running=false,busy=false,latestStatus=null,latestTrace=null;
+let activeMode="unified", initialized=false,running=false,busy=false,latestStatus=null,latestTrace=null;
 let lastQuestion="",lastReply="";
 const debugEntries=[];let errorCount=0;
 function report(level,source,message){
@@ -149,19 +167,23 @@ function modeChanged(mode){
   if(!(mode in datasets))datasets[mode]=mode==="dialogue"?dialogueSample:mode==="conversation"?conversationSample:mode==="reasoning"?reasoningSample:textSample;
   activeMode=mode;
   $("lessonData").value=datasets[mode];
-  $("lessonHint").textContent=mode==="dialogue"
+  $("lessonHint").textContent=mode==="unified"
+    ?"Structured TXT: any ordering of four named lesson blocks, each with instructional text and [examples]. Dialogue/Understanding use TWO ASCII spaces; Conversation uses [session] User:/Nova: turns; Reasoning uses Premise/Question/Supported/Contradicted. Instructions are not scripted replies."
+    :mode==="dialogue"
     ?"Up to 1,024 dialogue pairs, 384 ASCII characters per reply; one TAB between question and answer. Validation holds out whole question groups."
     :mode==="conversation"
     ?"Multi-turn: write U: and N: lines, separate sessions with blank lines or ---. At least 5 independent sessions, each with 2+ turns. Held-out sessions test neural memory."
     :mode==="reasoning"
     ?"Reasoning: one TAB-separated PREMISE, QUESTION, SUPPORTED answer, and CONTRADICTED answer per line. At least five distinct problems. The shared brain learns a whole-answer preference in addition to ordinary text."
     :"120–50,000 ASCII bytes, with at least five distinct paragraphs (blank-line separated), sentences, or lines. Entire sections are independently held out by a stable split; no training context crosses into validation.";
-  $("reasoningAccuracyMetric").hidden=mode!=="reasoning";
+  $("reasoningAccuracyMetric").hidden=mode!=="reasoning"&&mode!=="unified";
   countData();
 }
 function countData(){
   const input=$("lessonData").value;
-  $("lessonCount").textContent=activeMode==="dialogue"
+  $("lessonCount").textContent=activeMode==="unified"
+    ?(input.match(/\[(?:Dialogue Lesson|Understanding Lesson|Multi-Turn Conversation Lesson|Reasoning Lesson)\]/g)||[]).length+" structured lesson blocks"
+    :activeMode==="dialogue"
     ?input.split("\n").filter(line=>line.includes("\t")&&line.trim()).length+" lesson pairs"
     :activeMode==="conversation"
       ?input.split(/\n\s*\n|\n---\n/).filter(block=>block.trim()).length+" conversation sessions"
@@ -249,7 +271,7 @@ $("lessonFile").addEventListener("change",()=>safe(async()=>{
   report("INFO","Lesson","Loaded "+file.name+".");
 },"File import"));
 $("sampleLesson").addEventListener("click",()=>{
-  $("lessonData").value=activeMode==="dialogue"?dialogueSample:activeMode==="conversation"?conversationSample:activeMode==="reasoning"?reasoningSample:textSample;
+  $("lessonData").value=activeMode==="unified"?unifiedSample:activeMode==="dialogue"?dialogueSample:activeMode==="conversation"?conversationSample:activeMode==="reasoning"?reasoningSample:textSample;
   rememberDataset();countData();
 });
 $("clearLesson").addEventListener("click",()=>{$("lessonData").value="";rememberDataset();countData();});
@@ -658,7 +680,7 @@ $("inspectBrain").addEventListener("click",()=>safe(async()=>{
 },"Brain inspection"));
 $("inspectMessage").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("inspectBrain").click();}});
 $("copyDiagnostics").addEventListener("click",()=>safe(async()=>{
-  const text="Neural Nova hybrid v0.11.0\n"+JSON.stringify(latestStatus)+"\n"+
+  const text="Neural Nova hybrid v0.12.0\n"+JSON.stringify(latestStatus)+"\n"+
     debugEntries.map(e=>"["+e.time+"] ["+e.level+"] ["+e.source+"] "+e.message).join("\n\n");
   await navigator.clipboard.writeText(text);
   report("INFO","Debugger","Copied diagnostic report.");
@@ -694,8 +716,11 @@ async function listen(){
         (Number.isFinite(p.previousHeldoutLoss)?" | prior heldout "+
             p.previousHeldoutLoss.toFixed(4)+" (baseline "+p.previousBaselineLoss.toFixed(4)+")":"")+
         (p.guardAccepted===false?" | REJECTED for retention":"")+
-        (Number.isFinite(p.reasoningRankingAccuracy)&&activeMode==="reasoning"?" | unseen preference "+(100*p.reasoningRankingAccuracy).toFixed(1)+"%":"")+
-        (p.rehearsalBatches?" | old batches "+p.rehearsalBatches:""));
+        (Number.isFinite(p.reasoningRankingAccuracy)&&(activeMode==="reasoning"||activeMode==="unified")?" | unseen preference "+(100*p.reasoningRankingAccuracy).toFixed(1)+"%":"")+
+        (p.rehearsalBatches?" | old batches "+p.rehearsalBatches:"")+
+        (Array.isArray(p.categoryHeldoutLoss)?" | per-objective heldout "+
+          p.categoryHeldoutLoss.map((v,i)=>Number.isFinite(v)?["dialogue","understanding","conversation","reasoning","language"][i]+":"+v.toFixed(3):null)
+            .filter(Boolean).join(", "):""));
       if(Number.isFinite(p.transformerGradientNorm)){
         history("Gradient norms (before clipping): Transformer "+
           p.transformerGradientNorm.toFixed(4)+" · Dense "+
@@ -726,12 +751,12 @@ async function listen(){
   }catch(e){report("ERROR","Native events",e);}
 }
 async function boot(){
-  for(const mode of ["dialogue","text"]){
+  for(const mode of ["unified","dialogue","text","conversation","reasoning"]){
     try{const v=localStorage.getItem("nova-hybrid-"+mode);if(v!==null)datasets[mode]=v;}catch(_){}
   }
   loadSchedule();
   restoreChatOptions();
-  modeChanged("dialogue");setRunning(false);
+  $("lessonMode").value="unified";modeChanged("unified");setRunning(false);
   if(!window.__TAURI__?.core?.invoke){setState("Installed app required","error");report("ERROR","Startup","Run the installed Windows or Android app for Rust neural learning.");return;}
   await listen();
   try{
