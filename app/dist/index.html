@@ -135,8 +135,9 @@
             <summary>Bulk lessons · sequential ZIP teaching</summary>
             <p class="muted">Choose the lesson type above, then import a ZIP containing only .txt lessons of that type. Each file gets its own training run, holdouts, and checkpoint selection. Files are ordered by their names (01_, 02_, 03_). Existing model state is preserved between lessons.</p>
             <div class="row wrap actions">
-              <label class="file-button" for="massLessonZip">＋ Select lesson ZIP</label>
+              <label class="file-button" id="browserMassLessonPicker" for="massLessonZip">＋ Select lesson ZIP</label>
               <input type="file" id="massLessonZip" accept=".zip,application/zip">
+              <button type="button" id="nativeMassLessonZip" class="secondary" hidden>＋ Select ZIP from Android Files</button>
               <button type="button" id="previewMassLessons" class="secondary">Validate ZIP</button>
               <button type="button" id="startMassLessons" class="primary" disabled>▶ Teach entire ZIP</button>
               <button type="button" id="stopMassLessons" class="secondary" disabled>Stop after/current lesson</button>
