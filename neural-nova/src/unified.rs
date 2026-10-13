@@ -434,15 +434,15 @@ mod tests{
     }
     #[test]fn contextual_targets_never_cross_into_other_split(){
         let mut examples=String::from(
-            "[Understanding Lesson]\\nEntities and their properties.\\n[examples]\\n");
+            "[Understanding Lesson]\nEntities and their properties.\n[examples]\n");
         for i in 0..18{
             examples.push_str(&format!(
-                "Person{i} has a {} ball. What color is Person{i}'s ball?  {}.\\n",
+                "Person{i} has a {} ball. What color is Person{i}'s ball?  {}.\n",
                 if i%2==0{"red"}else{"blue"},
                 if i%2==0{"Red"}else{"Blue"}
             ));
         }
-        examples.push_str("[/examples]\\n[/Understanding Lesson]");
+        examples.push_str("[/examples]\n[/Understanding Lesson]");
         let p=prepare(&examples).unwrap();
         for (prefix,good,bad) in &p.understanding_train{
             assert_ne!(good,bad);
