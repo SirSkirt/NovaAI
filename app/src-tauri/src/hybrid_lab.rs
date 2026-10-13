@@ -1282,6 +1282,8 @@ fn train_inner(
                 "denseClipFraction":dense_clip_batches as f64/batches.max(1) as f64,
                 "modelStep":brain.transformer.step,"wordUnits":brain.tokenizer.words.len(),
                 "weightsFingerprint":diag::weight_digest(&brain),
+                "recurrentLatentSteps":neural_nova::transformer::REASONING_STEPS,
+                "recurrentUpdateNorms":brain.reasoning_activity(b"U: hello\nN: ").ok(),
                 "isolatedGreetingProbes":diagnostic_probes(&brain,&probes,128,&[],false),
             }));
         }
@@ -1323,6 +1325,8 @@ fn train_inner(
             "selectedStep":best_brain.transformer.step,
             "weightsFingerprint":diag::weight_digest(&best_brain),
             "selectedGreetingProbes":diagnostic_probes(&best_brain,&prompts,128,&[],true),
+            "recurrentLatentSteps":neural_nova::transformer::REASONING_STEPS,
+            "recurrentUpdateNorms":best_brain.reasoning_activity(b"U: hello\nN: ").ok(),
             "retentionAccuracy":restored_retention,
             "selectionPolicy":if protect_previous{
                 "minimum current-lesson heldout loss subject to prior loss and optional teacher accuracy guard"
