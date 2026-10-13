@@ -753,6 +753,13 @@ async function listen(){
         (p.guardAccepted===false?" | REJECTED for retention":"")+
         (Number.isFinite(p.reasoningRankingAccuracy)&&(activeMode==="reasoning"||activeMode==="unified")?" | unseen preference "+(100*p.reasoningRankingAccuracy).toFixed(1)+"%":"")+
         (p.rehearsalBatches?" | old batches "+p.rehearsalBatches:"")+
+        (p.autonomousHeldout?" | AUTONOMOUS: first "+
+          (100*p.autonomousHeldout.firstCharacterAccuracy).toFixed(0)+
+          "% · self-generated prefix "+
+          (100*p.autonomousHeldout.generatedPrefixAccuracy).toFixed(0)+
+          "% · complete "+p.autonomousHeldout.completeAnswersCorrect+"/"+
+          p.autonomousHeldout.completeAnswersChecked+
+          (p.autonomousGuardAccepted===false?" · checkpoint not selected":""):"")+
         (Array.isArray(p.categoryHeldoutLoss)?" | per-objective heldout "+
           p.categoryHeldoutLoss.map((v,i)=>Number.isFinite(v)?["dialogue","understanding","conversation","reasoning","language"][i]+":"+v.toFixed(3):null)
             .filter(Boolean).join(", "):""));
@@ -766,6 +773,19 @@ async function listen(){
       }
       $("heldoutLoss").textContent=p.validationLoss.toFixed(4);
       $("heldoutAccuracy").textContent=(100*p.validationAccuracy).toFixed(1)+"%";
+      const autonomous=p.selectedAutonomousHeldout;
+      if(autonomous&&Number.isFinite(autonomous.selfConditionedLoss)){
+        for(const name of ["selfGeneratedStartMetric","selfGeneratedPrefixMetric",
+          "selfGeneratedReplyMetric","autonomousValidationNote"]){
+          $(name).hidden=false;
+        }
+        $("selfGeneratedStart").textContent=
+          (100*autonomous.firstCharacterAccuracy).toFixed(1)+"%";
+        $("selfGeneratedPrefix").textContent=
+          (100*autonomous.generatedPrefixAccuracy).toFixed(1)+"%";
+        $("selfGeneratedReplies").textContent=
+          autonomous.completeAnswersCorrect+"/"+autonomous.completeAnswersChecked;
+      }
       if(Number.isFinite(p.reasoningRankingAccuracy)){
         $("reasoningAccuracy").textContent=(100*p.reasoningRankingAccuracy).toFixed(1)+"%";
       }
