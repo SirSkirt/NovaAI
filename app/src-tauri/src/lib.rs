@@ -8,6 +8,8 @@ mod lesson_zip;
 mod checkpoint_transfer;
 #[cfg(target_os="android")]
 mod training_keepalive;
+#[cfg(target_os="android")]
+mod android_lesson_notification;
 
 use neural::NeuralState;
 use transformer_lab::TransformerState;
