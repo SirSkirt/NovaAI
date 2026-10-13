@@ -182,12 +182,26 @@ impl HybridBrain {
         dense_grad.scale(scale);
         Ok((-total_loss*scale,gradients,dense_grad))
     }
+    fn answer_score(&self,prompt:&[u8],answer:&[u8])->Result<f32,String>{
+        if answer.is_empty()||answer.len()>96||!answer.is_ascii(){
+            return Err("Reasoning candidate must have 1–96 ASCII characters".into());
+        }
+        let mut prefix=prompt.to_vec();
+        let mut total=0.0f32;
+        for c in answer.iter().copied().chain(std::iter::once(b'\n')){
+            let probs=self.predict_window(&prefix,256)?;
+            total+=probs[c as usize].max(1e-30).ln();
+            prefix.push(c);
+            if prefix.len()>512{prefix.drain(..prefix.len()-512);}
+        }
+        Ok(total/(answer.len()+1) as f32)
+    }
     pub fn reasoning_margin(&self,prompt:&[u8],preferred:&[u8],rejected:&[u8])
         ->Result<(f32,bool),String>{
-        let (good,_,_)=self.answer_score_gradient(prompt,preferred)?;
-        let (bad,_,_)=self.answer_score_gradient(prompt,rejected)?;
+        let good=self.answer_score(prompt,preferred)?;
+        let bad=self.answer_score(prompt,rejected)?;
         let delta=bad-good;
-        Ok(((1.0+delta.exp()).ln(),good>bad))
+        Ok((delta.max(0.0)+(1.0+(-delta.abs()).exp()).ln(),good>bad))
     }
     pub fn train_preference_batch(&mut self,
         samples:&[(Vec<u8>,Vec<u8>,Vec<u8>)],learning_rate:f32)->Result<f32,String>{
