@@ -45,13 +45,32 @@ static int acquire_wake_lock(JNIEnv *env) {
     pthread_mutex_lock(&lock);
     if (wake_lock != NULL) { pthread_mutex_unlock(&lock); return 1; }
 
-    jclass thread = (*env)->FindClass(env, "android/app/ActivityThread");
-    if (thread == NULL) goto fail;
-    jmethodID app_method = (*env)->GetStaticMethodID(env, thread,
-        "currentApplication", "()Landroid/app/Application;");
-    if (app_method == NULL) goto fail;
-    jobject app = (*env)->CallStaticObjectMethod(env, thread, app_method);
-    if (app == NULL || (*env)->ExceptionCheck(env)) goto fail;
+    // Primary route: app-owned ContentProvider with an ordinary public
+    // Android Context. This works on Android 16 without restricted SDK calls.
+    jobject app = NULL;
+    jclass provider = (*env)->FindClass(env,
+        "com/qtech/neuralnova/experimental/NovaTrainingContextProvider");
+    if (provider != NULL) {
+        jmethodID get_app = (*env)->GetStaticMethodID(env, provider,
+            "getAppContext", "()Landroid/content/Context;");
+        if (get_app != NULL)
+            app = (*env)->CallStaticObjectMethod(env, provider, get_app);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        clear_java_exception(env);
+        app = NULL;
+    }
+    if (app == NULL) {
+        // Compatibility fallback if an older generated Android project
+        // omitted the provider. Never silently proceed without a wake lock.
+        jclass thread = (*env)->FindClass(env, "android/app/ActivityThread");
+        if (thread == NULL) goto fail;
+        jmethodID app_method = (*env)->GetStaticMethodID(env, thread,
+            "currentApplication", "()Landroid/app/Application;");
+        if (app_method == NULL) goto fail;
+        app = (*env)->CallStaticObjectMethod(env, thread, app_method);
+        if (app == NULL || (*env)->ExceptionCheck(env)) goto fail;
+    }
 
     jclass context = (*env)->FindClass(env, "android/content/Context");
     if (context == NULL) goto fail;
