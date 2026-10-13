@@ -1,3 +1,10 @@
+NEURAL NOVA v0.12.4 — FINAL BUILD VERIFICATION (2026-10-13)
+GitHub Actions https://github.com/SirSkirt/NovaAI/actions/runs/38469341075 (Build #440) SUCCEEDED ALL THREE JOBS: Windows NSIS, Android debug APK and JavaScript/Rust tests. Artifacts uploaded:
+- Neural-Nova-Experimental-Windows, artifact ID 11850624098.
+- Neural-Nova-Experimental-Android, artifact ID 11851941083.
+Android still uses original pinned experimental signer, package ID, four-ABI JNI foreground adapter, and background training. Windows capability grants dialog:allow-message, fixing desktop ACL error. ZIP now continues to next lesson when current lesson completes with best_epoch=0, no underlying error and checkpoint baseline retained; skipped lessons are explicitly counted, not archived as learned, while true errors/explicit Stop still halt queue. Tested on Windows Rust and JS harness in green CI; REAL 27-lesson PC run with this build remains for user to confirm. Wait for any active training to finish, export .nhyb as safeguard, then install/update app. If zero lessons accepted, user must review heldout curriculum quality/learning rate; queue completion alone is not proof learning.
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA v0.12.4 — ZIP BASELINE-ROLLBACK CONTINUATION + WINDOWS DIALOG ACL (2026-10-13)
 
 USER REPORTED: On Windows, "Teach entire ZIP" for 27 ordered lessons stopped at lesson 1/27 and said "no eligible epoch accepted; queue stopped to protect the previous checkpoint." Debugger also showed "Command plugin:dialog|message not allowed by ACL". UI best epoch was baseline, with "Validation stalled; early stopped at best epoch 0". The user confirmed that on the phone the ZIP did advance to a subsequent lesson. Root cause: shared native Rust ZIP scheduler wrongly treated a VALID early-stop baseline rollback (best_epoch==0, no training error) as a fatal queue error. It is conditional on training/validation outcomes, not inherently a Windows-specific training backend failure. Android background service was already functional and unchanged.
