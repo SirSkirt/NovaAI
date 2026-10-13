@@ -1,3 +1,11 @@
+NEURAL NOVA v0.12.2 — BUILD AND DOWNLOAD VERIFICATION (2026-10-13)
+- Workflow https://github.com/SirSkirt/NovaAI/actions/runs/38439371139 verified: JS/neural tests SUCCESS, Windows NSIS job SUCCESS. Android successfully completed native foreground library build, APK build, all-ABI native inclusion check, pinned development certificate verification, and Android artifact upload. The Android job was still finalizing its rust-cache post-job step when this note was written; inspect conclusion before claiming whole workflow green.
+- User-facing artifact for Android: Neural-Nova-Experimental-Android, GitHub artifact ID 11834108952; Windows: Neural-Nova-Experimental-Windows, ID 11834163114. Both exist, not expired.
+- Actual Android 16 display of the updated SECOND foreground notification must be tested by user after updating. First progress/loss notification unchanged.
+- Do not update a currently training v0.12.1 app: APK installation replaces/kills process and interrupts live native ZIP training. Wait for completion or stop safely first. Same package ID and signing identity are preserved.
+
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA v0.12.2 — SHOW CURRENT LESSON IN EXISTING ANDROID FOREGROUND NOTIFICATION (2026-10-13)
 USER CONFIRMED v0.12.1 SCREEN-OFF BACKGROUND TRAINING WORKS, including TWO notifications: (1) native Rust progress notification (ID 90217, epoch/percent/loss) and (2) Android foreground-service notification (default ID 9001, generic "Neural Nova: teaching in progress"). User requests #2 identify the CURRENT ZIP lesson and its place in the queue.
 
