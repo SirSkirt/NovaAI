@@ -152,6 +152,18 @@ impl Transformer {
         }
     }
     pub fn parameter_count(&self)->usize { self.weights.len() }
+    /// Parameter count of the last pre-recurrent hybrid checkpoint.
+    pub fn previous_parameter_count()->usize {layout().reason_read.start}
+    /// Diagnostic-only view of learned latent refinement; no visualizer changes.
+    pub fn reasoning_activity(&self,tokens:&[u16],dense:&[f32],memory:&[Vec<u16>])
+        ->Result<Vec<f32>,String>{
+        let c=self.forward_tokens_with_memory(tokens,Some(dense),CONTEXT,memory)?;
+        let l=layout();
+        Ok(c.reasoning.iter().map(|step|{
+            let z=mv(&self.weights,&l.reason_update,D,D,&step.candidate);
+            vector_norm(&z)/REASONING_STEPS as f32
+        }).collect())
+    }
     pub fn context_length(&self)->usize {CONTEXT}
     fn forward(&self,context:&[u8])->Result<Cache,String> {self.forward_with_dense(context,None)}
     fn forward_with_dense(&self,context:&[u8],dense:Option<&[f32]>)->Result<Cache,String> {
