@@ -24,8 +24,11 @@ async function start(){
     // If started concurrently from a previous lesson, keep it.
     if(/already running|alreadyRunning/i.test(message)){requested=true;return;}
     requested=false;
+    const nativeCoreError=/native_library_load_failed|libapp_core\\.so|nova_wakelock_failed/i.test(message);
     throw new Error("Android foreground training service failed: "+message+
-      ". Training has NOT been started. Open Android app settings and allow notifications.");
+      (nativeCoreError
+        ? ". This is an APK/native service packaging problem, not a notification-permission problem. Install the corrected build."
+        : ". Training has NOT been started. Check Android notification permission and battery settings."));
   }
 }
 async function stop(){
