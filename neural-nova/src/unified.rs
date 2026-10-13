@@ -207,6 +207,10 @@ fn units(blocks:&[Block])->Result<Vec<Unit>,String>{
 fn supervised(pair:&DialoguePair,prior:&[String],
     prepared:&mut PreparedLessons,validation:bool,kind:u8)->Result<(),String>{
     let mut history=dialogue_prefix(&pair.user)?;
+    if validation{
+        prepared.heldout_replies.push((
+            history.clone(),pair.assistant.as_bytes().to_vec(),prior.to_vec(),kind));
+    }
     for target in pair.assistant.bytes().chain(std::iter::once(b'\n')){
         let example=(history[history.len().saturating_sub(RAW_WINDOW)..].to_vec(),target);
         if validation{
@@ -266,6 +270,7 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
         memory_train:Vec::new(),memory_validation:Vec::new(),
         reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
         understanding_train:Vec::new(),understanding_validation:Vec::new(),
+        heldout_replies:Vec::new(),
         train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],
     };
@@ -381,6 +386,10 @@ mod tests{
         assert_eq!(p.train.len(),p.memory_train.len());
         assert_eq!(p.train.len(),p.train_kinds.len());
         assert_eq!(p.validation.len(),p.validation_kinds.len());
+        assert_eq!(p.heldout_replies.len(),
+            p.category_validation[..4].iter().sum::<usize>() +
+            p.category_validation[CONVERSATION as usize].saturating_mul(2));
+
     }
     #[test]fn mismatched_or_unsafe_blocks_reject_before_training(){
         assert!(prepare("[Dialogue Lesson]\n[examples]\nhi  Hey\n[/examples]\n[/Understanding Lesson]").is_err());
