@@ -77,6 +77,13 @@ impl HybridBrain {
         let probabilities=self.transformer.predict_tokenized(&tokens,&dense,window,&source)?;
         Ok((layers,attention,signal,probabilities))
     }
+    /// Read-only recurrent state measurements. No extra inference branch.
+    pub fn reasoning_activity(&self,context:&[u8])->Result<Vec<f32>,String>{
+        let (_,dense)=self.dense_input(context)?;
+        let text=std::str::from_utf8(context).map_err(|e|e.to_string())?;
+        let tokens=self.tokenizer.encode(text)?;
+        self.transformer.reasoning_activity(&tokens,&dense,&[])
+    }
     pub fn bridge_measurement(&self,context:&[u8],window:usize)->Result<BridgeMeasurement,String>{
         let (_,features)=self.dense_input(context)?;
         let tokens=self.tokenizer.encode(
@@ -308,7 +315,9 @@ impl HybridBrain {
         let old_count=read_u32(&mut file)? as usize;
         // v0.3 checkpoints had 128 positional embeddings; new checkpoints have
         // 256. Remap weights AND Adam moments without clearing learned state.
-        if old_count!=brain.transformer.weights.len() && old_count!=24800 && old_count!=28896{
+        if old_count!=brain.transformer.weights.len() &&
+            old_count!=Transformer::previous_parameter_count() &&
+            old_count!=24800 && old_count!=28896{
             return Err("Hybrid Transformer parameter count mismatch".into());
         }
         let mut step=[0u8;8];file.read_exact(&mut step).map_err(|e|e.to_string())?;
