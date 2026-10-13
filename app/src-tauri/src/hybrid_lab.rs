@@ -1311,24 +1311,33 @@ fn train_inner(
         let batches_new=objective_batches(lessons,epoch);
         // Balance archived categories across whole earlier-lesson bank, not
         // merely one archive at a time. Never replay validation indices.
-        let mut prior_batches=previous.iter().enumerate().flat_map(|(i,p)|
-            objective_batches(p,epoch).into_iter().map(move |ids|
-                (i,ids.clone(),if p.mode=="unified"{p.train_kinds[ids[0]]}
+        // Balanced, bounded rehearsal: build one rotating pool for each
+        // objective over the ENTIRE archived curriculum. Select categories
+        // cyclically, not the first lesson or largest batch. Never sample
+        // archived validation rows or change saved archive contents.
+        let mut replay_pools=vec![Vec::<(usize,Vec<usize>,u8)>::new();5];
+        for (i,p) in previous.iter().enumerate(){
+            for ids in objective_batches(p,epoch){
+                let kind=if p.mode=="unified"{p.train_kinds[ids[0]]}
                     else if p.mode=="conversation"{2}
-                    else if p.mode=="reasoning"{3}else{0}))
-        ).collect::<Vec<_>>();
-        prior_batches.sort_by_key(|(i,_,kind)|(*kind,*i));
-        let mut interleaved=Vec::with_capacity(prior_batches.len());
-        while !prior_batches.is_empty(){
-            for kind in 0..=4{
-                if let Some(index)=prior_batches.iter().position(|x|x.2==kind){
-                    interleaved.push(prior_batches.remove(index));
-                }
+                    else if p.mode=="reasoning"{3}
+                    else if p.mode=="text"{4}else{0};
+                replay_pools[kind as usize].push((i,ids,kind));
             }
-            // All entries have a valid kind. Keep the loop finite.
-            if interleaved.is_empty(){break;}
         }
-        let prior_batches=interleaved;
+        let mut prior_batches=Vec::new();
+        let mut cursors=[0usize;5];
+        let replay_slots=batches_new.len()/3;
+        for slot in 0..replay_slots{
+            let available=(0..5).filter(|&k|!replay_pools[k].is_empty())
+                .collect::<Vec<_>>();
+            if available.is_empty(){break;}
+            let category=available[(slot+epoch as usize-1)%available.len()];
+            let pool=&replay_pools[category];
+            let offset=(epoch as usize-1)%pool.len();
+            prior_batches.push(pool[(offset+cursors[category])%pool.len()].clone());
+            cursors[category]+=1;
+        }
         let mut replay_batches=0usize;
         let mut contextual_batches=0usize;
         let mut epoch_loss=0.0f64;
@@ -1435,9 +1444,8 @@ fn train_inner(
             // batches, round-robin across at most three older lesson archives.
             // Both pathways receive the same actual gradients. The held-out
             // portions of archived lessons are NEVER sampled here.
-            if rehearsal_enabled && !previous.is_empty() && (new_batch_index+1)%3==0 {
-                let (source,ids,objective)=prior_batches[
-                    (replay_batches+epoch as usize-1)%prior_batches.len()].clone();
+            if rehearsal_enabled && !prior_batches.is_empty() && (new_batch_index+1)%3==0 {
+                let (source,ids,objective)=prior_batches[replay_batches%prior_batches.len()].clone();
                 let old=&previous[source];
                 replay_batches+=1;
                 let replay:Vec<Example>=ids.iter().map(|&i|old.train[i].clone()).collect();
