@@ -33,6 +33,8 @@ jobs:
       - run: node --check app/dist/js/mass-learning-ui.js
       - run: node --check app/dist/js/training-background-ui.js
       - run: node app/tests/android-zip-picker.test.cjs
+      - name: Check Android signing/foreground-service configuration script syntax
+        run: python3 -m py_compile app/scripts/configure_android_ci.py
       - run: node --check app/dist/js/checkpoint-ui.js
       - run: node --check app/dist/js/brain.js
       - run: node --check app/dist/js/transformer.js
