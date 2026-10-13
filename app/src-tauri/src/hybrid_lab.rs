@@ -113,8 +113,34 @@ fn rehearsal_path(app:&AppHandle)->Result<PathBuf,String>{
     Ok(path(app)?.with_file_name("neural-nova-rehearsal-v0.7.json"))
 }
 fn rehearsal_for_current(app:&AppHandle,brain:&HybridBrain)->Result<RehearsalBank,String>{
-    Ok(rehearsal::matched(rehearsal::read(&rehearsal_path(app)?)?,
-        &diag::weight_digest(brain)))
+    let file=rehearsal_path(app)?;
+    let existing=rehearsal::read(&file)?;
+    let current=diag::weight_digest(brain);
+    if !existing.lessons.is_empty() && existing.model_fingerprint!=current{
+        // A migration or restored checkpoint may invalidate the old replay
+        // fingerprint. NEVER replace that archive without preserving its bytes.
+        let suffix=existing.model_fingerprint.chars()
+            .filter(|c|c.is_ascii_hexdigit()).take(16).collect::<String>();
+        let suffix=if suffix.is_empty(){"unknown".to_string()}else{suffix};
+        let stem=format!("neural-nova-rehearsal-unmatched-{suffix}");
+        let data=fs::read(&file).map_err(|e|e.to_string())?;
+        let mut backed_up=false;
+        for n in 0..100{
+            let candidate=file.with_file_name(format!("{stem}-{n}.json"));
+            if candidate.exists(){
+                if fs::read(&candidate).map_err(|e|e.to_string())?==data{
+                    backed_up=true;break;
+                }
+            }else{
+                fs::write(&candidate,&data).map_err(|e|e.to_string())?;
+                backed_up=true;break;
+            }
+        }
+        if !backed_up{
+            return Err("Cannot back up mismatched rehearsal archive; no training started".into());
+        }
+    }
+    Ok(rehearsal::matched(existing,&current))
 }
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
@@ -873,6 +899,12 @@ pub fn hybrid_train(
         Ok(bank)=>bank,
         Err(e)=>{state.inner.training.store(false,Ordering::Release);return Err(e);}
     };
+    // An overflowing replay bank must fail BEFORE training; otherwise
+    // a newly accepted neural checkpoint could be saved without its lesson.
+    if starting_bank.lessons.len()>=rehearsal::MAX_ARCHIVED_LESSONS{
+        state.inner.training.store(false,Ordering::Release);
+        return Err("Rehearsal archive is full (128). Export the lesson archive before continuing; older entries were not deleted".into());
+    }
     let previous=if rehearsal_enabled || guard_enabled{
         match rehearsal::previous_plans(&starting_bank){
             Ok(v)=>v,
