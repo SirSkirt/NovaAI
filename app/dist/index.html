@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="./styles.css">
   <script defer src="./js/nova-ui.js"></script>
   <script defer src="./js/diagnostic-ui.js"></script>
+  <script defer src="./js/mass-learning-ui.js"></script>
+  <script defer src="./js/checkpoint-ui.js"></script>
   <script defer src="./js/test-ui.js"></script>
 </head>
 <body>
@@ -110,11 +112,36 @@
             <div><span>Held-out accuracy</span><strong id="heldoutAccuracy">—</strong></div>
           </div>
           <div class="trainer-details"><span id="lessonSplit">Validation split: —</span><span id="trainingSpeed">Throughput: —</span><span id="bestEpoch">Best epoch: —</span></div>
+          <details class="teacher-extra" id="checkpointTransfer">
+            <summary>Import / export the complete neural checkpoint</summary>
+            <p class="muted">Export or restore one .nhyb file containing both pathways, bridge, tokenizer, optimizer state and learned memory weights. Checkpoint import overwrites the active brain only after validation and creates a pre-import backup. Conversation history is cleared; the prior lesson archive is used only if its weight fingerprint matches.</p>
+            <div class="row wrap actions">
+              <button type="button" id="exportCheckpoint" class="secondary">Export checkpoint</button>
+              <label class="file-button" for="importCheckpointFile">＋ Choose .nhyb</label>
+              <input type="file" id="importCheckpointFile" accept=".nhyb,application/octet-stream">
+              <button type="button" id="importCheckpoint" class="secondary" disabled>Restore selected checkpoint</button>
+            </div>
+            <p id="checkpointTransferStatus" class="muted">No checkpoint transfer in progress.</p>
+          </details>
           <details class="teacher-extra">
             <summary>Epoch history and advanced controls</summary>
             <pre id="epochHistory" class="epoch-history">No completed epochs yet.</pre>
             <p class="muted">Validation uses held-out question groups; the trainer keeps the best joint checkpoint and may stop if validation stalls. Earlier independent checkpoints remain untouched. Validation is not proof of understanding.</p>
             <button type="button" id="resetBrain" class="danger">Reset unified brain</button>
+          </details>
+
+          <details class="teacher-extra" id="massLearningTools">
+            <summary>Bulk lessons · sequential ZIP teaching</summary>
+            <p class="muted">Choose the lesson type above, then import a ZIP containing only .txt lessons of that type. Each file gets its own training run, holdouts, and checkpoint selection. Files are ordered by their names (01_, 02_, 03_). Existing model state is preserved between lessons.</p>
+            <div class="row wrap actions">
+              <label class="file-button" for="massLessonZip">＋ Select lesson ZIP</label>
+              <input type="file" id="massLessonZip" accept=".zip,application/zip">
+              <button type="button" id="previewMassLessons" class="secondary">Validate ZIP</button>
+              <button type="button" id="startMassLessons" class="primary" disabled>▶ Teach entire ZIP</button>
+              <button type="button" id="stopMassLessons" class="secondary" disabled>Stop after/current lesson</button>
+            </div>
+            <p class="muted" id="massLessonsStatus">Choose a ZIP and select the lesson type. No files queued.</p>
+            <pre id="massLessonsLog" class="epoch-history" style="max-height:240px;overflow:auto;white-space:pre-wrap">No bulk lessons loaded.</pre>
           </details>
           <details class="teacher-extra">
             <summary>Tokenizer-only A/B investigation (no neural training)</summary>
