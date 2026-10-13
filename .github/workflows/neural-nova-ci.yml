@@ -31,3 +31,6 @@ jobs:
       - name: Compile release trainer
         working-directory: neural-nova
         run: cargo build --release --bin train_ascii
+      - name: Measure generated answers on held-out cases (diagnostic; no accuracy threshold)
+        working-directory: neural-nova
+        run: cargo run --release --bin cooperative_eval -- 4
