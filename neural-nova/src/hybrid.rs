@@ -1,4 +1,4 @@
-//! One Neural Nova: dense association pathway -> learned bridge -> Transformer decoder.
+//! One Neural Nova: trainable reciprocal Transformer <-> dense hemisphere exchange.
 //! Both pathways and the bridge receive gradients from the SAME next-token loss.
 //! No independent answer selection, no heuristic replies, no ML frameworks.
 use crate::{encode_ascii_context,Adam,Gradients,Network,NetworkConfig};
@@ -53,12 +53,33 @@ impl HybridBrain {
         self.predict_with_memory(context,window,&[])
     }
     pub fn predict_with_memory(&self,context:&[u8],window:usize,memory:&[String])->Result<Vec<f32>,String>{
-        let (_,dense)=self.dense_input(context)?;
-        let text=std::str::from_utf8(context).map_err(|e|e.to_string())?;
-        let tokens=self.tokenizer.encode(text)?;
+        self.predict_ablation_with_memory(context,window,memory,false,false)
+    }
+    /// Evaluation-only ablations; neither changes weights, moments or checkpoint.
+    /// With dense_off, both original bridge and reciprocal exchanges are absent.
+    /// With exchange_off, the original fused v0.10 pathway remains active.
+    pub fn predict_ablation_with_memory(&self,context:&[u8],window:usize,
+        memory:&[String],dense_off:bool,exchange_off:bool)->Result<Vec<f32>,String>{
+        let (base,dense)=self.dense_input(context)?;
+        let tokens=self.tokenizer.encode(
+            std::str::from_utf8(context).map_err(|e|e.to_string())?)?;
         let memory_tokens=memory.iter().map(|s|self.tokenizer.encode(s))
             .collect::<Result<Vec<_>,_>>()?;
-        self.transformer.predict_tokenized(&tokens,&dense,window,&memory_tokens)
+        if dense_off{
+            self.transformer.predict_tokenized(&tokens,&[0.0;128],window,&memory_tokens)
+        }else if exchange_off{
+            self.transformer.predict_tokenized(&tokens,&dense,window,&memory_tokens)
+        }else{
+            self.transformer.predict_cooperative(&tokens,&dense,window,
+                &memory_tokens,&self.dense,&base)
+        }
+    }
+    /// Internal exchange diagnostics; do not alter the existing brain visualizer.
+    pub fn exchange_activity(&self,context:&[u8])->Result<Vec<f32>,String>{
+        let (base,dense)=self.dense_input(context)?;
+        let tokens=self.tokenizer.encode(
+            std::str::from_utf8(context).map_err(|e|e.to_string())?)?;
+        self.transformer.cooperative_activity(&tokens,&dense,256,&self.dense,&base)
     }
     pub fn inspect(&self,context:&[u8])->Result<(Vec<Vec<f32>>,Vec<Attention>,Vec<f32>,Vec<f32>),String>{
         self.inspect_window(context,crate::transformer::CONTEXT)
@@ -74,7 +95,7 @@ impl HybridBrain {
         let source=memory.iter().map(|t|self.tokenizer.encode(t)).collect::<Result<Vec<_>,_>>()?;
         let attention=self.transformer.attention_tokenized(&tokens,&dense,window,&source)?;
         let signal=self.transformer.bridge_signal(&dense)?;
-        let probabilities=self.transformer.predict_tokenized(&tokens,&dense,window,&source)?;
+        let probabilities=self.transformer.predict_cooperative(&tokens,&dense,window,&source,&self.dense,&features)?;
         Ok((layers,attention,signal,probabilities))
     }
     /// Read-only recurrent state measurements. No extra inference branch.
@@ -102,7 +123,8 @@ impl HybridBrain {
             let (input,logits)=self.dense_input(context)?;
             let tokens=self.tokenizer.encode(std::str::from_utf8(context).map_err(|e|e.to_string())?)?;
             let (item_loss,transformer_gradient,upstream)=
-                self.transformer.gradient_tokens_with_memory(&tokens,*target,Some(&logits),&[])?;
+                self.transformer.gradient_tokens_cooperative(&tokens,*target,&logits,&[],
+                    &self.dense,&input,&mut dense_grad)?;
             self.dense.accumulate_logits_gradients(&input,&upstream,&mut dense_grad)?;
             loss+=item_loss;
             for (a,b) in tf_grad.iter_mut().zip(transformer_gradient){*a+=b;}
@@ -136,8 +158,8 @@ impl HybridBrain {
             let tokens=self.tokenizer.encode(std::str::from_utf8(history).map_err(|e|e.to_string())?)?;
             let memory=prior_turns.iter().map(|t|self.tokenizer.encode(t))
                 .collect::<Result<Vec<_>,_>>()?;
-            let (value,g,upstream)=self.transformer.gradient_tokens_with_memory(
-                &tokens,*target,Some(&logits),&memory)?;
+            let (value,g,upstream)=self.transformer.gradient_tokens_cooperative(
+                &tokens,*target,&logits,&memory,&self.dense,&input,&mut dense_grad)?;
             loss+=value;
             self.dense.accumulate_logits_gradients(&input,&upstream,&mut dense_grad)?;
             for (a,b) in tf_grad.iter_mut().zip(g){*a+=b;}
@@ -176,8 +198,8 @@ impl HybridBrain {
         for target in answer.iter().copied().chain(std::iter::once(b'\n')){
             let (input,features)=self.dense_input(&sequence)?;
             let tokens=self.tokenizer.encode(std::str::from_utf8(&sequence).map_err(|e|e.to_string())?)?;
-            let (loss,tf,upstream)=self.transformer.gradient_tokens_with_memory(
-                &tokens,target,Some(&features),&[])?;
+            let (loss,tf,upstream)=self.transformer.gradient_tokens_cooperative(
+                &tokens,target,&features,&[],&self.dense,&input,&mut dense_grad)?;
             self.dense.accumulate_logits_gradients(&input,&upstream,&mut dense_grad)?;
             for (sum,g) in gradients.iter_mut().zip(tf){*sum+=g;}
             total_loss+=loss;count+=1;
@@ -317,6 +339,7 @@ impl HybridBrain {
         // 256. Remap weights AND Adam moments without clearing learned state.
         if old_count!=brain.transformer.weights.len() &&
             old_count!=Transformer::previous_parameter_count() &&
+            old_count!=Transformer::precooperation_parameter_count() &&
             old_count!=24800 && old_count!=28896{
             return Err("Hybrid Transformer parameter count mismatch".into());
         }
