@@ -7,6 +7,7 @@ use std::io::{Read,Write};
 use std::ops::Range;
 use std::path::Path;
 use crate::tokenizer::{BASE,MAX_WORDS,TOKEN_CAPACITY};
+use crate::{Network,Gradients};
 
 pub const VOCAB:usize=128;
 pub const CONTEXT:usize=256;
@@ -16,6 +17,10 @@ pub const FF:usize=64;
 /// Repeated trainable processing of the one fused latent representation.
 pub const REASONING_STEPS:usize=3;
 const REASONING_INPUT_SCALE:f32=1.0/32.0;
+/// Two learnable round trips through the EXISTING dense hemisphere; no agent.
+pub const EXCHANGE_ROUNDS:usize=2;
+const DENSE_INPUT:usize=1024;
+const QUERY_SCALE:f32=1.0/32.0;
 const MAGIC:&[u8;8]=b"NTRF0200";
 
 #[derive(Clone)]
@@ -25,7 +30,8 @@ struct Layout {
     f1:Range<usize>, b1:Range<usize>, f2:Range<usize>, b2:Range<usize>,
     output:Range<usize>, bout:Range<usize>, bridge:Range<usize>,
     words:Range<usize>,memory_write:Range<usize>,memory_read:Range<usize>,
-    reason_read:Range<usize>,reason_bias:Range<usize>,reason_update:Range<usize>,len:usize,
+    reason_read:Range<usize>,reason_bias:Range<usize>,reason_update:Range<usize>,
+    feedback_query:Range<usize>,context_query:Range<usize>,feedback_response:Range<usize>,len:usize,
 }
 fn allocate(cursor:&mut usize,n:usize)->Range<usize> {
     let start=*cursor;*cursor+=n;start..*cursor
@@ -53,8 +59,13 @@ fn layout_for(window:usize)->Layout {
     let reason_read=allocate(&mut n,D*D);
     let reason_bias=allocate(&mut n,D);
     let reason_update=allocate(&mut n,D*D);
+    // Appended for byte-for-byte migration of all older learned parameters.
+    let feedback_query=allocate(&mut n,DENSE_INPUT*D);
+    let context_query=allocate(&mut n,DENSE_INPUT*D);
+    let feedback_response=allocate(&mut n,D*VOCAB);
     Layout{tok,pos,q,k,v,o,f1,b1,f2,b2,output,bout,bridge,words,memory_write,memory_read,
-        reason_read,reason_bias,reason_update,len:n}
+        reason_read,reason_bias,reason_update,
+        feedback_query,context_query,feedback_response,len:n}
 }
 fn random(seed:&mut u64)->f32 {
     *seed^=*seed>>12;*seed^=*seed<<25;*seed^=*seed>>27;
@@ -105,7 +116,11 @@ struct Cache {
 }
 // Internal states used for exact reverse-mode differentiation through all
 // recurrent latent steps. No text templates, rules or alternate decoder.
-struct ReasoningCache {input:Vec<f32>,candidate:Vec<f32>}
+struct ReasoningCache {input:Vec<f32>,candidate:Vec<f32>,exchange:Option<ExchangeCache>}
+/// One queried second computation by the original dense network.
+struct ExchangeCache {
+    pre_exchange:Vec<f32>,input:Vec<f32>,features:Vec<f32>,gate:Vec<f32>,
+}
 #[derive(Clone,Debug)]
 pub struct BridgeMeasurement{
     pub transformer_norm:f32,pub dense_norm:f32,pub projected_bridge_norm:f32,
@@ -132,7 +147,8 @@ impl Transformer {
         for (r,input_size) in [
             (&l.q,D),(&l.k,D),(&l.v,D),(&l.o,D),
             (&l.f1,D),(&l.f2,FF),(&l.output,D),(&l.bridge,VOCAB),
-            (&l.words,D),(&l.memory_write,D),(&l.memory_read,D),(&l.reason_read,D)
+            (&l.words,D),(&l.memory_write,D),(&l.memory_read,D),(&l.reason_read,D),
+            (&l.feedback_query,D),(&l.context_query,D)
         ] {
             let radius=(2.0/input_size as f32).sqrt()*0.5;
             for w in &mut weights[r.clone()] {
@@ -147,6 +163,9 @@ impl Transformer {
         // at zero, but receives nonzero gradients from the first lesson.
         // This is not an inference fallback or hard-coded reasoning policy.
         weights[l.reason_update.clone()].fill(0.0);
+        // No change to old predictions until learning makes response nonzero.
+        // Query/context matrices already learnable (random); response learns first.
+        weights[l.feedback_response.clone()].fill(0.0);
         Self {
             weights, momentum:vec![0.0;l.len],variance:vec![0.0;l.len],step:0
         }
@@ -154,6 +173,8 @@ impl Transformer {
     pub fn parameter_count(&self)->usize { self.weights.len() }
     /// Parameter count of the last pre-recurrent hybrid checkpoint.
     pub fn previous_parameter_count()->usize {layout().reason_read.start}
+    /// Parameter count of complete v0.9/v0.10 checkpoints, pre-cooperation.
+    pub fn precooperation_parameter_count()->usize {layout().feedback_query.start}
     /// Diagnostic-only view of learned latent refinement; no visualizer changes.
     pub fn reasoning_activity(&self,tokens:&[u16],dense:&[f32],memory:&[Vec<u16>])
         ->Result<Vec<f32>,String>{
@@ -173,6 +194,16 @@ impl Transformer {
         self.forward_tokens_with_memory(&context.iter().map(|&c|c as u16).collect::<Vec<_>>(),dense,window,&[])
     }
     fn forward_tokens_with_memory(&self,context:&[u16],dense:Option<&[f32]>,window:usize,memory:&[Vec<u16>])->Result<Cache,String> {
+        self.forward_tokens_internal(context,dense,window,memory,None)
+    }
+    fn forward_tokens_internal(&self,context:&[u16],dense:Option<&[f32]>,window:usize,
+        memory:&[Vec<u16>],cooperation:Option<(&Network,&[f32])>)->Result<Cache,String> {
+        if let Some((network,base))=cooperation{
+            if network.dimensions()!=[1024,512,512,128] || base.len()!=DENSE_INPUT ||
+                base.iter().any(|v|!v.is_finite()){
+                return Err("Cooperative dense input or topology mismatch".into());
+            }
+        }
         if window!=ORIGINAL_CONTEXT && window!=CONTEXT {
             return Err("Select a 128- or 256-token context window".into());
         }
@@ -255,7 +286,7 @@ impl Transformer {
         // after dense/Transformer/memory fusion. No symbolic rules or text
         // generator is used here. The SAME hidden state produces the answer.
         let mut reasoning=Vec::with_capacity(REASONING_STEPS);
-        for _ in 0..REASONING_STEPS{
+        for round in 0..REASONING_STEPS{
             let old=hidden.clone();
             let mut raw=mv(&self.weights,&l.reason_read,D,D,&old);
             for j in 0..D{
@@ -264,7 +295,28 @@ impl Transformer {
             }
             let update=mv(&self.weights,&l.reason_update,D,D,&raw);
             for j in 0..D{hidden[j]+=update[j]/REASONING_STEPS as f32;}
-            reasoning.push(ReasoningCache{input:old,candidate:raw});
+            let mut exchange=None;
+            if round<EXCHANGE_ROUNDS{
+                if let Some((network,base))=cooperation{
+                    // Transformer hidden state queries the SAME dense network.
+                    // Transformer attention context spans the full selected window,
+                    // so the dense re-query is not restricted to 64 raw characters.
+                    let pre_exchange=hidden.clone();
+                    let hq=mv(&self.weights,&l.feedback_query,DENSE_INPUT,D,&pre_exchange);
+                    let cq=mv(&self.weights,&l.context_query,DENSE_INPUT,D,&context);
+                    let mut input=base.to_vec();
+                    let mut gate=vec![0.0;DENSE_INPUT];
+                    for j in 0..DENSE_INPUT{
+                        gate[j]=((hq[j]+cq[j])*QUERY_SCALE).tanh();
+                        input[j]+=gate[j];
+                    }
+                    let features=network.logits(&input)?;
+                    let response=mv(&self.weights,&l.feedback_response,D,VOCAB,&features);
+                    for j in 0..D{hidden[j]+=response[j]/EXCHANGE_ROUNDS as f32;}
+                    exchange=Some(ExchangeCache{pre_exchange,input,features,gate});
+                }
+            }
+            reasoning.push(ReasoningCache{input:old,candidate:raw,exchange});
         }
         let mut logits=mv(&self.weights,&l.output,VOCAB,D,&hidden);
         for j in 0..VOCAB {logits[j]+=self.weights[l.bout.start+j];}
@@ -291,8 +343,22 @@ impl Transformer {
         self.gradient_tokens_with_memory(&history.iter().map(|&c|c as u16).collect::<Vec<_>>(),target,dense,&[])
     }
     pub(crate) fn gradient_tokens_with_memory(&self,history:&[u16],target:u8,dense:Option<&[f32]>,memory:&[Vec<u16>])->Result<(f32,Vec<f32>,Vec<f32>),String> {
+        self.gradient_tokens_internal(history,target,dense,memory,None)
+    }
+    /// Joint backpropagation through Transformer -> dense -> Transformer
+    /// exchanges. Accumulates into the SAME dense-hemisphere gradient buffer.
+    pub(crate) fn gradient_tokens_cooperative(&self,history:&[u16],target:u8,
+        dense:&[f32],memory:&[Vec<u16>],network:&Network,base:&[f32],
+        dense_grad:&mut Gradients)->Result<(f32,Vec<f32>,Vec<f32>),String>{
+        self.gradient_tokens_internal(history,target,Some(dense),memory,
+            Some((network,base,dense_grad)))
+    }
+    fn gradient_tokens_internal(&self,history:&[u16],target:u8,dense:Option<&[f32]>,
+        memory:&[Vec<u16>],mut cooperation:Option<(&Network,&[f32],&mut Gradients)>)
+        ->Result<(f32,Vec<f32>,Vec<f32>),String> {
         if target as usize>=VOCAB {return Err("Target character must be ASCII".into());}
-        let c=self.forward_tokens_with_memory(history,dense,CONTEXT,memory)?;
+        let c=self.forward_tokens_internal(history,dense,CONTEXT,memory,
+            cooperation.as_ref().map(|(network,base,_)|(*network,*base)))?;
         let l=layout();
         let mut grad=vec![0.0;l.len];
         let loss=-(c.probabilities[target as usize].max(1e-30)).ln();
@@ -302,7 +368,24 @@ impl Transformer {
         let mut dh=back_mv(&self.weights,&l.output,VOCAB,D,&c.hidden,&delta,&mut grad);
         // Exact BPTT across the recurrent reasoning steps. Each residual
         // update contributes to the same fused state's gradient.
+        let mut extra_context_gradient=vec![0.0;D];
         for step in c.reasoning.iter().rev(){
+            if let Some(ref exchange)=step.exchange{
+                let dresponse=dh.iter().map(|x|x/EXCHANGE_ROUNDS as f32).collect::<Vec<_>>();
+                let dfeatures=back_mv(&self.weights,&l.feedback_response,D,VOCAB,
+                    &exchange.features,&dresponse,&mut grad);
+                if let Some((network,_,dense_grads))=cooperation.as_mut(){
+                    let dinput=network.accumulate_logits_gradients_with_input(
+                        &exchange.input,&dfeatures,*dense_grads)?;
+                    let dgate=dinput.iter().zip(&exchange.gate).map(|(d,g)|
+                        d*(1.0-g*g)*QUERY_SCALE).collect::<Vec<_>>();
+                    let dquery=back_mv(&self.weights,&l.feedback_query,DENSE_INPUT,D,
+                        &exchange.pre_exchange,&dgate,&mut grad);
+                    let dcontext=back_mv(&self.weights,&l.context_query,DENSE_INPUT,D,
+                        &c.context,&dgate,&mut grad);
+                    for j in 0..D{dh[j]+=dquery[j];extra_context_gradient[j]+=dcontext[j];}
+                }else{return Err("Cooperative gradient missing dense network".into());}
+            }
             let dup=dh.iter().map(|x|x/REASONING_STEPS as f32).collect::<Vec<_>>();
             let dc=back_mv(&self.weights,&l.reason_update,D,D,
                 &step.candidate,&dup,&mut grad);
@@ -358,7 +441,8 @@ impl Transformer {
         let mut dx=vec![vec![0.0;D];c.tokens.len()];
         let last=dx.len()-1;
         for j in 0..D {dx[last][j]+=dh[j];}
-        let dcontext=back_mv(&self.weights,&l.o,D,D,&c.context,&dh,&mut grad);
+        let mut dcontext=back_mv(&self.weights,&l.o,D,D,&c.context,&dh,&mut grad);
+        for j in 0..D{dcontext[j]+=extra_context_gradient[j];}
         let mut datt=vec![0.0;c.tokens.len()];
         for i in 0..c.tokens.len() {
             datt[i]=dot(&dcontext,&c.values[i]);
@@ -392,6 +476,20 @@ impl Transformer {
     }
     pub fn predict_tokenized(&self,tokens:&[u16],dense:&[f32],window:usize,memory:&[Vec<u16>])->Result<Vec<f32>,String>{
         Ok(self.forward_tokens_with_memory(tokens,Some(dense),window,memory)?.probabilities)
+    }
+    pub fn predict_cooperative(&self,tokens:&[u16],dense:&[f32],window:usize,
+        memory:&[Vec<u16>],network:&Network,base:&[f32])->Result<Vec<f32>,String>{
+        Ok(self.forward_tokens_internal(tokens,Some(dense),window,memory,
+            Some((network,base)))?.probabilities)
+    }
+    /// Read-only exchange activity for diagnostics (NOT Visualize).
+    pub fn cooperative_activity(&self,tokens:&[u16],dense:&[f32],window:usize,
+        network:&Network,base:&[f32])->Result<Vec<f32>,String>{
+        let c=self.forward_tokens_internal(tokens,Some(dense),window,&[],
+            Some((network,base)))?;
+        Ok(c.reasoning.iter().filter_map(|r|r.exchange.as_ref()).map(|e|
+            vector_norm(&mv(&self.weights,&layout().feedback_response,D,VOCAB,&e.features))
+            /EXCHANGE_ROUNDS as f32).collect())
     }
     pub fn attention_tokenized(&self,tokens:&[u16],dense:&[f32],window:usize,memory:&[Vec<u16>])->Result<Vec<Attention>,String>{
         let c=self.forward_tokens_with_memory(tokens,Some(dense),window,memory)?;
@@ -460,6 +558,12 @@ impl Transformer {
         }
         // v0.8 full hybrid Transformer has no recurrent latent matrices.
         // Append neutral, trainable parameters without perturbing predictions.
+        if weights.len()==current.feedback_query.start{
+            self.weights[..weights.len()].copy_from_slice(weights);
+            self.momentum[..weights.len()].copy_from_slice(momentum);
+            self.variance[..weights.len()].copy_from_slice(variance);
+            return Ok(());
+        }
         if weights.len()==current.reason_read.start{
             self.weights[..weights.len()].copy_from_slice(weights);
             self.momentum[..weights.len()].copy_from_slice(momentum);
@@ -594,7 +698,7 @@ impl Transformer {
         // original parameters/moments are retained; the appended trainable
         // bridge receives fresh initialization and zero optimizer moments.
         let old=layout_for(ORIGINAL_CONTEXT);
-        if stored_count!=layout().len && stored_count!=layout().reason_read.start && stored_count!=layout().words.start && stored_count!=old.words.start && stored_count!=old.bridge.start {
+        if stored_count!=layout().len && stored_count!=layout().feedback_query.start && stored_count!=layout().reason_read.start && stored_count!=layout().words.start && stored_count!=old.words.start && stored_count!=old.bridge.start {
             return Err("Transformer checkpoint parameter count mismatch".into());
         }
         let mut step=[0u8;8];
