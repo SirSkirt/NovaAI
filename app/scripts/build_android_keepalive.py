@@ -9,6 +9,7 @@ Android PARTIAL_WAKE_LOCK; it never trains or generates text.
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import sys
 
@@ -17,6 +18,28 @@ project = app / "src-tauri/gen/android"
 source = app / "android/nova_service_bridge.c"
 if not (project / "app/build.gradle.kts").is_file():
     sys.exit("Android project not generated; run android:init first")
+# Register a process-local, nonexported ContentProvider giving the adapter
+# an application Context via PUBLIC Android APIs. This is a lifecycle detail,
+# not a separate background neural engine.
+provider_source = app / "android/NovaTrainingContextProvider.java"
+provider_dest = (project / "app/src/main/java/com/qtech/neuralnova/experimental"
+                 / "NovaTrainingContextProvider.java")
+provider_dest.parent.mkdir(parents=True, exist_ok=True)
+shutil.copyfile(provider_source, provider_dest)
+manifest = project / "app/src/main/AndroidManifest.xml"
+manifest_text = manifest.read_text()
+declaration = """<provider
+            android:name="com.qtech.neuralnova.experimental.NovaTrainingContextProvider"
+            android:authorities="com.qtech.neuralnova.experimental.training-context"
+            android:exported="false"
+            android:initOrder="100" />
+    """
+if "NovaTrainingContextProvider" not in manifest_text:
+    if "</application>" not in manifest_text:
+        sys.exit("Android manifest lacks </application> for lifecycle Context provider")
+    manifest_text = manifest_text.replace("</application>", declaration + "</application>", 1)
+    manifest.write_text(manifest_text)
+print("Registered internal Android foreground-service Context provider.")
 sdk = Path(os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME", ""))
 if not sdk.is_dir():
     sys.exit("Android SDK not found (ANDROID_HOME / ANDROID_SDK_ROOT)")
