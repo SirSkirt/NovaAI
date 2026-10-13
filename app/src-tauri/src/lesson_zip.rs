@@ -137,10 +137,30 @@ impl ZipQueueState {
     }
     fn update(&self,app:&AppHandle,update:impl FnOnce(&mut ZipTrainingStatus)){
         if let Ok(mut status)=self.inner.progress.lock(){
+            let old_lesson=status.lesson.clone();
+            let old_position=status.current;
             update(&mut status);
             status.active=self.is_active();
             status.stopping=self.inner.stopping.load(Ordering::Acquire);
-            let _=app.emit("hybrid-zip-progress",status.clone());
+            // A lesson transition, not JS or a timer, drives the SECOND
+            // notification. The first (epoch/loss) notification is untouched.
+            let lesson_changed=status.active && status.current>0 &&
+                !status.lesson.is_empty() &&
+                (status.current!=old_position || status.lesson!=old_lesson);
+            #[cfg(target_os="android")]
+            let label=if lesson_changed {
+                Some((status.lesson.clone(),status.current,status.total))
+            }else{None};
+            #[cfg(not(target_os="android"))]
+            let _=lesson_changed;
+            let snapshot=status.clone();
+            drop(status);
+            let _=app.emit("hybrid-zip-progress",snapshot);
+            #[cfg(target_os="android")]
+            if let Some((name,index,total))=label {
+                crate::android_lesson_notification::show_zip_lesson(
+                    &name,index,total);
+            }
         }
     }
 }
