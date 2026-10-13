@@ -9,6 +9,9 @@ use std::ops::Range;
 
 pub type Example = (Vec<u8>,u8);
 pub type ReasoningExample=(Vec<u8>,Vec<u8>,Vec<u8>);
+/// Independent held-out full response, used by the TEACHER's read-only
+/// evaluation only; these expected bytes never enter Nova inference.
+pub type HeldoutReply=(Vec<u8>,Vec<u8>,Vec<String>,u8);
 pub const MAX_SAMPLES:usize=50_000;
 pub const MAX_CORPUS_BYTES:usize=50_000;
 
@@ -26,6 +29,7 @@ pub struct PreparedLessons{
     pub reasoning_validation:Vec<ReasoningExample>,
     pub understanding_train:Vec<ReasoningExample>,
     pub understanding_validation:Vec<ReasoningExample>,
+    pub heldout_replies:Vec<HeldoutReply>,
     /// Alignment with train/validation examples; empty for explicit legacy modes.
     pub train_kinds:Vec<u8>,pub validation_kinds:Vec<u8>,
     /// Counts of complete independent units by objective (0 dialogue,
@@ -141,7 +145,7 @@ fn prepare_text_sections(text:&str)->Result<PreparedLessons,String>{
         training_text:train_units.join("\n\n"),
         memory_train:Vec::new(),memory_validation:Vec::new(),
         reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
-        understanding_train:Vec::new(),understanding_validation:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
+        understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],
     })
 }
@@ -242,7 +246,7 @@ fn prepare_reasoning(text:&str)->Result<PreparedLessons,String>{
         train_lessons:train_pairs.len(),validation_lessons:validation_pairs.len(),
         training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
         reasoning_train,reasoning_validation,
-        understanding_train:Vec::new(),understanding_validation:Vec::new(),
+        understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),
         train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5]})
 }
@@ -281,7 +285,7 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
             Ok(PreparedLessons{train,validation,train_lessons:train_pairs.len(),validation_lessons:valid_pairs.len(),
                 mode:mode.into(),training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
                 reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
-        understanding_train:Vec::new(),understanding_validation:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
+        understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],})
         },
         "reasoning"=>prepare_reasoning(text),
@@ -307,7 +311,7 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
                 train_lessons:sessions.len(),validation_lessons:held.len(),mode:mode.into(),
                 training_text,memory_train,memory_validation,
                 reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
-        understanding_train:Vec::new(),understanding_validation:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
+        understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],})
         },
         _=>Err("Select dialogue, text, conversation, or reasoning lessons".into())
