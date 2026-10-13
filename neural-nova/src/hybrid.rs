@@ -453,7 +453,8 @@ mod tests{
             "dense pathway must contribute to the final distribution");
         assert_eq!(before,no_exchange,"new path starts neutral");
         let original=brain.transformer.weights.clone();
-        brain.transformer.weights[brain.transformer.parameter_count()-128]=0.4;
+        let response_index=brain.transformer.parameter_count()-128;
+        brain.transformer.weights[response_index]=0.4;
         let active=brain.predict_window(prompt,256).unwrap();
         let disabled=brain.predict_ablation_with_memory(prompt,256,&[],false,true).unwrap();
         assert!(active.iter().zip(&disabled).map(|(a,b)|(a-b).abs()).sum::<f32>()>1e-9,
