@@ -6,7 +6,8 @@ const invoke=(cmd,args)=>window.__TAURI__?.core?.invoke(cmd,args)
 let requested=false;
 async function start(){
   if(!native)return;
-  if(requested)return;
+  // Android may stop the native keepalive automatically between lessons.
+  // Always inspect native state rather than trusting an old JS boolean.
   try{
     if(await invoke("plugin:background-service|is_running")){
       requested=true;return;
