@@ -17,7 +17,14 @@ use checkpoint_transfer::TransferState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder=tauri::Builder::default();
+    #[cfg(target_os="android")]
+    let builder=builder
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_background_service::init_with_service(
+            || training_keepalive::TrainingKeepalive
+        ));
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(NeuralState::default())
