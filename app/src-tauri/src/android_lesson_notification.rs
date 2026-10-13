@@ -7,10 +7,16 @@ use jni::JavaVM;
 /// Update notification ID 9001 used by the upstream background-service
 /// plugin. The app-owned, nonexported Android provider builds a replacement
 /// notification with the same ID/channel and an expanded lesson filename.
-pub(crate) fn show_zip_lesson(lesson:&str,index:usize,total:usize) {
-    if index==0 || total<index {return;}
-    if let Err(error)=try_show_zip_lesson(lesson,index,total){
-        eprintln!("Neural Nova: unable to refresh foreground lesson text: {error}");
+pub(crate) fn show_zip_lesson(lesson:&str,index:usize,total:usize)->bool {
+    if index==0 || total<index {return false;}
+    match try_show_zip_lesson(lesson,index,total){
+        Ok(())=>true,
+        Err(error)=>{
+            // A missing foreground notification can occur during Android's
+            // initial service promotion. The keepalive retries after 8 sec.
+            eprintln!("Neural Nova: unable to refresh foreground lesson text: {error}");
+            false
+        }
     }
 }
 fn try_show_zip_lesson(lesson:&str,index:usize,total:usize)->Result<(),String>{
