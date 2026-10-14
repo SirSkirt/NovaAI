@@ -36,6 +36,7 @@ jobs:
       - name: Check Android signing/foreground-service configuration script syntax
         run: python3 -m py_compile app/scripts/configure_android_ci.py
       - run: node --check app/dist/js/checkpoint-ui.js
+      - run: node app/tests/checkpoint-ui.test.cjs
       - run: node --check app/dist/js/targeted-training.js
       - run: node --check app/dist/js/brain.js
       - run: node --check app/dist/js/transformer.js
@@ -197,6 +198,15 @@ jobs:
       # lifecycle acknowledgement + PARTIAL_WAKE_LOCK adapter (no model).
       - name: Build Android foreground lifecycle adapter (4 ABIs)
         run: python3 app/scripts/build_android_keepalive.py
+      - name: Verify native checkpoint saver registered in generated Android package
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=app/src-tauri/gen/android/app/src/main/java/com/qtech/neuralnova/experimental/NovaTrainingContextProvider.java
+          test -s "$SOURCE"
+          grep -q 'writeVerifiedCheckpoint' "$SOURCE"
+          grep -q 'openOutputStream' "$SOURCE"
+          grep -q 'openInputStream' "$SOURCE"
       - name: Build experimental Android APK
         working-directory: app
         run: npm run android:debug-apk -- --ci
