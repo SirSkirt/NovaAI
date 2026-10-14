@@ -51,3 +51,9 @@ assert.match(zip,/let \(best_epoch,error,evidence\)=hybrid_lab::completed_traini
 assert.match(zip,/s\.learning_evidence=evidence/);
 assert.match(zip,/"firstFive"\|"entireZip"/);
 console.log("Foundation v2 ZIP duration, bounded retries, checkpoint guards and separate fit/generalization evidence OK.");
+
+assert.match(native,/best_rejected/);
+assert.match(native,/rejected .* candidate/);
+assert.match(native,/retention_blocked/);
+assert.match(bulk,/evidence\.evaluatedFrom/);
+console.log("Rejected-candidate diagnostics are separated from retained checkpoint evidence.");
