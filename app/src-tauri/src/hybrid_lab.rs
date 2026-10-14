@@ -950,6 +950,8 @@ impl TrainOptions {
         self.foundation_zip_total=Some(total);
         self.foundation_retry_attempt=Some(attempt);
         self.foundation_alternate_schedule=Some(alternate);
+        // Longer recovery schedules need room before early stopping.
+        if alternate {self.patience=Some(self.patience.unwrap_or(6).max(15));}
         self.learning_rate=Some(rate);
         self
     }
