@@ -12,6 +12,7 @@
   <script defer src="./js/diagnostic-ui.js"></script>
   <script defer src="./js/mass-learning-ui.js"></script>
   <script defer src="./js/checkpoint-ui.js"></script>
+  <script defer src="./js/targeted-training.js"></script>
   <script defer src="./js/test-ui.js"></script>
 </head>
 <body>
@@ -25,6 +26,7 @@
   </header>
   <nav class="nav-tabs" role="tablist" aria-label="Neural Nova workspace">
     <button type="button" id="tab-teach" class="nav-tab selected" role="tab" aria-selected="true" aria-controls="pane-teach" data-tab="teach">✧ Teach</button>
+    <button type="button" id="tab-targeted" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-targeted" tabindex="-1" data-tab="targeted">◈ Targeted Training</button>
     <button type="button" id="tab-chat" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-chat" tabindex="-1" data-tab="chat">◉ Chat</button>
     <button type="button" id="tab-visualize" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-visualize" tabindex="-1" data-tab="visualize">⌁ Visualize</button>
   </nav>
@@ -227,6 +229,101 @@ hey there</textarea>
           </details>
         </div>
       </details>
+    </section>
+    <section class="tab-pane" id="pane-targeted" role="tabpanel" aria-labelledby="tab-targeted" hidden>
+      <div class="pane-title">
+        <div><p class="eyebrow">FOUNDATION LEARNING · EXPERIMENTAL TEACHER MODE</p><h2>Targeted Training</h2></div>
+        <span class="subtle">One neural mind · Selectable gradient updates · Protected checkpoint</span>
+      </div>
+      <p class="muted">Teach a neural pathway or Nova's trainable two-way interconnect while the rest of the original brain still participates in forward and backward computation. Targeting controls which weights can change, not which hemisphere is allowed to reason. Nothing touches live Nova until you accept a whole candidate checkpoint.</p>
+      <div class="teach-grid">
+        <div class="card">
+          <h3>Choose a starting brain and learning focus</h3>
+          <div class="field-row">
+            <div class="wide-field">
+              <label for="targetedSource">Starting checkpoint</label>
+              <select id="targetedSource">
+                <option value="current" selected>Current Nova checkpoint · clone without replacing</option>
+                <option value="imported">Imported .nhyb checkpoint · staged separately</option>
+              </select>
+            </div>
+          </div>
+          <div class="row wrap">
+            <label class="file-button" for="targetedImportFile">＋ Choose .nhyb for targeted workspace</label>
+            <input type="file" id="targetedImportFile" accept=".nhyb,application/octet-stream">
+            <button type="button" class="secondary" id="targetedImport">Stage imported checkpoint</button>
+          </div>
+          <p class="muted" id="targetedImportStatus">No imported checkpoint staged. An imported brain does not replace live Nova.</p>
+          <div class="field-row">
+            <div class="wide-field"><label for="targetedFocus">Neural region receiving optimizer updates</label>
+              <select id="targetedFocus">
+                <option value="dense">Right hemisphere · dense/context pathway only</option>
+                <option value="transformer">Left hemisphere · Transformer, language, recurrent reasoning</option>
+                <option value="interconnect">Neural interconnect · learned bridge + reciprocal exchange</option>
+                <option value="joint">Joint · all three parameter groups</option>
+              </select>
+            </div>
+            <div class="wide-field"><label for="targetedSkill">Skill / teaching objective</label>
+              <select id="targetedSkill">
+                <option value="context">Context · entities, properties and relationships</option>
+                <option value="reasoning">Reasoning · supported vs contradicted conclusions</option>
+                <option value="dialogue">Dialogue · greetings and reply structure</option>
+                <option value="conversation">Multi-turn · conversational memory</option>
+              </select>
+            </div>
+          </div>
+          <p class="muted" id="targetedFocusHint">The selected region changes through actual neural gradients. The context objective uses Understanding Lesson examples, not a hidden symbolic knowledge base.</p>
+          <div class="section-line"><label for="targetedLessonData">Lesson material · structured TXT blocks</label><span class="subtle">Selected objective must have independent held-out examples</span></div>
+          <textarea id="targetedLessonData" rows="11" spellcheck="false" placeholder="[Understanding Lesson]&#10;Relations between entities ...&#10;[examples]&#10;Mira has a red ball. What color?  Red.&#10;...&#10;[/examples]&#10;[/Understanding Lesson]"></textarea>
+          <div class="row wrap">
+            <button type="button" class="secondary" id="targetedCopyTeach">Copy current Teach editor</button>
+            <label class="file-button" for="targetedLessonFile">＋ Import lesson TXT</label>
+            <input type="file" id="targetedLessonFile" accept=".txt,text/plain">
+          </div>
+          <p class="muted">Examples use your existing unified Dialogue, Understanding, Multi-Turn and Reasoning blocks. Training filters to the selected objective without turning instructional prose into scripted answers. The dense network still has its current 64-character input limitation.</p>
+        </div>
+        <div class="card training-card">
+          <h3>Train an isolated candidate</h3>
+          <div class="schedule-settings">
+            <div><label for="targetedEpochs">Max epochs</label><input type="number" id="targetedEpochs" value="8" min="1" max="30"></div>
+            <div><label for="targetedRate">Learning rate</label><select id="targetedRate">
+              <option value="0.0001">Extra gentle · 0.0001</option>
+              <option value="0.0003" selected>Very gentle · 0.0003</option>
+              <option value="0.001">Gentle · 0.001</option>
+              <option value="0.003">Balanced · 0.003</option>
+            </select></div>
+          </div>
+          <div class="row wrap actions">
+            <button type="button" id="targetedStart" class="primary">▶ Train candidate</button>
+            <button type="button" id="targetedStop" disabled>Stop</button>
+            <button type="button" id="targetedDiscard" class="secondary" disabled>Discard candidate</button>
+          </div>
+          <p id="targetedStage" class="trainer-stage">Ready to prepare a protected neural training experiment.</p>
+          <div class="progress-head"><span id="targetedProgress">No active experiment</span><strong id="targetedPercent">0%</strong></div>
+          <div class="progress-track"><div id="targetedFill"></div></div>
+          <h3>Before / after · same held-out material</h3>
+          <p class="muted">These are teacher validation probes for the selected skill, not independent final tests. Scores are compared on identical withheld examples, and archived skills are sampled without training on their held-out questions.</p>
+          <div class="metric-grid">
+            <div><span>Starting held-out loss</span><strong id="targetedBaselineLoss">—</strong></div>
+            <div><span>Candidate held-out loss</span><strong id="targetedCandidateLoss">—</strong></div>
+            <div><span>Starting complete replies</span><strong id="targetedBaselineReplies">—</strong></div>
+            <div><span>Candidate complete replies</span><strong id="targetedCandidateReplies">—</strong></div>
+            <div><span>Starting self-generated prefix</span><strong id="targetedBaselinePrefix">—</strong></div>
+            <div><span>Candidate self-generated prefix</span><strong id="targetedCandidatePrefix">—</strong></div>
+            <div><span>Starting earlier correct replies</span><strong id="targetedBaselineArchive">—</strong></div>
+            <div><span>Candidate earlier correct replies</span><strong id="targetedCandidateArchive">—</strong></div>
+            <div><span>Starting contrastive accuracy</span><strong id="targetedBaselineContrastive">—</strong></div>
+            <div><span>Candidate contrastive accuracy</span><strong id="targetedCandidateContrastive">—</strong></div>
+          </div>
+          <p id="targetedWarnings" class="muted">An accepted candidate is a complete trained brain, not an arbitrary splice of individual neurons.</p>
+          <label class="checkbox-line" for="targetedAllowRegression"><input type="checkbox" id="targetedAllowRegression"> Permit teacher-approved regression (requires a separate confirmation)</label>
+          <div class="row wrap actions">
+            <button type="button" id="targetedAccept" class="primary" disabled>Accept candidate as Nova's checkpoint</button>
+            <button type="button" id="targetedReturnTeach" class="secondary">Return to unified Teach</button>
+          </div>
+          <p class="muted">Manual acceptance creates a backup of the active checkpoint and installs the entire focused-trained neural brain. A stale candidate is rejected if active weights changed in the meantime. Imported candidates retain their own tokenizer and optimizer; chat history is cleared on acceptance. Until then, live Nova is untouched.</p>
+        </div>
+      </div>
     </section>
     <section class="tab-pane" id="pane-chat" role="tabpanel" aria-labelledby="tab-chat" hidden>
       <div class="pane-title"><div><p class="eyebrow">ONE GENERATIVE VOICE</p><h2>Chat with Nova</h2></div><span class="subtle">No canned answers · No model selection</span></div>
