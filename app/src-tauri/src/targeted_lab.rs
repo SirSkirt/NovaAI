@@ -192,8 +192,18 @@ fn select(plan:PreparedLessons,skill:Skill)->Result<FocusedPlan,String>{
         Skill::Reasoning=>(plan.reasoning_train,plan.reasoning_validation),
         _=>(Vec::new(),Vec::new()),
     };
+    // Vocabulary discovery is limited to the SELECTED supervision stream.
+    // Otherwise a dense-only focus could silently introduce Transformer word
+    // units from unrelated lesson blocks despite freezing its weights.
+    let mut focused_text=String::new();
+    for (sample,_) in training.iter().step_by(12){
+        if focused_text.len()+sample.0.len()+2>50_000{break;}
+        focused_text.push_str(std::str::from_utf8(&sample.0).map_err(|e|e.to_string())?);
+        focused_text.push(sample.1 as char);
+        focused_text.push('\n');
+    }
     Ok(FocusedPlan{training,validation,heldout,contrastive_train,contrastive_test,
-        training_text:plan.training_text})
+        training_text:focused_text})
 }
 fn evaluate(brain:&HybridBrain,plan:&FocusedPlan,archive:&[HeldoutReply])
     ->Result<TargetedScores,String>{
@@ -328,7 +338,12 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
     let mut start=base.clone();
     // Tokenizer grows from TRAIN text only; the imported/current full brain
     // remains unchanged until manual approval.
-    start.learn_token_units(&plan.training_text);
+    // Word-unit growth is itself a Transformer representation change.
+    // Keep the tokenizer bit-for-bit unchanged when only Dense or Interconnect
+    // weights are selected. Both streams still read the same lossless inputs.
+    if matches!(gradient_focus,TrainingFocus::Transformer|TrainingFocus::Joint){
+        start.learn_token_units(&plan.training_text);
+    }
     let base_scores=match evaluate(&start,&plan,&archive){
         Ok(score)=>score,Err(e)=>{hybrid_lab::targeted_release(&hybrid);return Err(e);}
     };
@@ -482,6 +497,9 @@ mod tests{
         assert_ne!(dialogue.training[0].0.0,context.training[0].0.0);
         assert!(context.contrastive_test.len()<=5);
         assert_ne!(dialogue.validation[0].0.0,context.validation[0].0.0);
+        assert_ne!(dialogue.training_text,context.training_text);
+        assert!(!dialogue.training_text.is_empty());
+        assert!(!context.training_text.is_empty());
     }
     #[test]
     fn objective_guard_detects_regression_without_modifying_inference(){
