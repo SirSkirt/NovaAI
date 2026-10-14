@@ -118,8 +118,9 @@ fn responses(brain:&HybridBrain,split:&str,samples:&[HeldoutReply])->Result<Vec<
             if context.len()>512{context.drain(..context.len()-512);}
         }
         let prefix=generated.iter().zip(answer).take_while(|(x,y)|x==y).count();
+        let category=["Dialogue","Understanding","Conversation","Reasoning"][k];
         out.push(json!({
-            "split":split,"category":["Dialogue","Understanding","Conversation","Reasoning"][k],
+            "split":split,"category":category,
             "prompt":String::from_utf8_lossy(&prompt[prompt.len().saturating_sub(180)..]),
             "expected":String::from_utf8_lossy(&answer[..answer.len().min(MAX_GENERATED)]),
             "expectedTruncated":answer.len()>MAX_GENERATED,

@@ -60,7 +60,7 @@
     }
   }
   async function refresh(latest=false){
-    if(busy||!invoke("nova_observer_sessions"))return;
+    if(busy||!window.__TAURI__?.core?.invoke)return;
     busy=true;
     try{
       const sessions=await invoke("nova_observer_sessions");
