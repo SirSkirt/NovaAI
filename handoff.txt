@@ -1,3 +1,10 @@
+NEURAL NOVA v0.12.7 — USER'S ORIGINAL ICON.PNG AUTOMATIC GENERATION (2026-10-13)
+The user uploaded and renamed their original neon blue/purple two-hemisphere artwork on experimental/neural-nova to app/src-tauri/icons/icon.png. The user also deleted former static 32x32, 128x128, 128x128@2x, icon.ico. Older v0.12.6 workflow was incorrectly conditional on app/assets/nova-brain-icon.png (not committed), so it did NOT regenerate icons or native Android launchers, and app packaging could fail due to missing bundle icon files.
+v0.12.7 fixes this: canonical source is EXACT app/src-tauri/icons/icon.png. The new cross-platform app/scripts/generate-icons.mjs creates a temporary copy and invokes npm run tauri -- icon <temp file>. app/package.json icons:generate now uses that script. GitHub Actions always regenerates Windows icons before tests/NSIS packaging. Android job copies original icon.png to RUNNER_TEMP, generates pre-init desktop icons, runs tauri android init, then generates Android native launcher mipmaps from original again. The Android build verifies ic_launcher.png, ic_launcher_round.png, ic_launcher_foreground.png and icon.ico before build. Source icon is committed by user, no more uploads needed.
+Visible application version bumped 0.12.7 to distinguish signed launcher update. Android package identifier/pinned experimental debug signer UNCHANGED. No neural model, checkpoint, trainer, brain visualizer or background process logic changed. Source original/icon.png Git blob from user commit a781962285f522948b45ad6d870a97f093e68e77 preserved.
+After push verify actual app workflow success including Windows NSIS, Android APK, signing, artifacts. If icon native resources missing or Android init fails, inspect GitHub logs and fix; do not claim ready without passes.
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA v0.12.6 — FINAL VERIFIED ARTIFACTS (2026-10-13 / UTC 2026-10-14)
 GitHub Actions Build #461: https://github.com/SirSkirt/NovaAI/actions/runs/38490997772 — ALL THREE JOBS SUCCEEDED:
 - JavaScript and neural-network tests SUCCESS (60 Rust core tests, 0 failures).

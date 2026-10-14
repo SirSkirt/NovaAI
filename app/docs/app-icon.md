@@ -1,24 +1,20 @@
-# Neural Nova application icon
+# Neural Nova application icon (v0.12.7)
 
-The icon is the user's cyan/purple two-hemisphere brain artwork.
+The source artwork is the user's original cyan/purple two-hemisphere brain image, committed on `experimental/neural-nova` as:
 
-The canonical checked-in source is `app/assets/nova-brain-icon.png`, an unmodified square, high-resolution PNG. `npm run icons:generate` runs Tauri's official icon generator:
+`app/src-tauri/icons/icon.png`
 
-```shell
-npm run tauri -- icon ./assets/nova-brain-icon.png
-```
+**No second upload or new file name is needed.** The repository intentionally may contain only that PNG: Tauri creates all other icon formats at build time. On Windows, `npm run icons:generate` generates `32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.ico`, and `icon.icns`. Android must run the generator **after** `npm run android:init` to insert `ic_launcher.png`, `ic_launcher_round.png`, and `ic_launcher_foreground.png` into native `res/mipmap-*` folders. The GitHub Actions Android job also generates the desktop assets *before* init, since the user removed obsolete icon files, and preserves an original temporary source copy for the second pass.
 
-Run the command from `app/`. It generates desktop `src-tauri/icons/icon.png`, `icon.ico`, `icon.icns`, and other standard icon sizes. Android icon generation must happen **after `tauri android init`** so Tauri can write the `ic_launcher*.png` resources directly into its generated Android Gradle project.
+From the `app/` folder:
 
-For a local original icon file, run from `app/`:
-
-```powershell
+```sh
 npm install
-npm run icons:apply -- "C:\\Users\\YOU\\Downloads\\Neon Dual-Hemisphere AI Brain(1).png" --push
+npm run icons:generate
 ```
 
-The script validates PNG dimensions, copies the exact bytes to the canonical path, calls Tauri's icon generator, stages **only icon files**, commits and pushes the `experimental/neural-nova` branch, triggering the already existing **Neural Nova - Experimental App Builds** GitHub Actions workflow. Without `--push`, it generates locally without modifying the remote repository.
+The generator copies `src-tauri/icons/icon.png` into a temporary location before calling **`npm run tauri -- icon <temporary-copy>.png`** to avoid collisions with Tauri's generated `icon.png`. The original committed binary is unchanged by the build; in a local working copy Tauri may replace `src-tauri/icons/icon.png` with its generated 512px version, so keep the Git original or a backup if you make a manual edit.
 
-In GitHub Actions, the Windows job calls Tauri's icon command before building, and the Android job calls it after initialization. If the source PNG has not yet been committed, both jobs retain the previously existing icons; they never silently fabricate a different brand icon.
+To replace the source icon with another PNG in a local checkout, use `npm run icons:apply -- "C:\\path\\to\\another-square-image.png" --push`. This commits the original image and generated assets to the experimental branch and triggers CI. Otherwise simply changing the source in GitHub is enough: the push workflow automatically rebuilds every platform.
 
-This is solely a packaging/branding change. Neural architecture, weights, checkpoints, the original brain visualizer, Android app identifier and pinned debug signing certificate are unaffected.
+The Windows/Android jobs verify generated icon assets exist; signing key, application identifier, checkpoint format and live brain visualizer remain unchanged.

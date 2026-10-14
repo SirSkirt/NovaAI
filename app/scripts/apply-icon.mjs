@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process';
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(app, '..');
-const png = join(app, 'assets', 'nova-brain-icon.png');
+const png = join(app, 'src-tauri', 'icons', 'icon.png');
 const args = process.argv.slice(2);
 const push = args.includes('--push');
 const filenames = args.filter(value => value !== '--push');
@@ -55,7 +55,7 @@ if (resolve(file) !== resolve(png)) copyFileSync(file, png);
 console.log(`Using ${width}x${height} PNG: ${png}`);
 run('npm', ['run', 'icons:generate'], app);
 if (push) {
-  run('git', ['add', 'app/assets/nova-brain-icon.png', 'app/src-tauri/icons'], repo);
+  run('git', ['add', 'app/src-tauri/icons'], repo);
   const changes = capture('git', ['diff', '--cached', '--name-only'], repo);
   if (!changes) { console.log('Icons already committed.'); process.exit(0); }
   run('git', ['commit', '-m', 'chore(nova): generate launcher icons from dual-hemisphere artwork'], repo);

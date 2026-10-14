@@ -1,7 +1,7 @@
 {
   "name": "neural-nova-experimental",
   "private": true,
-  "version": "0.12.6",
+  "version": "0.12.7",
   "description": "Neural Nova jointly trainable dual-hemisphere brain with Teach Chat Visualize UI",
   "scripts": {
     "tauri": "tauri",
@@ -10,7 +10,7 @@
     "android:init": "tauri android init",
     "android:debug-apk": "tauri android build --debug --apk",
     "android:apk": "tauri android build --apk",
-    "icons:generate": "tauri icon ./assets/nova-brain-icon.png",
+    "icons:generate": "node ./scripts/generate-icons.mjs",
     "icons:apply": "node ./scripts/apply-icon.mjs"
   },
   "devDependencies": {
