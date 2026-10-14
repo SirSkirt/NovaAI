@@ -38,6 +38,7 @@ struct Session{
     tokens_per_second:f32,stage:String,early_stopped:bool,
     history:Vec<ConversationTurn>,
     retention_baseline:Option<f32>,retention_accuracy:Option<f32>,
+    learning_evidence:Option<LessonLearningEvidence>,
 }
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
@@ -56,13 +57,25 @@ impl HybridState{
         self.inner.training.load(Ordering::Acquire)
     }
 }
-/// Teacher-only outcome used by the native ZIP scheduler after a completed
-/// lesson. It never changes Nova's predictions or evaluates answers for her.
-pub(crate) fn completed_training_outcome(state:&HybridState)
-    ->Result<(u32,Option<String>),String>{
-    let session=lock(state)?;
-    Ok((session.best_epoch,session.error.clone()))
+/// Small teacher-only fit/generalization probes; neither is a mastery certificate.
+#[derive(Clone,Serialize)]
+#[serde(rename_all="camelCase")]
+pub(crate) struct LessonLearningEvidence {
+    pub(crate) practice_correct:usize,
+    pub(crate) practice_checked:usize,
+    pub(crate) practice_prefix:f32,
+    pub(crate) heldout_correct:usize,
+    pub(crate) heldout_checked:usize,
+    pub(crate) heldout_prefix:f32,
+    pub(crate) finding:String,
 }
+/// Read-only teacher outcome for the native ZIP scheduler.
+pub(crate) fn completed_training_outcome(state:&HybridState)
+    ->Result<(u32,Option<String>,Option<LessonLearningEvidence>),String>{
+    let session=lock(state)?;
+    Ok((session.best_epoch,session.error.clone(),session.learning_evidence.clone()))
+}
+
 
 #[cfg(target_os="android")]
 fn training_notification(app:&AppHandle,body:String,finished:bool){
@@ -82,7 +95,7 @@ impl Default for HybridState{
                 best_heldout_loss:None,best_epoch:0,learning_rate:DEFAULT_LEARNING_RATE,
                 train_lessons:0,validation_lessons:0,tokens_per_second:0.0,
                 stage:"Idle".into(),early_stopped:false,history:Vec::new(),
-                retention_baseline:None,retention_accuracy:None
+                retention_baseline:None,retention_accuracy:None,learning_evidence:None
             }),
             training:AtomicBool::new(false),stop:AtomicBool::new(false),
             test_paused:AtomicBool::new(false),tests:Mutex::new(TestArchive::default())
@@ -919,6 +932,15 @@ pub struct TrainOptions {
     protect_previous:Option<bool>,
     retention_loss_tolerance:Option<f32>,
     foundation_training:Option<bool>,
+    pub(crate) foundation_zip_scope:Option<String>,
+    pub(crate) foundation_zip_index:Option<u32>,
+    pub(crate) foundation_zip_total:Option<u32>,
+    pub(crate) foundation_retry_attempt:Option<u8>,
+    pub(crate) foundation_alternate_schedule:Option<bool>,
+}
+impl TrainOptions {
+    pub(crate) fn zip_foundation_enabled(&self)->bool {self.foundation_training.unwrap_or(false)}
+    pub(crate) fn zip_learning_rate(&self)->f32 {self.learning_rate.unwrap_or(DEFAULT_LEARNING_RATE)}
 }
 fn resolved_switches(options:Option<&TrainOptions>)->(bool,bool){
     let legacy=options.and_then(|o|o.adaptive);
@@ -952,8 +974,8 @@ pub fn hybrid_train(
     }
     let starting_lr=options.as_ref().and_then(|o|o.learning_rate).unwrap_or(DEFAULT_LEARNING_RATE);
     let patience=options.as_ref().and_then(|o|o.patience).unwrap_or(6);
-    if !starting_lr.is_finite() || !(0.0001..=0.006).contains(&starting_lr){
-        return Err("Learning rate must be between 0.0001 and 0.006".into());
+    if !starting_lr.is_finite() || !(0.00001..=0.006).contains(&starting_lr){
+        return Err("Learning rate must be between 0.00001 and 0.006".into());
     }
     if !(3..=15).contains(&patience){return Err("Patience must be 3–15 epochs".into());}
     if state.inner.training.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err(){
@@ -976,12 +998,24 @@ pub fn hybrid_train(
         state.inner.training.store(false,Ordering::Release);
         return Err("Rehearsal archive is full (128). Export the lesson archive before continuing; older entries were not deleted".into());
     }
-    // Foundation is deliberately opt-in, but automatically ends after five
-    // COMPLETED lesson sessions, regardless of whether a candidate is accepted.
-    // The counter belongs to the current weights' teacher archive, not UI state.
+    // Direct teaching retains the original five-lesson checkpoint-scoped limit.
+    // A ZIP chooses its own duration from its validated ordered lesson index.
+    // Retries keep that logical index and do not consume extra lesson slots.
     let foundation_requested=options.as_ref().and_then(|o|o.foundation_training).unwrap_or(false);
-    let foundation=foundation_requested &&
-        starting_bank.foundation_lessons_completed<rehearsal::FOUNDATION_LESSON_LIMIT;
+    let zip_index=options.as_ref().and_then(|o|o.foundation_zip_index);
+    let zip_total=options.as_ref().and_then(|o|o.foundation_zip_total);
+    let zip_scope=options.as_ref().and_then(|o|o.foundation_zip_scope.as_deref());
+    let foundation=foundation_requested && match (zip_index,zip_scope){
+        (Some(i),Some("entireZip"))=>i>0 && zip_total.is_some_and(|total|i<=total),
+        (Some(i),Some("firstFive"))=>i>0 && i<=5 && zip_total.is_some_and(|total|i<=total),
+        _=>starting_bank.foundation_lessons_completed<rehearsal::FOUNDATION_LESSON_LIMIT
+    };
+    let foundation_number=zip_index.unwrap_or(starting_bank.foundation_lessons_completed as u32+1);
+    let foundation_total=if zip_scope==Some("entireZip") {
+        zip_total.unwrap_or(5)
+    }else{5};
+    let retry_attempt=options.as_ref().and_then(|o|o.foundation_retry_attempt).unwrap_or(0);
+    let alternate_schedule=options.as_ref().and_then(|o|o.foundation_alternate_schedule).unwrap_or(false);
     if foundation && (!rehearsal_enabled || !guard_enabled){
         state.inner.training.store(false,Ordering::Release);
         return Err("Foundation Training requires rehearsal and prior-skill protection enabled".into());
@@ -1050,6 +1084,7 @@ pub fn hybrid_train(
         s.train_lessons=plan.train_lessons;s.validation_lessons=plan.validation_lessons;
         s.tokens_per_second=0.0;s.stage="Preparing held-out baseline".into();
         s.early_stopped=false;s.retention_baseline=None;s.retention_accuracy=None;
+        s.learning_evidence=None;
         Ok(())
     })();
     if let Err(error)=ready{state.inner.training.store(false,Ordering::Release);return Err(error);}
@@ -1064,7 +1099,7 @@ pub fn hybrid_train(
             foundation_train_inner(&app,&state,&plan,lesson.epochs,
                 adaptive_learning_rate,early_stopping,starting_lr,patience,&retention,
                 &previous,rehearsal_enabled,tolerance,&observer_id,
-                starting_bank.foundation_lessons_completed)
+                foundation_number,foundation_total,alternate_schedule)
         }else{
             train_inner(&app,&state,&plan,lesson.epochs,
                 adaptive_learning_rate,early_stopping,starting_lr,patience,&retention,
@@ -1094,7 +1129,8 @@ pub fn hybrid_train(
                         }
                         // Rejections also consume a completed foundation
                         // lesson: the five-slot schedule never silently extends.
-                        if foundation && !cancelled{
+                        if foundation && !cancelled && retry_attempt==0 &&
+                            bank.foundation_lessons_completed<rehearsal::FOUNDATION_LESSON_LIMIT{
                             rehearsal::advance_foundation(&mut bank,&end)?;
                         }
                         rehearsal::write(&rehearsal_path(&app)?,&bank)
@@ -1675,7 +1711,8 @@ fn foundation_train_inner(
     epochs:u32,adaptive_learning_rate:bool,early_stopping:bool,
     starting_lr:f32,patience:u32,retention:&[TestCase],
     previous:&[PreparedLessons],rehearsal_enabled:bool,
-    loss_tolerance:f32,observer_id:&str,foundation_done:u8,
+    loss_tolerance:f32,observer_id:&str,foundation_number:u32,
+    foundation_total:u32,alternate_schedule:bool,
 )->Result<(bool,bool,u32),String>{
     let started=Instant::now();
     let (mut best_brain,mut best_loss,mut best_accuracy,initially_trained)={
@@ -1703,7 +1740,7 @@ fn foundation_train_inner(
     let base_observation=observer::capture(&best_brain,"foundation",&lessons.mode,0,
         &practice,&lessons.heldout_replies,&contexts,serde_json::json!({
             "baseline":true,"heldoutLoss":best_loss,
-            "foundationLesson":foundation_done+1,
+            "foundationLesson":foundation_number,
             "candidates":["Dense","Transformer","Interconnect","Joint"]
         }));
     let obs_err=base_observation.and_then(|v|observer::append(app,observer_id,&v)).err();
@@ -1726,7 +1763,12 @@ fn foundation_train_inner(
     for epoch in 1..=epochs{
         if state.inner.stop.load(Ordering::Acquire){cancelled=true;break;}
         let lr=schedule.learning_rate;
-        let batch_ids=objective_batches(lessons,epoch);
+        // Retry 2/3 changes teacher-only scheduling, never inference or targets.
+        // Epoch offset reshuffles training rows; alternating reversal changes
+        // batch presentation order while preserving the same holdout split.
+        let mut batch_ids=objective_batches(lessons,
+            if alternate_schedule{epoch.saturating_add(137)}else{epoch});
+        if alternate_schedule && epoch%2==0{batch_ids.reverse();}
         let prior_batches=if rehearsal_enabled{
             balanced_replay_schedule(previous,epoch,batch_ids.len())
         }else{Vec::new()};
@@ -1748,8 +1790,8 @@ fn foundation_train_inner(
             {
                 let mut s=lock(state)?;
                 s.epoch=epoch;s.stage=format!(
-                    "Foundation {}/5 · epoch {}/{} · evaluating {} candidate",
-                    foundation_done+1,epoch,epochs,focus_name);
+                    "Foundation {}/{} · epoch {}/{} · evaluating {} candidate",
+                    foundation_number,foundation_total,epoch,epochs,focus_name);
                 s.learning_rate=lr;
             }
             for (batch_index,ids) in batch_ids.iter().enumerate(){
@@ -1780,14 +1822,14 @@ fn foundation_train_inner(
                     let i=(batch_index/4+epoch as usize-1)%lessons.understanding_train.len();
                     brain.train_preference_batch_focused(
                         &[lessons.understanding_train[i].clone()],
-                        (lr*0.5).max(0.0001),mask)?;
+                        (lr*0.5).max(0.000005),mask)?;
                 }
                 if !lessons.evidence_train.is_empty()&&kind==3&&
                     ((batch_index+1)%4==0||batch_index+1==batch_ids.len()){
                     let i=(batch_index/4+epoch as usize-1)%lessons.evidence_train.len();
                     brain.train_evidence_batch_focused(
                         &[lessons.evidence_train[i].clone()],
-                        (lr*0.5).max(0.0001),mask)?;
+                        (lr*0.5).max(0.000005),mask)?;
                 }
                 if (batch_index+1)%3==0||batch_index+1==batch_ids.len(){
                     if replay_index<prior_batches.len(){
@@ -1900,13 +1942,13 @@ fn foundation_train_inner(
         }
         if diag::enabled(&app.state::<Diagnostics>()){
             diag::record(&app.state::<Diagnostics>(),"foundation_candidates",
-                serde_json::json!({"foundationLesson":foundation_done+1,
+                serde_json::json!({"foundationLesson":foundation_number,
                     "epoch":epoch,"startingScore":base_score,
                     "selected":selected_name,"candidates":proposals}));
         }
         let report=observer::capture(&best_brain,"foundation",&lessons.mode,epoch,
             &practice,&lessons.heldout_replies,&contexts,serde_json::json!({
-                "foundationLesson":foundation_done+1,
+                "foundationLesson":foundation_number,
                 "selected":selected,"selectedEpoch":best_epoch,
                 "selectionReason":format!("Foundation candidate: {}",selected_name),
                 "candidateScores":proposals,
@@ -1919,7 +1961,7 @@ fn foundation_train_inner(
             "sessionId":observer_id,"epoch":epoch,"error":err
         }));
         let _=app.emit("hybrid-epoch",serde_json::json!({
-            "foundation":true,"foundationLesson":foundation_done+1,
+            "foundation":true,"foundationLesson":foundation_number,
             "epoch":epoch,"epochs":epochs,
             "selectionReason":format!("Foundation candidate: {}",selected_name),
             "candidateScores":proposals,
@@ -1934,6 +1976,32 @@ fn foundation_train_inner(
         }));
         if schedule.observe_validation(selected){stopped=true;break;}
     }
+    // Exact practice prompts measure fit; independent withheld prompts measure
+    // generalization. Both are READ ONLY and are not used for optimizer steps.
+    let practice_fit=autonomous_validation_replies(&best_brain,&practice)?;
+    let learning_evidence=match (practice_fit,best_autonomous){
+        (Some(p),Some(h))=>{
+            let finding=if p.generated_prefix_accuracy<0.30{
+                "practice-fit-limited"
+            }else if p.generated_prefix_accuracy>=0.50 &&
+                p.generated_prefix_accuracy>h.generated_prefix_accuracy+0.20{
+                "generalization-gap-suspected"
+            }else{"mixed-or-inconclusive"};
+            Some(LessonLearningEvidence{
+                practice_correct:p.complete_answers_correct,
+                practice_checked:p.complete_answers_checked,
+                practice_prefix:p.generated_prefix_accuracy,
+                heldout_correct:h.complete_answers_correct,
+                heldout_checked:h.complete_answers_checked,
+                heldout_prefix:h.generated_prefix_accuracy,
+                finding:finding.into()
+            })
+        },_=>None
+    };
+    diag::record(&app.state::<Diagnostics>(),"foundation_fit_vs_generalization",
+        serde_json::json!({"foundationLesson":foundation_number,
+            "fitVsGeneralization":learning_evidence,
+            "sampledOnly":true,"heldoutExcludedFromTraining":true}));
     // Live Nova was not exposed to ANY candidate before final acceptance.
     // A cancellation can keep an earlier accepted epoch, matching normal trainer.
     {
@@ -1941,7 +2009,7 @@ fn foundation_train_inner(
         s.brain=best_brain;s.trained=initially_trained||best_epoch>0;
         s.best_epoch=best_epoch;s.best_heldout_loss=Some(best_loss);
         s.heldout_loss=Some(best_loss);s.heldout_accuracy=Some(best_accuracy);
-        s.completed=done_samples;
+        s.completed=done_samples;s.learning_evidence=learning_evidence;
         s.early_stopped=stopped;s.learning_rate=schedule.learning_rate;
         s.tokens_per_second=done_samples as f32/
             started.elapsed().as_secs_f32().max(0.001);
@@ -1952,8 +2020,8 @@ fn foundation_train_inner(
     }
     #[cfg(target_os="android")]
     training_notification(app,format!(
-        "Foundation lesson {}/5 • selected epoch {} of {}",
-        foundation_done+1,best_epoch,epochs),true);
+        "Foundation lesson {}/{} • selected epoch {} of {}",
+        foundation_number,foundation_total,best_epoch,epochs),true);
     Ok((cancelled,stopped,best_epoch))
 }
 fn train_inner(
