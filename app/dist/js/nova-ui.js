@@ -104,7 +104,8 @@ document.querySelectorAll(".nav-tab").forEach(button=>{
   button.addEventListener("keydown",e=>{
     if(!["ArrowRight","ArrowLeft","Home","End"].includes(e.key))return;
     e.preventDefault();const tabs=[...document.querySelectorAll(".nav-tab")];
-    const idx=tabs.indexOf(button);const next=e.key==="Home"?0:e.key==="End"?2:(idx+(e.key==="ArrowRight"?1:2))%3;
+    const idx=tabs.indexOf(button);const next=e.key==="Home"?0:e.key==="End"?tabs.length-1:
+      (idx+(e.key==="ArrowRight"?1:tabs.length-1))%tabs.length;
     tabs[next].focus();tab(tabs[next].dataset.tab);
   });
 });
