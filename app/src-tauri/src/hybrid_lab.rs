@@ -1725,10 +1725,13 @@ fn train_inner(
             lessons.train_kinds.get(i).copied().unwrap_or(0)
         )))
     };
+    let training_contexts=lessons.train.iter()
+        .filter(|(prompt,_)|prompt.ends_with(b"\nN: "))
+        .map(|(prompt,_)|prompt.clone()).collect::<Vec<_>>();
     let baseline_snapshot=(||->Result<(),String>{
         let guard=lock(state)?;
         let record=observer::capture(&guard.brain,"unified",&lessons.mode,0,
-            &practice,&lessons.heldout_replies,serde_json::json!({
+            &practice,&lessons.heldout_replies,&training_contexts,serde_json::json!({
                 "baseline":true,"heldoutLoss":lesson_baseline_loss
             }))?;
         observer::append(app,observer_id,&record)
@@ -2128,7 +2131,7 @@ fn train_inner(
         let observation=(||->Result<(),String>{
             let guard=lock(state)?;
             let record=observer::capture(&guard.brain,"unified",&lessons.mode,epoch,
-                &practice,&lessons.heldout_replies,serde_json::json!({
+                &practice,&lessons.heldout_replies,&training_contexts,serde_json::json!({
                     "trainingLoss":epoch_loss/trained_count as f64,
                     "heldoutLoss":validation_loss,
                     "heldoutAccuracy":validation_accuracy,

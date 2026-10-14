@@ -372,8 +372,11 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
             let mut best_epoch=0;
             let practice=observer::training_replies(plan.training.iter()
                 .map(|(example,memory)|(example,memory,skill.kind())));
+            let training_contexts=plan.training.iter()
+                .filter(|(example,_)|example.0.ends_with(b"\nN: "))
+                .map(|(example,_)|example.0.clone()).collect::<Vec<_>>();
             let baseline=observer::capture(&brain,"targeted",&skill_name,0,
-                &practice,&plan.heldout,serde_json::json!({
+                &practice,&plan.heldout,&training_contexts,serde_json::json!({
                     "baseline":true,"scores":base_scores
                 })).and_then(|data|observer::append(&app,&observer_id,&data));
             let _=app.emit("nova-observer-epoch",serde_json::json!({
@@ -419,7 +422,7 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
                     best_epoch=epoch;
                 }
                 let activity=observer::capture(&brain,"targeted",&skill_name,epoch,
-                    &practice,&plan.heldout,serde_json::json!({
+                    &practice,&plan.heldout,&training_contexts,serde_json::json!({
                         "scores":epoch_scores,"trainingLoss":losses/count as f64,
                         "selected":improves,"selectedEpoch":best_epoch,
                         "focus":focus_name,"source":source

@@ -11,6 +11,7 @@ use tauri::{AppHandle,Manager};
 
 const MAX_LOG:u64=24*1024*1024;
 const MAX_GENERATED:usize=24;
+const MAX_ABLATION_CHARS:usize=12;
 static NEXT_RUN:AtomicU64=AtomicU64::new(0);
 
 fn folder(app:&AppHandle)->Result<PathBuf,String>{
@@ -96,6 +97,26 @@ pub fn training_replies<'a>(
     }
     out
 }
+
+fn prompt_key(raw:&[u8])->String{
+    let text=String::from_utf8_lossy(raw);
+    let text=text.strip_prefix("U: ").unwrap_or(&text);
+    let text=text.split("\nN: ").next().unwrap_or(text);
+    text.trim().trim_end_matches(['?','!','.']).split_ascii_whitespace()
+        .map(str::to_ascii_lowercase).collect::<Vec<_>>().join(" ")
+}
+fn select_heldout(heldout:&[HeldoutReply],
+    training_keys:&std::collections::BTreeSet<String>)->Vec<HeldoutReply>{
+    (0..4u8).filter_map(|kind|{
+        heldout.iter().filter(|x|x.3==kind)
+            .max_by_key(|(prompt,_,memory,_)|{
+                let novel=!training_keys.contains(&prompt_key(prompt));
+                usize::from(novel)*100+
+                    (if kind==2{memory.len().min(12)*10}else{0})+
+                    usize::from(prompt.len()>24)
+            }).cloned()
+    }).collect()
+}
 fn greedy(p:&[f32])->u8{
     (0..p.len()).filter(|i|*i==10||(32..127).contains(i))
         .max_by(|a,b|p[*a].total_cmp(&p[*b])).unwrap_or(10) as u8
@@ -103,7 +124,8 @@ fn greedy(p:&[f32])->u8{
 fn variation(a:&[f32],b:&[f32])->f32{
     a.iter().zip(b).map(|(x,y)|(x-y).abs()).sum::<f32>()/2.0
 }
-fn responses(brain:&HybridBrain,split:&str,samples:&[HeldoutReply])->Result<Vec<Value>,String>{
+fn responses(brain:&HybridBrain,split:&str,samples:&[HeldoutReply],
+    training_keys:&std::collections::BTreeSet<String>)->Result<Vec<Value>,String>{
     let mut seen=[false;4];let mut out=Vec::new();
     for (prompt,answer,memory,kind) in samples{
         let k=*kind as usize;
@@ -121,6 +143,10 @@ fn responses(brain:&HybridBrain,split:&str,samples:&[HeldoutReply])->Result<Vec<
         let category=["Dialogue","Understanding","Conversation","Reasoning"][k];
         out.push(json!({
             "split":split,"category":category,
+            "promptSeenInTraining":split=="held-out validation"&&
+                training_keys.contains(&prompt_key(prompt)),
+            "independentPrompt":split=="held-out validation"&&
+                !training_keys.contains(&prompt_key(prompt)),
             "prompt":String::from_utf8_lossy(&prompt[prompt.len().saturating_sub(180)..]),
             "expected":String::from_utf8_lossy(&answer[..answer.len().min(MAX_GENERATED)]),
             "expectedTruncated":answer.len()>MAX_GENERATED,
@@ -135,13 +161,86 @@ fn responses(brain:&HybridBrain,split:&str,samples:&[HeldoutReply])->Result<Vec<
     }
     Ok(out)
 }
+
+fn expected_nll(brain:&HybridBrain,prompt:&[u8],answer:&[u8],
+    memory:&[String],dense_off:bool,exchange_off:bool)->Result<f32,String>{
+    let mut context=prompt.to_vec();let mut loss=0.0f32;let mut n=0usize;
+    for want in answer.iter().copied().chain(std::iter::once(b'\n'))
+        .take(MAX_ABLATION_CHARS){
+        let p=brain.predict_ablation_with_memory(
+            &context,256,memory,dense_off,exchange_off)?;
+        loss-=p[want as usize].max(1e-30).ln();
+        context.push(want);
+        if context.len()>512{context.drain(..context.len()-512);}
+        n+=1;
+    }
+    Ok(loss/n.max(1) as f32)
+}
+fn ablation_reply(brain:&HybridBrain,prompt:&[u8],memory:&[String],
+    dense_off:bool,exchange_off:bool)->Result<(String,bool),String>{
+    let mut context=prompt.to_vec();let mut reply=Vec::new();
+    for _ in 0..MAX_ABLATION_CHARS{
+        let p=brain.predict_ablation_with_memory(
+            &context,256,memory,dense_off,exchange_off)?;
+        let next=greedy(&p);
+        if next==b'\n'{
+            return Ok((String::from_utf8_lossy(&reply).to_string(),true));
+        }
+        reply.push(next);context.push(next);
+        if context.len()>512{context.drain(..context.len()-512);}
+    }
+    Ok((String::from_utf8_lossy(&reply).to_string(),false))
+}
+fn ablation_comparisons(brain:&HybridBrain,heldout:&[HeldoutReply],
+    training_keys:&std::collections::BTreeSet<String>)->Result<Vec<Value>,String>{
+    let mut result=Vec::new();
+    for (prompt,answer,memory,kind) in heldout{
+        let mut variants=Vec::new();let mut nll=[0f32;3];
+        for (i,(label,no_dense,no_exchange)) in [
+            ("Full brain",false,false),("No dense",true,false),
+            ("No reciprocal exchange",false,true)
+        ].into_iter().enumerate(){
+            nll[i]=expected_nll(brain,prompt,answer,memory,no_dense,no_exchange)?;
+            let (generated,ended)=ablation_reply(
+                brain,prompt,memory,no_dense,no_exchange)?;
+            let correct_prefix=generated.as_bytes().iter().zip(answer)
+                .take_while(|(a,b)|a==b).count();
+            variants.push(json!({
+                "mode":label,"generated":generated,"ended":ended,
+                "teacherForcedMeanNll":nll[i],"correctPrefixCharacters":correct_prefix,
+                "completeCorrect":answer.len()+1<=MAX_ABLATION_CHARS&&ended&&
+                    generated.as_bytes()==answer.as_slice()
+            }));
+        }
+        let category=["Dialogue","Understanding","Conversation","Reasoning"][*kind as usize];
+        result.push(json!({
+            "category":category,
+            "prompt":String::from_utf8_lossy(&prompt[prompt.len().saturating_sub(180)..]),
+            "expected":String::from_utf8_lossy(&answer[..answer.len().min(MAX_ABLATION_CHARS)]),
+            "truncatedAnswer":answer.len()+1>MAX_ABLATION_CHARS,
+            "independentPrompt":!training_keys.contains(&prompt_key(prompt)),
+            "memoryTurns":memory.len(),
+            "benefitOfFullVsNoDenseNll":nll[1]-nll[0],
+            "benefitOfFullVsNoExchangeNll":nll[2]-nll[0],
+            "variants":variants
+        }));
+    }
+    Ok(result)
+}
 /// Full dense/attention/bridge trace can be replayed on the original SVG.
 pub fn capture(brain:&HybridBrain,source:&str,objective:&str,epoch:u32,
-    training:&[HeldoutReply],heldout:&[HeldoutReply],metrics:Value
+    training:&[HeldoutReply],heldout:&[HeldoutReply],
+    training_contexts:&[Vec<u8>],metrics:Value
 )->Result<Value,String>{
-    let mut replies=responses(brain,"training practice",training)?;
-    replies.extend(responses(brain,"held-out validation",heldout)?);
-    let (prompt,_,memory,_)=heldout.first().or_else(||training.first())
+    let keys=training_contexts.iter().map(|v|prompt_key(v))
+        .collect::<std::collections::BTreeSet<_>>();
+    let selected=select_heldout(heldout,&keys);
+    let mut replies=responses(brain,"training practice",training,&keys)?;
+    replies.extend(responses(brain,"held-out validation",&selected,&keys)?);
+    let ablations=ablation_comparisons(brain,&selected,&keys)?;
+    let overlap=heldout.iter().filter(|(prompt,_,_,_)|
+        keys.contains(&prompt_key(prompt))).count();
+    let (prompt,_,memory,_)=selected.first().or_else(||training.first())
         .cloned().unwrap_or((b"U: hello\nN: ".to_vec(),Vec::new(),Vec::new(),0));
     let (layers,attention,bridge,p)=brain.inspect_with_memory(&prompt,256,&memory)?;
     let no_dense=brain.predict_ablation_with_memory(&prompt,256,&memory,true,false)?;
@@ -157,7 +256,17 @@ pub fn capture(brain:&HybridBrain,source:&str,objective:&str,epoch:u32,
         "source":source,"objective":objective,"epoch":epoch,
         "step":brain.transformer.step,
         "weightFingerprint":crate::diagnostic_log::weight_digest(brain),
-        "metrics":metrics,"replies":replies,
+        "metrics":metrics,"replies":replies,"ablationComparisons":ablations,
+        "heldoutIntegrity":{
+            "totalReplies":heldout.len(),"samePromptAsTraining":overlap,
+            "independentPromptCount":heldout.len()-overlap,
+            "selectedCount":selected.len(),
+            "warning":if overlap>0{
+                "Some held-out questions repeat training questions; do not treat those as unseen prompt-generalization evidence."
+            }else{
+                "Selected prompts do not repeat training questions; paraphrase and topic overlap remain possible."
+            }
+        },
         "pathways":{
             "denseRmsByLayer":layers.iter().map(|layer|rms(layer)).collect::<Vec<_>>(),
             "bridgeRms":rms(&bridge),
@@ -180,7 +289,7 @@ pub fn capture(brain:&HybridBrain,source:&str,objective:&str,epoch:u32,
             })).collect::<Vec<_>>(),
             "interconnectUsed":active
         },
-        "limitations":"24-char teacher probes and same-weight ablations; not decoded thoughts or a saved checkpoint."
+        "limitations":"24-character practice outputs, 12-character ablation outputs and teacher-only answer likelihoods; not independent proof of reasoning or a saved weight checkpoint."
     }))
 }
 #[cfg(test)]
@@ -194,6 +303,30 @@ mod tests{
             ([start.clone(),b"Hi".to_vec()].concat(),b'\n')];
         let out=training_replies(samples.iter().map(|item|(item,&memory,0)));
         assert_eq!(out.len(),1);assert_eq!(out[0].1,b"Hi");
+    }
+    #[test]
+    fn heldout_conversation_probe_prefers_unseen_followup_with_memory(){
+        let training=[b"U: hello nova\nN: ".to_vec()].into_iter()
+            .map(|v|prompt_key(&v)).collect();
+        let input=vec![
+            (b"U: hello nova\nN: ".to_vec(),b"Hello!".to_vec(),vec![],2),
+            (b"U: What is my name?\nN: ".to_vec(),b"Mira.".to_vec(),
+                vec!["U: My name is Mira.\nN: Hello Mira.".into()],2)
+        ];
+        let picked=select_heldout(&input,&training);
+        assert_eq!(picked.len(),1);
+        assert_eq!(picked[0].1,b"Mira.");
+        assert_eq!(picked[0].2.len(),1);
+        assert!(!training.contains(&prompt_key(&picked[0].0)));
+    }
+    #[test]
+    fn heldout_repeated_only_sample_is_not_mislabeled_independent(){
+        let training=[b"U: hello nova\nN: ".to_vec()].into_iter()
+            .map(|v|prompt_key(&v)).collect();
+        let heldout=vec![(b"U: hello nova\nN: ".to_vec(),
+            b"Hello!".to_vec(),vec![],2)];
+        let picked=select_heldout(&heldout,&training);
+        assert!(training.contains(&prompt_key(&picked[0].0)));
     }
     #[test]
     fn observation_paths_do_not_escape_directory(){
