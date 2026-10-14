@@ -746,7 +746,11 @@ async function listen(){
     await events.listen("hybrid-epoch",({payload:p})=>{
       history("Epoch "+p.epoch+"/"+p.epochs+" | train "+p.trainLoss.toFixed(4)+
         " | held-out "+p.validationLoss.toFixed(4)+" | accuracy "+(100*p.validationAccuracy).toFixed(1)+
-        "% | "+(p.improved?"NEW BEST":"no improvement")+" | LR "+p.learningRate.toFixed(5)+
+        "% | "+(p.improved?"SELECTED (joint score)":"NOT SELECTED")+" | LR "+p.learningRate.toFixed(5)+
+        (Number.isFinite(p.lessonBaselineLoss)?" | THIS lesson baseline "+
+            p.lessonBaselineLoss.toFixed(4):"")+
+        (p.heldoutPanelId?" | heldout set "+String(p.heldoutPanelId).slice(0,8):"")+
+        (p.selectionReason?" | "+p.selectionReason:"")+
         (Number.isFinite(p.retentionAccuracy)?" | teacher skill "+(100*p.retentionAccuracy).toFixed(1)+"%":"")+
         (Number.isFinite(p.previousHeldoutLoss)?" | prior heldout "+
             p.previousHeldoutLoss.toFixed(4)+" (baseline "+p.previousBaselineLoss.toFixed(4)+")":"")+
@@ -759,7 +763,20 @@ async function listen(){
           (100*p.autonomousHeldout.generatedPrefixAccuracy).toFixed(0)+
           "% · complete "+p.autonomousHeldout.completeAnswersCorrect+"/"+
           p.autonomousHeldout.completeAnswersChecked+
-          (p.autonomousGuardAccepted===false?" · checkpoint not selected":""):"")+
+          (p.selectedAutonomousHeldout?" · selected complete "+
+             p.selectedAutonomousHeldout.completeAnswersCorrect+"/"+
+             p.selectedAutonomousHeldout.completeAnswersChecked:""):"")+
+        (Array.isArray(p.archivedAutonomousBaseline)&&
+            p.archivedAutonomousBaseline.length?
+          " | earlier complete "+p.archivedAutonomousBaseline
+              .reduce((n,a)=>n+(a.completeAnswersCorrect||0),0)+"/"+
+              p.archivedAutonomousBaseline.reduce((n,a)=>n+(a.completeAnswersChecked||0),0)+
+          (p.archivedAutonomousCandidate?.length?
+            " → "+p.archivedAutonomousCandidate.reduce((n,a)=>n+(a.completeAnswersCorrect||0),0)+
+             "/"+p.archivedAutonomousCandidate.reduce((n,a)=>n+(a.completeAnswersChecked||0),0):"")+
+          (p.archivedAutonomousGuardAccepted===false&&
+              p.autonomousGuardAccepted?
+            " (EARLIER RESPONSE RETENTION BLOCKED)":""):"")+
         (Array.isArray(p.categoryHeldoutLoss)?" | per-objective heldout "+
           p.categoryHeldoutLoss.map((v,i)=>Number.isFinite(v)?["dialogue","understanding","conversation","reasoning","language"][i]+":"+v.toFixed(3):null)
             .filter(Boolean).join(", "):""));
