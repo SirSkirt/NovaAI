@@ -1,3 +1,9 @@
+// Large, structured teacher-only epoch diagnostics include separate current,
+// baseline, autonomous and archived-retention evidence. serde_json::json!
+// expands recursively; raise only the macro expansion budget, not neural
+// inference depth or the model's recurrent reasoning steps.
+#![recursion_limit = "256"]
+
 mod neural;
 mod transformer_lab;
 mod hybrid_lab;
