@@ -1664,6 +1664,292 @@ fn current_validation(brain:&HybridBrain,lessons:&PreparedLessons)
     }else{next_loss};
     Ok((selected_loss,accuracy,ranking,ranking_acc))
 }
+/// Candidate-only training. Four complete brain CLONES begin each epoch from
+/// the same accepted checkpoint and receive the same ordered samples. Only the
+/// allowed optimizer masks change. Every candidate retains its own Adam state.
+/// Rejected branches NEVER modify live Nova or on-disk neural checkpoints.
+fn foundation_train_inner(
+    app:&AppHandle,state:&HybridState,lessons:&PreparedLessons,
+    epochs:u32,adaptive_learning_rate:bool,early_stopping:bool,
+    starting_lr:f32,patience:u32,retention:&[TestCase],
+    previous:&[PreparedLessons],rehearsal_enabled:bool,
+    loss_tolerance:f32,observer_id:&str,foundation_done:u8,
+)->Result<(bool,bool,u32),String>{
+    let started=Instant::now();
+    let (mut best_brain,mut best_loss,mut best_accuracy,initially_trained)={
+        let s=lock(state)?;
+        let (loss,accuracy,_,_)=current_validation(&s.brain,lessons)?;
+        if !loss.is_finite(){return Err("Non-finite foundation starting loss".into());}
+        (s.brain.clone(),loss,accuracy,s.trained)
+    };
+    let baseline_loss=best_loss;
+    let mut best_autonomous=autonomous_validation(&best_brain,lessons)?;
+    let prior_baseline=previous_validation_loss(&best_brain,previous)?;
+    let teacher_baseline=if retention.is_empty(){None}
+        else{Some(retention_accuracy(&best_brain,retention)?)};
+    let archived_panels=archived_autonomous_panels(previous);
+    let archived_before=archived_autonomous_scores(&best_brain,&archived_panels)?;
+    let practice={
+        let empty=Vec::<String>::new();
+        observer::training_replies(lessons.train.iter().enumerate().map(|(i,ex)|(
+            ex,lessons.memory_train.get(i).unwrap_or(&empty),
+            lessons.train_kinds.get(i).copied().unwrap_or(0)
+        )))
+    };
+    let contexts=lessons.train.iter().filter(|(p,_)|p.ends_with(b"\nN: "))
+        .map(|(p,_)|p.clone()).collect::<Vec<_>>();
+    let base_observation=observer::capture(&best_brain,"foundation",&lessons.mode,0,
+        &practice,&lessons.heldout_replies,&contexts,serde_json::json!({
+            "baseline":true,"heldoutLoss":best_loss,
+            "foundationLesson":foundation_done+1,
+            "candidates":["Dense","Transformer","Interconnect","Joint"]
+        }));
+    let obs_err=base_observation.and_then(|v|observer::append(app,observer_id,&v)).err();
+    let _=app.emit("nova-observer-epoch",serde_json::json!({
+        "sessionId":observer_id,"epoch":0,"error":obs_err
+    }));
+    let mut best_epoch=0u32;
+    let mut done_samples=0usize;
+    let mut cancelled=false;
+    let mut stopped=false;
+    let mut schedule=ScheduleState::new(starting_lr,ScheduleConfig{
+        adaptive_learning_rate,early_stopping,patience
+    });
+    let focus_options=[
+        ("Dense",TrainingFocus::Dense),
+        ("Transformer",TrainingFocus::Transformer),
+        ("Interconnect",TrainingFocus::Interconnect),
+        ("Joint",TrainingFocus::Joint)
+    ];
+    for epoch in 1..=epochs{
+        if state.inner.stop.load(Ordering::Acquire){cancelled=true;break;}
+        let lr=schedule.learning_rate;
+        let batch_ids=objective_batches(lessons,epoch);
+        let prior_batches=if rehearsal_enabled{
+            balanced_replay_schedule(previous,epoch,batch_ids.len())
+        }else{Vec::new()};
+        let boundary=reply_boundary_batches(lessons,epoch,batch_ids.len());
+        let base=best_brain.clone();
+        let mut proposals=Vec::new();
+        let mut winner:Option<(HybridBrain,f32,f32,Option<AutonomousValidation>,
+            String,f32,f32,Option<f32>)>=None;
+        let base_score=best_loss+best_autonomous.map(|x|0.35*x.self_conditioned_loss)
+            .unwrap_or(0.0);
+        let mut previous_score=base_score;
+        for (focus_name,mask) in focus_options{
+            if state.inner.stop.load(Ordering::Acquire){cancelled=true;break;}
+            let mut brain=base.clone();
+            let mut training_loss=0.0f64;
+            let mut learned=0usize;
+            let mut boundary_index=0usize;
+            let mut replay_index=0usize;
+            {
+                let mut s=lock(state)?;
+                s.epoch=epoch;s.stage=format!(
+                    "Foundation {}/5 · epoch {}/{} · evaluating {} candidate",
+                    foundation_done+1,epoch,epochs,focus_name);
+                s.learning_rate=lr;
+            }
+            for (batch_index,ids) in batch_ids.iter().enumerate(){
+                if state.inner.stop.load(Ordering::Acquire){cancelled=true;break;}
+                let kind=if lessons.mode=="unified"{lessons.train_kinds[ids[0]]}else{
+                    match lessons.mode.as_str(){"conversation"=>2,"reasoning"=>3,
+                        "text"=>4,_=>0}
+                };
+                let batch=ids.iter().map(|&i|lessons.train[i].clone())
+                    .collect::<Vec<_>>();
+                let loss=if kind==2{
+                    let memory=ids.iter().map(|&i|(
+                        lessons.train[i].0.clone(),lessons.train[i].1,
+                        lessons.memory_train[i].clone()
+                    )).collect::<Vec<_>>();
+                    brain.train_memory_batch_focused(&memory,lr,mask)?
+                }else{brain.train_batch_focused(&batch,lr,mask)?};
+                if !loss.is_finite(){return Err("Non-finite foundation batch loss".into());}
+                training_loss+=loss as f64*ids.len() as f64;learned+=ids.len();
+                if !lessons.reasoning_train.is_empty()&&kind==3&&
+                    ((batch_index+1)%4==0||batch_index+1==batch_ids.len()){
+                    let i=(batch_index/4+epoch as usize-1)%lessons.reasoning_train.len();
+                    brain.train_preference_batch_focused(
+                        &[lessons.reasoning_train[i].clone()],lr,mask)?;
+                }
+                if !lessons.understanding_train.is_empty()&&kind==1&&
+                    ((batch_index+1)%4==0||batch_index+1==batch_ids.len()){
+                    let i=(batch_index/4+epoch as usize-1)%lessons.understanding_train.len();
+                    brain.train_preference_batch_focused(
+                        &[lessons.understanding_train[i].clone()],
+                        (lr*0.5).max(0.0001),mask)?;
+                }
+                if !lessons.evidence_train.is_empty()&&kind==3&&
+                    ((batch_index+1)%4==0||batch_index+1==batch_ids.len()){
+                    let i=(batch_index/4+epoch as usize-1)%lessons.evidence_train.len();
+                    brain.train_evidence_batch_focused(
+                        &[lessons.evidence_train[i].clone()],
+                        (lr*0.5).max(0.0001),mask)?;
+                }
+                if (batch_index+1)%3==0||batch_index+1==batch_ids.len(){
+                    if replay_index<prior_batches.len(){
+                        let (source,old_ids,objective)=&prior_batches[replay_index];
+                        replay_index+=1;
+                        let old=&previous[*source];
+                        let examples=old_ids.iter().map(|&i|old.train[i].clone())
+                            .collect::<Vec<_>>();
+                        let replay_loss=if old.mode=="conversation"||*objective==2{
+                            let memory=old_ids.iter().map(|&i|(
+                                old.train[i].0.clone(),old.train[i].1,
+                                old.memory_train[i].clone())).collect::<Vec<_>>();
+                            brain.train_memory_batch_focused(&memory,lr,mask)?
+                        }else{brain.train_batch_focused(&examples,lr,mask)?};
+                        if !replay_loss.is_finite(){
+                            return Err("Non-finite foundation rehearsal loss".into());
+                        }
+                        training_loss+=replay_loss as f64*old_ids.len() as f64;
+                        learned+=old_ids.len();
+                    }
+                }
+                if lessons.mode=="unified"&&
+                    ((batch_index+1)%8==0||batch_index+1==batch_ids.len())&&
+                    boundary_index<boundary.len(){
+                    let ids=&boundary[boundary_index];boundary_index+=1;
+                    let kind=lessons.train_kinds[ids[0]];
+                    let focused=ids.iter().map(|&i|lessons.train[i].clone())
+                        .collect::<Vec<_>>();
+                    let output=if kind==2{
+                        let m=ids.iter().map(|&i|(
+                            lessons.train[i].0.clone(),lessons.train[i].1,
+                            lessons.memory_train[i].clone())).collect::<Vec<_>>();
+                        brain.train_memory_batch_focused(&m,lr,mask)?
+                    }else{brain.train_batch_focused(&focused,lr,mask)?};
+                    training_loss+=output as f64*ids.len() as f64;
+                    learned+=ids.len();
+                }
+                done_samples+=ids.len();
+                if done_samples%64<ids.len(){
+                    let mut s=lock(state)?;
+                    s.completed=done_samples;s.total=s.total.max(done_samples);
+                    s.tokens_per_second=done_samples as f32/
+                        started.elapsed().as_secs_f32().max(0.001);
+                    s.train_loss=Some(loss);
+                    let _=app.emit("hybrid-progress",serde_json::json!({
+                        "completed":done_samples,"total":s.total,
+                        "epoch":epoch,"epochs":epochs,
+                        "loss":loss,"stage":s.stage,"learningRate":lr,
+                        "tokensPerSecond":s.tokens_per_second
+                    }));
+                }
+            }
+            if cancelled{break;}
+            if learned==0{return Err("Foundation lesson produced no training samples".into());}
+            // IMPORTANT: All candidates are compared using the SAME held-out
+            // and earlier-skill panels. Teacher answers are never trained on.
+            let (loss,acc,_,reason_accuracy)=current_validation(&brain,lessons)?;
+            let autonomous=autonomous_validation(&brain,lessons)?;
+            let previous_loss=previous_validation_loss(&brain,previous)?;
+            let teacher=if retention.is_empty(){None}
+                else{Some(retention_accuracy(&brain,retention)?)};
+            let retained=rehearsal::eligible_checkpoint(previous_loss,prior_baseline,
+                loss_tolerance,teacher,teacher_baseline);
+            let archived=archived_autonomous_scores(&brain,&archived_panels)?;
+            let archived_ok=archived_autonomous_retained(&archived_before,&archived);
+            let valid=retained&&archived_ok&&
+                stays_near_original_baseline(baseline_loss,best_loss,loss)&&
+                autonomous_selection_ok(best_autonomous,autonomous,best_loss,loss);
+            let score=loss+autonomous.map(|v|0.35*v.self_conditioned_loss)
+                .unwrap_or(0.0);
+            proposals.push(serde_json::json!({
+                "pathway":focus_name,"eligible":valid,"heldoutLoss":loss,
+                "nextCharacterAccuracy":acc,"autonomous":autonomous,
+                "reasoningPreferenceAccuracy":reason_accuracy,
+                "previousHeldoutLoss":previous_loss,"teacherAccuracy":teacher,
+                "retentionAccepted":retained,"archivedRepliesRetained":archived_ok,
+                "jointScore":score,
+                "trainingLoss":training_loss/learned as f64,
+                "modelStep":brain.transformer.step,
+                "fingerprint":diag::weight_digest(&brain)
+            }));
+            // No blind neuron splicing or independently selected optimizer
+            // moments. Accept the WHOLE candidate, including all Adam states.
+            if valid&&score+MIN_IMPROVEMENT<previous_score{
+                previous_score=score;
+                winner=Some((brain,loss,acc,autonomous,focus_name.into(),
+                    (training_loss/learned as f64) as f32,reason_accuracy,previous_loss));
+            }
+        }
+        if cancelled{break;}
+        let selected=winner.is_some();
+        let (selected_name,epoch_train,reason_accuracy,prior_loss)=
+            if let Some((brain,loss,acc,auto,name,train_score,reason,prior))=winner{
+                best_brain=brain;best_loss=loss;best_accuracy=acc;
+                best_autonomous=auto;best_epoch=epoch;
+                (name,train_score,reason,prior)
+            }else{
+                ("None — retained previous complete checkpoint".to_string(),
+                 f32::NAN,0.0,prior_baseline)
+            };
+        {
+            let mut s=lock(state)?;
+            s.best_epoch=best_epoch;s.best_heldout_loss=Some(best_loss);
+            s.heldout_loss=Some(best_loss);s.heldout_accuracy=Some(best_accuracy);
+            s.stage=format!("Foundation · epoch {} · {}",epoch,selected_name);
+            s.train_loss=if epoch_train.is_finite(){Some(epoch_train)}else{None};
+        }
+        if diag::enabled(&app.state::<Diagnostics>()){
+            diag::record(&app.state::<Diagnostics>(),"foundation_candidates",
+                serde_json::json!({"foundationLesson":foundation_done+1,
+                    "epoch":epoch,"startingScore":base_score,
+                    "selected":selected_name,"candidates":proposals}));
+        }
+        let report=observer::capture(&best_brain,"foundation",&lessons.mode,epoch,
+            &practice,&lessons.heldout_replies,&contexts,serde_json::json!({
+                "foundationLesson":foundation_done+1,
+                "selected":selected,"selectedEpoch":best_epoch,
+                "selectionReason":format!("Foundation candidate: {}",selected_name),
+                "candidateScores":proposals,
+                "heldoutLoss":best_loss,"heldoutAccuracy":best_accuracy,
+                "priorHeldoutLoss":prior_loss,
+                "reasoningPreferenceAccuracy":reason_accuracy
+            }));
+        let err=report.and_then(|v|observer::append(app,observer_id,&v)).err();
+        let _=app.emit("nova-observer-epoch",serde_json::json!({
+            "sessionId":observer_id,"epoch":epoch,"error":err
+        }));
+        let _=app.emit("hybrid-epoch",serde_json::json!({
+            "foundation":true,"foundationLesson":foundation_done+1,
+            "epoch":epoch,"epochs":epochs,
+            "selectionReason":format!("Foundation candidate: {}",selected_name),
+            "candidateScores":proposals,
+            "validationLoss":best_loss,"validationAccuracy":best_accuracy,
+            "bestLoss":best_loss,"bestEpoch":best_epoch,
+            "improved":selected,"trainLoss":epoch_train,
+            "autonomousHeldout":best_autonomous,
+            "selectedAutonomousHeldout":best_autonomous,
+            "reasoningRankingAccuracy":reason_accuracy,
+            "previousHeldoutLoss":prior_loss,
+            "tokensPerSecond":done_samples as f64/started.elapsed().as_secs_f64().max(0.001)
+        }));
+        if schedule.observe_validation(selected){stopped=true;break;}
+    }
+    // Live Nova was not exposed to ANY candidate before final acceptance.
+    // A cancellation can keep an earlier accepted epoch, matching normal trainer.
+    {
+        let mut s=lock(state)?;
+        s.brain=best_brain;s.trained=initially_trained||best_epoch>0;
+        s.best_epoch=best_epoch;s.best_heldout_loss=Some(best_loss);
+        s.heldout_loss=Some(best_loss);s.heldout_accuracy=Some(best_accuracy);
+        s.early_stopped=stopped;s.learning_rate=schedule.learning_rate;
+        s.tokens_per_second=done_samples as f32/
+            started.elapsed().as_secs_f32().max(0.001);
+        s.stage=if cancelled{"Foundation stopped; best checkpoint restored"}
+            else if stopped{"Foundation early stopped; best checkpoint restored"}
+            else{"Foundation complete; best checkpoint restored"}.into();
+        if best_epoch>0{s.brain.save(path(app)?)?;}
+    }
+    #[cfg(target_os="android")]
+    training_notification(app,format!(
+        "Foundation lesson {}/5 • selected epoch {} of {}",
+        foundation_done+1,best_epoch,epochs),true);
+    Ok((cancelled,stopped,best_epoch))
+}
 fn train_inner(
     app:&AppHandle,state:&HybridState,lessons:&PreparedLessons,
     epochs:u32,adaptive_learning_rate:bool,early_stopping:bool,
