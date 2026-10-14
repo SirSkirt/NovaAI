@@ -1,3 +1,22 @@
+NEURAL NOVA v0.12.6 — ACCURATE BEST CHECKPOINT / OLD ANSWER RETENTION (2026-10-13)
+
+USER ISSUE: In a prior v0.12.5 training log epoch 4 was tagged NEW BEST with train loss 0.4322, CURRENT heldout 2.1174, older heldout 1.3143 vs older baseline 1.2330, and self-generated complete 1/4. A different baseline screenshot showed heldout 1.4332 and 3/4 complete. Without the identical evaluation set/lesson ID across screenshots, those numeric complete-answer scores are not strictly comparable; however the trainer exposed real defects:
+1) "NEW BEST" described a joint checkpoint score and could select a slightly worse character loss; label was misleading.
+2) Older-skills guard allowed +0.10 heldout loss by default. +0.0813 was accepted despite regression in average previous prediction loss.
+3) The old autonomous answer nonregression guard only compared CURRENT lesson heldout replies. Earlier archived lessons used averaged teacher-forced loss; earlier correct complete replies could be forgotten when advancing through a ZIP.
+4) +0.08 permitted validation regression was checked against the PREVIOUS selected epoch, not the IMMUTABLE starting baseline. Across selected epochs this could ratchet up overall teacher-forced loss.
+ 
+FIX IMPLEMENTED ON experimental/neural-nova v0.12.6:
+- app/src-tauri/src/hybrid_lab.rs: fixed current-lesson baseline loss ceiling. Any selected epoch must remain <= starting composite heldout loss + 0.08 (and <=previous selected +0.08); no per-epoch cumulative drift.
+- App teacher now freezes representative previous autonomous heldout responses from OLDEST and NEWEST accepted archived lesson by each objective (at most 2 panels of 4 categories x 12 generated characters). Both are independently generated and read-only at baseline and at each candidate. Earlier completed answers may not decrease; first-character success may not decrease; generated prefix accuracy may decline by <= 0.05 and self-conditioned loss by <= 0.05. Any older-skill autonomous regression vetoes candidate even if current lesson loss or first characters improve. If archived lesson has no heldout responses, original prior-loss guards remain.
+- Older-skill teacher-forced loss tolerance default tightened 0.10 -> 0.02. Teachers may explicitly select 0.05, 0.10 or 0.20 in the existing UI; previously saved selections are RESPECTED and not silently overwritten. Keep 'Reject checkpoints that lose earlier skills' ON during curriculum teaching. Stricter selection can lead to more skipped lessons, correctly reflecting lack of retention instead of silently degrading the model.
+- Epoch log "NEW BEST" changed to "SELECTED (joint score)", distinct from lowest heldout loss. Log includes ORIGINAL lesson baseline composite loss, candidate current loss, selected prior score, validation probe-set fingerprint, earlier autonomous complete reply counts before->after, and explicit rejection reason. Matching the same probe-set ID is required for meaningful screenshot comparisons.
+- New Rust regression tests cover exact user-type 3/4->1/4 complete-reply regression, loss ratcheting, newest/oldest archived lesson panels, deterministic read-only archived checks, and immutable baseline ceiling. These tests do not demonstrate genuine generalized reasoning or conversation.
+- Visible app/version bumped v0.12.6, unchanged package ID, public experimental Android development signer, existing checkpoint binary format and original brain visualizer. No hardcoded reasoning/answers or extra AI agent.
+- This is a training-CHECKPOINT selection policy change, not a proven neural architecture improvement. Export .nhyb and finish active training before installing; existing archived prior lesson bank and saved user settings persist. The revised old-skill sample is BOUNDED and not exhaustive. No assessment on user's actual trained Nova has been run.
+- GitHub Actions app workflow after v0.12.6 push must pass Windows NSIS, Android debug APK native adapters/signature and Rust/JS tests before claiming ready.
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA v0.12.5 — EDUCATION PIPELINE / AUTONOMOUS VALIDATION UPGRADE (2026-10-13)
 USER CLARIFICATION: Their 27 TXT ZIP curriculum (15 accepted, 12 skipped) was TRAINING material. They have NOT yet conducted a separate formal or blind evaluation of Nova. Acceptance is a trainer VALIDATION/checkpoint-selection decision, never proof of mastering the subject, reasoning or conversational fluency. User has exported the previous .nhyb checkpoint for safety and intends to reteach once training is fixed.
 
