@@ -10,6 +10,7 @@ mod hybrid_lab;
 mod targeted_lab;
 mod test_lab;
 mod diagnostic_log;
+mod training_observer;
 mod rehearsal;
 mod lesson_zip;
 mod checkpoint_transfer;
@@ -69,6 +70,8 @@ pub fn run() {
             diagnostic_log::nova_log_start,
             diagnostic_log::nova_log_stop,
             diagnostic_log::nova_log_read,
+            training_observer::nova_observer_sessions,
+            training_observer::nova_observer_read,
             hybrid_lab::hybrid_train,
             targeted_lab::targeted_status,
             targeted_lab::targeted_import_begin,

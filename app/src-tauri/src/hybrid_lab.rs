@@ -8,6 +8,7 @@ use crate::test_lab::{TestArchive,TestDefinition,TestReport,TestOptions,TestCase
 use crate::diagnostic_log::{self as diag, Diagnostics};
 use crate::rehearsal::{self,LessonRecord,RehearsalBank};
 use crate::checkpoint_transfer::TransferState;
+use crate::training_observer as observer;
 use serde::{Deserialize,Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -1037,10 +1038,15 @@ pub fn hybrid_train(
     })();
     if let Err(error)=ready{state.inner.training.store(false,Ordering::Release);return Err(error);}
     state.inner.stop.store(false,Ordering::Release);
+    let observer_id=match observer::start(&app,"unified",&lesson.mode){
+        Ok(id)=>id,Err(e)=>{
+            state.inner.training.store(false,Ordering::Release);return Err(e);
+        }
+    };
     tauri::async_runtime::spawn_blocking(move||{
         let result=train_inner(&app,&state,&plan,lesson.epochs,
             adaptive_learning_rate,early_stopping,starting_lr,patience,&retention,
-            &previous,rehearsal_enabled,guard_enabled,tolerance);
+            &previous,rehearsal_enabled,guard_enabled,tolerance,&observer_id);
         if let Err(ref e)=result{
             if let Ok(mut s)=lock(&state){s.error=Some(e.clone());s.stage="Training failed".into();}
             eprintln!("Neural Nova hybrid trainer error: {e}");
@@ -1634,7 +1640,7 @@ fn train_inner(
     epochs:u32,adaptive_learning_rate:bool,early_stopping:bool,
     starting_lr:f32,patience:u32,retention:&[TestCase],
     previous:&[PreparedLessons],rehearsal_enabled:bool,
-    protect_previous:bool,loss_tolerance:f32,
+    protect_previous:bool,loss_tolerance:f32,observer_id:&str,
 )->Result<(bool,bool,u32),String>{
     let train:&[Example]=&lessons.train;
     let started=Instant::now();
@@ -1711,6 +1717,25 @@ fn train_inner(
             "criterion":"new validation loss improves AND previous loss within baseline+tolerance AND optional teacher accuracy does not fall"
         }));
     }
+    // Snapshot original weights BEFORE epoch one, without applying gradients.
+    let practice={
+        let empty=Vec::<String>::new();
+        observer::training_replies(lessons.train.iter().enumerate().map(|(i,ex)|(
+            ex,lessons.memory_train.get(i).unwrap_or(&empty),
+            lessons.train_kinds.get(i).copied().unwrap_or(0)
+        )))
+    };
+    let baseline_snapshot=(||->Result<(),String>{
+        let guard=lock(state)?;
+        let record=observer::capture(&guard.brain,"unified",&lessons.mode,0,
+            &practice,&lessons.heldout_replies,serde_json::json!({
+                "baseline":true,"heldoutLoss":lesson_baseline_loss
+            }))?;
+        observer::append(app,observer_id,&record)
+    })();
+    let _=app.emit("nova-observer-epoch",serde_json::json!({
+        "sessionId":observer_id,"epoch":0,"error":baseline_snapshot.err()
+    }));
     let mut best_epoch=0u32;
     let mut schedule=ScheduleState::new(starting_lr,ScheduleConfig{
         adaptive_learning_rate,early_stopping,patience,
@@ -2081,6 +2106,30 @@ fn train_inner(
                 "isolatedGreetingProbes":diagnostic_probes(&brain,&probes,128,&[],false),
             }));
         }
+        // Measure every epoch, including rejected checkpoints; all generation
+        // is on the actual current weights with no answer-fed inference.
+        let observation=(||->Result<(),String>{
+            let guard=lock(state)?;
+            let record=observer::capture(&guard.brain,"unified",&lessons.mode,epoch,
+                &practice,&lessons.heldout_replies,serde_json::json!({
+                    "trainingLoss":epoch_loss/trained_count as f64,
+                    "heldoutLoss":validation_loss,
+                    "heldoutAccuracy":validation_accuracy,
+                    "selected":improved,"selectedEpoch":best_epoch,
+                    "selectionReason":selection_reason,
+                    "reasoningPreferenceAccuracy":reasoning_ranking_accuracy,
+                    "priorHeldoutLoss":prior_loss,"retentionAccuracy":retention_score,
+                    "transformerGradientNorm":transformer_grad_norm/batches.max(1) as f64,
+                    "denseGradientNorm":dense_grad_norm/batches.max(1) as f64,
+                    "bridgeGradientNorm":bridge_grad_norm/batches.max(1) as f64,
+                    "transformerClipFraction":transformer_clip_batches as f64/batches.max(1) as f64,
+                    "denseClipFraction":dense_clip_batches as f64/batches.max(1) as f64
+                }))?;
+            observer::append(app,observer_id,&record)
+        })();
+        let _=app.emit("nova-observer-epoch",serde_json::json!({
+            "sessionId":observer_id,"epoch":epoch,"error":observation.err()
+        }));
         let _=app.emit("hybrid-epoch",serde_json::json!({
             "epoch":epoch,"epochs":epochs,
             "trainLoss":epoch_loss/trained_count as f64,

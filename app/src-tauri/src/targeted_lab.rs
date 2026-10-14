@@ -4,6 +4,7 @@
 //! Imported checkpoints are staged and validated without replacing live Nova.
 use crate::checkpoint_transfer::TransferState;
 use crate::hybrid_lab::{self,HybridState};
+use crate::training_observer as observer;
 use neural_nova::hybrid::{HybridBrain,TrainingFocus};
 use neural_nova::trainer::{prepare,training_order,Example,HeldoutReply,PreparedLessons};
 use neural_nova::unified::{DIALOGUE,UNDERSTANDING,CONVERSATION,REASONING};
@@ -11,7 +12,7 @@ use serde::Serialize;
 use std::fs;
 use std::sync::{Arc,Mutex};
 use std::sync::atomic::{AtomicBool,Ordering};
-use tauri::{AppHandle,Manager,State};
+use tauri::{AppHandle,Emitter,Manager,State};
 
 #[cfg(target_os="android")]
 fn target_training_notification(app:&AppHandle,body:String,finished:bool){
@@ -347,6 +348,9 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
     let base_scores=match evaluate(&start,&plan,&archive){
         Ok(score)=>score,Err(e)=>{hybrid_lab::targeted_release(&hybrid);return Err(e);}
     };
+    let observer_id=match observer::start(&app,"targeted",&skill_name){
+        Ok(id)=>id,Err(e)=>{hybrid_lab::targeted_release(&hybrid);return Err(e);}
+    };
     {
         let mut s=lock(&state)?;
         s.running=true;s.epoch=0;s.epochs=epochs;s.completed=0;
@@ -366,6 +370,15 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
             let mut best_brain=start;
             let mut best_scores=base_scores.clone();
             let mut best_epoch=0;
+            let practice=observer::training_replies(plan.training.iter()
+                .map(|(example,memory)|(example,memory,skill.kind())));
+            let baseline=observer::capture(&brain,"targeted",&skill_name,0,
+                &practice,&plan.heldout,serde_json::json!({
+                    "baseline":true,"scores":base_scores
+                })).and_then(|data|observer::append(&app,&observer_id,&data));
+            let _=app.emit("nova-observer-epoch",serde_json::json!({
+                "sessionId":observer_id,"epoch":0,"error":baseline.err()
+            }));
             for epoch in 1..=epochs{
                 if cancelled.load(Ordering::Acquire){break;}
                 let data=plan.training.iter().map(|x|x.0.clone()).collect::<Vec<_>>();
@@ -398,12 +411,23 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
                 if count==0{break;}
                 let score=evaluate(&brain,&plan,&archive)?;
                 let epoch_heldout_loss=score.heldout_loss;
+                let epoch_scores=serde_json::to_value(&score).map_err(|e|e.to_string())?;
                 let improves=selection_score(&score)+0.0005<selection_score(&best_scores);
                 if improves {
                     best_brain=brain.clone();
                     best_scores=score;
                     best_epoch=epoch;
                 }
+                let activity=observer::capture(&brain,"targeted",&skill_name,epoch,
+                    &practice,&plan.heldout,serde_json::json!({
+                        "scores":epoch_scores,"trainingLoss":losses/count as f64,
+                        "selected":improves,"selectedEpoch":best_epoch,
+                        "focus":focus_name,"source":source
+                    })).and_then(|data|observer::append(&app,&observer_id,&data));
+                let activity_error=activity.err();
+                let _=app.emit("nova-observer-epoch",serde_json::json!({
+                    "sessionId":observer_id,"epoch":epoch,"error":activity_error
+                }));
                 #[cfg(target_os="android")]
                 target_training_notification(&notice_app,format!(
                     "{} focus · {} objective · epoch {}/{} · held-out loss {:.4}",
@@ -412,7 +436,7 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
                 let mut s=session.lock().map_err(|_|"Targeted progress lock poisoned")?;
                 s.epoch=epoch;s.completed=epoch as usize*plan.training.len();
                 s.last_loss=Some((losses/count as f64) as f32);
-                s.stage=format!("Epoch {epoch}/{epochs} evaluated; selected targeted epoch {best_epoch}");
+                s.stage=format!("Epoch {epoch}/{epochs} evaluated; selected targeted epoch {best_epoch}{}",activity_error.map(|e|format!("; activity log error: {e}")).unwrap_or_default());
             }
             let w=warnings(&base_scores,&best_scores);
             Ok(Staged{
