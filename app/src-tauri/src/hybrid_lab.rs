@@ -2791,7 +2791,7 @@ pub fn hybrid_reset(app:AppHandle,state:State<'_,HybridState>)->Result<HybridSta
         best_heldout_loss:None,best_epoch:0,learning_rate:DEFAULT_LEARNING_RATE,
         train_lessons:0,validation_lessons:0,tokens_per_second:0.0,
         stage:"Idle".into(),early_stopped:false,history:retained_history,
-        retention_baseline:None,retention_accuracy:None
+        retention_baseline:None,retention_accuracy:None,learning_evidence:None
     };
     let file=path(&app)?;
     if file.exists(){fs::remove_file(&file).map_err(|e|e.to_string())?;}
