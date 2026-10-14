@@ -132,7 +132,8 @@ function showQueueStatus(p){
   const evidence=p.learningEvidence;
   const learned=evidence?(" · practice "+evidence.practiceCorrect+"/"+evidence.practiceChecked+
     ", held-out "+evidence.heldoutCorrect+"/"+evidence.heldoutChecked+
-    " · "+evidence.finding):"";
+    " · "+evidence.finding+" ["+evidence.evaluatedFrom+"]"+
+    (evidence.retentionBlocked?" · earlier-skill protection blocked candidate":"")):"";
   view("Native background ZIP queue · "+(p.stage||"Working")+
     " · lesson "+(p.current||0)+"/"+(p.total||0)+
     " · "+success+" accepted · "+skipped+" skipped"+
