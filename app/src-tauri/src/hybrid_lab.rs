@@ -891,7 +891,7 @@ pub fn hybrid_train(
     let (adaptive_learning_rate,early_stopping)=resolved_switches(options.as_ref());
     let rehearsal_enabled=options.as_ref().and_then(|x|x.rehearsal).unwrap_or(true);
     let guard_enabled=options.as_ref().and_then(|x|x.protect_previous).unwrap_or(true);
-    let tolerance=options.as_ref().and_then(|x|x.retention_loss_tolerance).unwrap_or(0.10);
+    let tolerance=options.as_ref().and_then(|x|x.retention_loss_tolerance).unwrap_or(0.02);
     if !tolerance.is_finite() || !(0.0..=0.5).contains(&tolerance){
         return Err("Previous-lesson loss tolerance must be between 0 and 0.5".into());
     }
