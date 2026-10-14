@@ -223,7 +223,7 @@ function loadSchedule(){
       if(["0.0001","0.0003","0.001","0.003","0.005"].includes(p.learningRate))$("trainingRate").value=p.learningRate;
       if(typeof p.rehearsal==="boolean")$("rehearsalEnabled").checked=p.rehearsal;
       if(typeof p.protectPrevious==="boolean")$("retentionGuardEnabled").checked=p.protectPrevious;
-      if([0.05,0.10,0.20].includes(p.retentionLossTolerance))
+      if([0.02,0.05,0.10,0.20].includes(p.retentionLossTolerance))
         $("retentionTolerance").value=p.retentionLossTolerance.toFixed(2);
     }
   }catch(_){}
