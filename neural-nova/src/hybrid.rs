@@ -92,6 +92,26 @@ impl HybridBrain {
         }
     }
     /// Internal exchange diagnostics; do not alter the existing brain visualizer.
+    /// Diagnostic-only top evidence tokens reread at each recurrent step,
+    /// using the FULL cooperative network, including both dense exchanges.
+    pub fn evidence_activity(&self,context:&[u8],memory:&[String])
+        ->Result<Vec<Vec<(String,f32)>>,String>{
+        let (base,dense)=self.dense_input(context)?;
+        let token_ids=self.tokenizer.encode(
+            std::str::from_utf8(context).map_err(|e|e.to_string())?)?;
+        let memory_ids=memory.iter().map(|v|self.tokenizer.encode(v))
+            .collect::<Result<Vec<_>,_>>()?;
+        let maps=self.transformer.evidence_attention(
+            &token_ids,&dense,&memory_ids,&self.dense,&base)?;
+        let retained=&token_ids[token_ids.len().saturating_sub(256)..];
+        Ok(maps.into_iter().map(|map|{
+            let mut sorted=(0..map.len()).collect::<Vec<_>>();
+            sorted.sort_by(|&a,&b|map[b].total_cmp(&map[a]));
+            sorted.into_iter().take(6).map(|i|(
+                format!("{}@{}",self.tokenizer.token_label(retained[i]),i),map[i]
+            )).collect::<Vec<_>>()
+        }).collect())
+    }
     pub fn exchange_activity(&self,context:&[u8])->Result<Vec<f32>,String>{
         let (base,dense)=self.dense_input(context)?;
         let tokens=self.tokenizer.encode(

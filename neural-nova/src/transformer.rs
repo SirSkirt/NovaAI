@@ -211,8 +211,10 @@ impl Transformer {
     /// Read-only per-iteration attention maps of the actual neural evidence
     /// reread. These are not separate answers and never control inference.
     pub fn evidence_attention(&self,context:&[u16],dense:&[f32],
-        memory:&[Vec<u16>])->Result<Vec<Vec<f32>>,String>{
-        let cache=self.forward_tokens_with_memory(context,Some(dense),CONTEXT,memory)?;
+        memory:&[Vec<u16>],network:&Network,base:&[f32])
+        ->Result<Vec<Vec<f32>>,String>{
+        let cache=self.forward_tokens_internal(
+            context,Some(dense),CONTEXT,memory,Some((network,base)))?;
         Ok(cache.reasoning.iter().map(|step|step.evidence.attention.clone()).collect())
     }
     pub fn context_length(&self)->usize {CONTEXT}
@@ -1189,7 +1191,10 @@ mod tests {
         let tokens=b"U: Red box holds a key. Blue box holds a coin. What is in the blue box?\nN: "
             .iter().map(|c|*c as u16).collect::<Vec<_>>();
         let dense=vec![0.07;VOCAB];
-        let maps=model.evidence_attention(&tokens,&dense,&[]).unwrap();
+        let evidence_net=Network::new(crate::NetworkConfig::neural_nova_v1()).unwrap();
+        let evidence_input=crate::encode_ascii_context(
+            b"U: Red box holds a key. Blue box holds a coin. What is in the blue box?\nN: ").unwrap();
+        let maps=model.evidence_attention(&tokens,&dense,&[],&evidence_net,&evidence_input).unwrap();
         assert_eq!(maps.len(),REASONING_STEPS);
         assert!(maps.iter().all(|att|(att.iter().sum::<f32>()-1.0).abs()<1e-5));
         assert_eq!(model.weights[l.evidence_response.clone()],
@@ -1217,6 +1222,38 @@ mod tests {
             assert!((gradient[index]-finite_difference).abs()<0.045,
                 "evidence BPTT index {index}: analytic {} numerical {finite_difference}",
                 gradient[index]);
+        }
+    }
+    #[test]
+    fn teacher_evidence_alignment_bptt_matches_finite_difference(){
+        let model=Transformer::new(915);
+        let dense_network=Network::new(crate::NetworkConfig::neural_nova_v1()).unwrap();
+        let prompt=b"U: A red bag contains a blue key. The key is under a shelf. Where is the key?\nN: ";
+        let token_ids=prompt.iter().map(|&c|c as u16).collect::<Vec<_>>();
+        let base=crate::encode_ascii_context(prompt).unwrap();
+        let dense=dense_network.logits(&base).unwrap();
+        let evidence=vec![(6..13).collect::<Vec<_>(),(37..49).collect::<Vec<_>>()];
+        let mut dense_grads=Gradients::zeros(&dense_network);
+        let (_,grad,_)=model.gradient_evidence_cooperative(
+            &token_ids,&evidence,&dense,&dense_network,&base,&mut dense_grads).unwrap();
+        let objective=|m:&Transformer|{
+            let attentions=m.evidence_attention(
+                &token_ids,&dense,&[],&dense_network,&base).unwrap();
+            let loss=evidence.iter().enumerate().map(|(r,positions)|{
+                let mass=positions.iter().map(|&i|attentions[r][i]).sum::<f32>();
+                -mass.max(1e-30).ln()
+            }).sum::<f32>()/evidence.len() as f32;
+            loss
+        };
+        let l=layout();
+        let eps=0.003;
+        for index in [l.evidence_query.start+12,l.k.start+19,l.reason_read.start+17,
+            l.feedback_response.start+3]{
+            let mut plus=model.clone();plus.weights[index]+=eps;
+            let mut minus=model.clone();minus.weights[index]-=eps;
+            let numeric=(objective(&plus)-objective(&minus))/(2.0*eps);
+            assert!((grad[index]-numeric).abs()<0.05,
+                "evidence alignment index {index} analytic {} numeric {numeric}",grad[index]);
         }
     }
     #[test]

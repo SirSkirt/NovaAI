@@ -273,6 +273,7 @@ pub fn capture(brain:&HybridBrain,source:&str,objective:&str,epoch:u32,
             "fullVsNoDenseTotalVariation":dense_effect,
             "fullVsNoReciprocalExchangeTotalVariation":exchange_effect,
             "recurrentUpdateNorms":brain.reasoning_activity(&prompt).ok(),
+            "recurrentEvidenceTopTokens":brain.evidence_activity(&prompt,&memory).ok(),
             "exchangeRoundNorms":brain.exchange_activity(&prompt).ok(),
             "interconnectUsed":active,
             "reciprocalExchangeChangedOutput":exchange_effect>1e-5
