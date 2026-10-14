@@ -9,6 +9,17 @@ use std::ops::Range;
 
 pub type Example = (Vec<u8>,u8);
 pub type ReasoningExample=(Vec<u8>,Vec<u8>,Vec<u8>);
+/// Teacher-provided evidence order is privileged TRAINING supervision only.
+/// It does not exist in inference. Source spans must occur in the premise.
+pub type EvidenceExample=(Vec<u8>,Vec<String>);
+pub fn evidence_phrases(text:&str,fact:&str)->Result<Vec<String>,String>{
+    let phrases=text.split(" || ").map(str::trim).collect::<Vec<_>>();
+    if phrases.is_empty()||phrases.len()>3||phrases.iter().any(|s|
+        s.len()<3||!s.is_ascii()||fact.matches(s).count()!=1){
+        return Err("Evidence requires 1–3 unique exact premise phrases, separated by ' || ', each occurring once in the source facts".into());
+    }
+    Ok(phrases.into_iter().map(str::to_string).collect())
+}
 /// Independent held-out full response, used by the TEACHER's read-only
 /// evaluation only; these expected bytes never enter Nova inference.
 pub type HeldoutReply=(Vec<u8>,Vec<u8>,Vec<String>,u8);
@@ -27,6 +38,8 @@ pub struct PreparedLessons{
     pub memory_validation:Vec<Vec<String>>,
     pub reasoning_train:Vec<ReasoningExample>,
     pub reasoning_validation:Vec<ReasoningExample>,
+    pub evidence_train:Vec<EvidenceExample>,
+    pub evidence_validation:Vec<EvidenceExample>,
     pub understanding_train:Vec<ReasoningExample>,
     pub understanding_validation:Vec<ReasoningExample>,
     pub heldout_replies:Vec<HeldoutReply>,
@@ -145,6 +158,7 @@ fn prepare_text_sections(text:&str)->Result<PreparedLessons,String>{
         training_text:train_units.join("\n\n"),
         memory_train:Vec::new(),memory_validation:Vec::new(),
         reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
+        evidence_train:Vec::new(),evidence_validation:Vec::new(),
         understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],
     })
@@ -203,11 +217,11 @@ fn memory_samples(sessions:&[Vec<DialoguePair>])->Result<(Vec<Example>,Vec<Vec<S
 /// TAB contradicted conclusion. Only the inference-free curriculum builder
 /// uses the rejected answer. It never enters the user's chat prompt.
 fn prepare_reasoning(text:&str)->Result<PreparedLessons,String>{
-    let mut groups:BTreeMap<String,Vec<(DialoguePair,ReasoningExample)>>=BTreeMap::new();
+    let mut groups:BTreeMap<String,Vec<(DialoguePair,ReasoningExample,Option<Vec<String>>)>>=BTreeMap::new();
     for (index,line) in text.lines().filter(|s|!s.trim().is_empty()).enumerate(){
         let fields=line.split('\t').collect::<Vec<_>>();
-        if fields.len()!=4 {return Err(format!(
-            "Reasoning line {} must have PREMISE TAB QUESTION TAB CORRECT TAB INCORRECT",index+1));}
+        if fields.len()!=4 && fields.len()!=5 {return Err(format!(
+            "Reasoning line {} needs PREMISE TAB QUESTION TAB CORRECT TAB INCORRECT [TAB EVIDENCE1 || EVIDENCE2]",index+1));}
         let [fact,question,correct,wrong]=[fields[0].trim(),fields[1].trim(),
             fields[2].trim(),fields[3].trim()];
         if correct.is_empty()||wrong.is_empty()||correct==wrong||
@@ -220,8 +234,11 @@ fn prepare_reasoning(text:&str)->Result<PreparedLessons,String>{
         }
         let prefix=dialogue_prefix(&prompt)?;
         let pair=DialoguePair{user:prompt.clone(),assistant:correct.to_string()};
+        let evidence=if fields.len()==5{
+            Some(evidence_phrases(fields[4].trim(),fact)?)
+        }else{None};
         groups.entry(prompt_group(&prompt)).or_default().push((pair,
-            (prefix,correct.as_bytes().to_vec(),wrong.as_bytes().to_vec())));
+            (prefix,correct.as_bytes().to_vec(),wrong.as_bytes().to_vec()),evidence));
     }
     if groups.len()<5{return Err("Reasoning requires at least five distinct premise/question groups for held-out testing".into());}
     let mut sorted=groups.into_iter().collect::<Vec<_>>();
@@ -229,10 +246,16 @@ fn prepare_reasoning(text:&str)->Result<PreparedLessons,String>{
     let cutoff=sorted.len()-(sorted.len()/5).max(1);
     let mut train_pairs=Vec::new();let mut validation_pairs=Vec::new();
     let mut reasoning_train=Vec::new();let mut reasoning_validation=Vec::new();
+    let mut evidence_train=Vec::new();let mut evidence_validation=Vec::new();
     for (i,(_,group)) in sorted.into_iter().enumerate(){
-        for (pair,compare) in group{
-            if i<cutoff{train_pairs.push(pair);reasoning_train.push(compare);}
-            else{validation_pairs.push(pair);reasoning_validation.push(compare);}
+        for (pair,compare,evidence) in group{
+            if i<cutoff{
+                if let Some(phrases)=evidence{evidence_train.push((compare.0.clone(),phrases));}
+                train_pairs.push(pair);reasoning_train.push(compare);
+            }else{
+                if let Some(phrases)=evidence{evidence_validation.push((compare.0.clone(),phrases));}
+                validation_pairs.push(pair);reasoning_validation.push(compare);
+            }
         }
     }
     let train=dialogue_examples(&train_pairs)?;
@@ -245,7 +268,7 @@ fn prepare_reasoning(text:&str)->Result<PreparedLessons,String>{
     Ok(PreparedLessons{train,validation,mode:"reasoning".into(),
         train_lessons:train_pairs.len(),validation_lessons:validation_pairs.len(),
         training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
-        reasoning_train,reasoning_validation,
+        reasoning_train,reasoning_validation,evidence_train,evidence_validation,
         understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),
         train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5]})
@@ -285,6 +308,7 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
             Ok(PreparedLessons{train,validation,train_lessons:train_pairs.len(),validation_lessons:valid_pairs.len(),
                 mode:mode.into(),training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
                 reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
+        evidence_train:Vec::new(),evidence_validation:Vec::new(),
         understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],})
         },
@@ -311,6 +335,7 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
                 train_lessons:sessions.len(),validation_lessons:held.len(),mode:mode.into(),
                 training_text,memory_train,memory_validation,
                 reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
+        evidence_train:Vec::new(),evidence_validation:Vec::new(),
         understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],})
         },
@@ -461,6 +486,25 @@ mod tests{
         assert!(p.reasoning_train.iter().all(|(_,good,bad)|good==b"Red."&&bad==b"Blue."));
         assert_eq!(p.train_lessons+p.validation_lessons,9);
         assert!(!p.training_text.contains("Blue."));
+    }
+    #[test]
+    fn reasoning_optional_multihop_evidence_is_train_only_and_split_safe(){
+        let mut rows=Vec::new();
+        for i in 0..10{
+            let fact=format!("Person{i} owns the orange key. Person{i} left it in a blue box.");
+            rows.push(format!("{fact}\tWhere is the key?\tBlue box.\tRed table.\tPerson{i} owns the orange key. || Person{i} left it in a blue box."));
+        }
+        let lesson=prepare("reasoning",&rows.join("\n")).unwrap();
+        assert!(!lesson.evidence_train.is_empty());
+        assert!(!lesson.evidence_validation.is_empty());
+        for (prompt,_) in &lesson.evidence_train{
+            assert!(lesson.reasoning_train.iter().any(|(p,_,_)|p==prompt));
+            assert!(!lesson.reasoning_validation.iter().any(|(p,_,_)|p==prompt));
+        }
+        for (prompt,_) in &lesson.evidence_validation{
+            assert!(!lesson.evidence_train.iter().any(|(p,_)|p==prompt));
+        }
+        assert!(evidence_phrases("does not exist","A key is on the table.").is_err());
     }
     #[test]
     fn text_validation_uses_whole_paragraphs_and_no_cross_split_context(){

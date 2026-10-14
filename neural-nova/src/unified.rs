@@ -1,7 +1,7 @@
 //! Strict, teacher-only unified lesson reader. Blocks set learning objectives;
 //! they NEVER become hardcoded responses or run during Nova's inference.
 use crate::dialogue::{dialogue_prefix,validate_pair,DialoguePair};
-use crate::trainer::{PreparedLessons,ReasoningExample,MAX_SAMPLES};
+use crate::trainer::{PreparedLessons,ReasoningExample,EvidenceExample,evidence_phrases,MAX_SAMPLES};
 use std::collections::{BTreeMap,BTreeSet};
 
 pub const DIALOGUE:u8=0;
@@ -15,7 +15,7 @@ const RAW_WINDOW:usize=512;
 struct Block {kind:u8, explanation:String, examples:Vec<String>}
 #[derive(Clone,Debug)]
 struct Unit {kind:u8, group:String, block:usize, turns:Vec<DialoguePair>,
-    comparison:Option<ReasoningExample>}
+    comparison:Option<ReasoningExample>,evidence:Option<EvidenceExample>}
 
 fn canonical(text:&str)->String {
     text.trim().trim_end_matches(['?','!','.'])
@@ -181,11 +181,14 @@ fn select_context_negative(
             score_a.cmp(score_b).then_with(||b.cmp(a)))
         .map(|(index,_)|index)
 }
-fn parse_comparison(line:&str)->Result<(DialoguePair,ReasoningExample),String>{
+fn parse_comparison(line:&str)->Result<(DialoguePair,ReasoningExample,Option<EvidenceExample>),String>{
     let a=line.strip_prefix("Premise: ").ok_or("Reasoning example must start with Premise: ")?;
     let (fact,rest)=a.split_once(" Question: ").ok_or("Reasoning example requires Question: ")?;
     let (question,rest)=rest.split_once(" Supported: ").ok_or("Reasoning example requires Supported: ")?;
-    let (right,wrong)=rest.split_once(" Contradicted: ").ok_or("Reasoning example requires Contradicted: ")?;
+    let (right,wrong_plus)=rest.split_once(" Contradicted: ").ok_or("Reasoning example requires Contradicted: ")?;
+    let (wrong,evidence)=if let Some((wrong,steps))=wrong_plus.split_once(" Evidence: "){
+        (wrong,Some(evidence_phrases(steps,fact)?))
+    }else{(wrong_plus,None)};
     for value in [fact,question,right,wrong]{
         if value.trim().is_empty(){return Err("Reasoning fields must not be empty".into());}
     }
@@ -196,13 +199,15 @@ fn parse_comparison(line:&str)->Result<(DialoguePair,ReasoningExample),String>{
     let pair=DialoguePair{user:prompt,assistant:right.to_string()};
     validate_pair(&pair)?;
     let prefix=dialogue_prefix(&pair.user)?;
-    Ok((pair,(prefix,right.as_bytes().to_vec(),wrong.as_bytes().to_vec())))
+    let labeled=evidence.map(|steps|(prefix.clone(),steps));
+    Ok((pair,(prefix,right.as_bytes().to_vec(),wrong.as_bytes().to_vec()),labeled))
 }
 fn units(blocks:&[Block])->Result<Vec<Unit>,String>{
     let mut result=Vec::new();
     let mut previously_seen:BTreeMap<(u8,String),String>=BTreeMap::new();
     for (idx,block) in blocks.iter().enumerate(){
-        let mut add_pair=|pair:DialoguePair,comparison:Option<ReasoningExample>|->Result<(),String>{
+        let mut add_pair=|pair:DialoguePair,comparison:Option<ReasoningExample>,
+            evidence:Option<EvidenceExample>|->Result<(),String>{
             let key=canonical(&pair.user);
             let prior=(block.kind,key.clone());
             if let Some(other)=previously_seen.get(&prior){
@@ -211,19 +216,19 @@ fn units(blocks:&[Block])->Result<Vec<Unit>,String>{
                 return Ok(());
             }
             previously_seen.insert(prior,pair.assistant.clone());
-            result.push(Unit{kind:block.kind,group:key,block:idx,turns:vec![pair],comparison});
+            result.push(Unit{kind:block.kind,group:key,block:idx,turns:vec![pair],comparison,evidence});
             Ok(())
         };
         match block.kind{
             DIALOGUE|UNDERSTANDING=>{
                 for line in block.examples.iter().filter(|s|!s.is_empty()){
-                    add_pair(parse_two_spaces(line,block.kind)?,None)?;
+                    add_pair(parse_two_spaces(line,block.kind)?,None,None)?;
                 }
             },
             REASONING=>{
                 for line in block.examples.iter().filter(|s|!s.is_empty()){
-                    let (pair,comparison)=parse_comparison(line)?;
-                    add_pair(pair,Some(comparison))?;
+                    let (pair,comparison,evidence)=parse_comparison(line)?;
+                    add_pair(pair,Some(comparison),evidence)?;
                 }
             },
             CONVERSATION=>{
@@ -232,7 +237,7 @@ fn units(blocks:&[Block])->Result<Vec<Unit>,String>{
                     let group=format!("session:{}",canonical(
                         &turns.iter().map(|p|format!("{} => {}",p.user,p.assistant))
                             .collect::<Vec<_>>().join(" | ")));
-                    result.push(Unit{kind:block.kind,group,block:idx,turns,comparison:None});
+                    result.push(Unit{kind:block.kind,group,block:idx,turns,comparison:None,evidence:None});
                 }
             },
             _=>unreachable!()
@@ -314,6 +319,7 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
         validation_lessons:0,mode:"unified".into(),training_text:String::new(),
         memory_train:Vec::new(),memory_validation:Vec::new(),
         reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
+        evidence_train:Vec::new(),evidence_validation:Vec::new(),
         understanding_train:Vec::new(),understanding_validation:Vec::new(),
         heldout_replies:Vec::new(),
         train_kinds:Vec::new(),validation_kinds:Vec::new(),
@@ -346,6 +352,10 @@ pub fn prepare(text:&str)->Result<PreparedLessons,String>{
         if let Some(item)=unit.comparison.as_ref(){
             if validation{prepared.reasoning_validation.push(item.clone());}
             else{prepared.reasoning_train.push(item.clone());}
+        }
+        if let Some(item)=unit.evidence.as_ref(){
+            if validation{prepared.evidence_validation.push(item.clone());}
+            else{prepared.evidence_train.push(item.clone());}
         }
     }
     // Contrast context-conditioned answers from DIFFERENT independent
@@ -459,6 +469,23 @@ mod tests{
         for (prefix,good,bad) in &p.understanding_validation{
             assert_ne!(good,bad);
             assert!(!p.understanding_train.iter().any(|(train,_,_)|train==prefix));
+        }
+    }
+    #[test]
+    fn ordered_evidence_phrases_remain_outside_heldout_training(){
+        let mut lessons=String::from(
+            "[Reasoning Lesson]\nTrace the facts in the order required.\n[examples]\n");
+        for i in 0..12{
+            lessons.push_str(&format!(
+                "Premise: N{i} has a key. N{i} puts the key in a green bag. Question: Where is the key? Supported: Green bag. Contradicted: Red crate. Evidence: N{i} has a key. || N{i} puts the key in a green bag.\n"));
+        }
+        lessons.push_str("[/examples]\n[/Reasoning Lesson]");
+        let p=prepare(&lessons).unwrap();
+        assert!(!p.evidence_train.is_empty());
+        assert!(!p.evidence_validation.is_empty());
+        for (prompt,_) in &p.evidence_validation {
+            assert!(!p.evidence_train.iter().any(|(train,_)|train==prompt));
+            assert!(!p.reasoning_train.iter().any(|(train,_,_)|train==prompt));
         }
     }
     #[test]fn combined_blocks_create_joint_objectives(){
