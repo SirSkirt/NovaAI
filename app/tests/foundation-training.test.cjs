@@ -25,3 +25,10 @@ assert.match(rehearsal,/foundation_lessons_completed:u8/);
 assert.match(rehearsal,/foundation_progress_survives_rejected_lessons_and_resets_on_new_brain/);
 assert.match(core,/saves_and_restores_entire_joint_optimizer_state/);
 console.log("Foundation candidate selection, optimizer masks, retention, persisted counter and UI/ZIP wiring OK.");
+
+assert.match(native,/"step":brain\.transformer\.step/);
+assert.match(native,/hybrid_request_stop/);
+assert.match(js,/Number\.isFinite\(p\.step\)/);
+assert.match(js,/hybrid-stop-requested/);
+assert.match(js,/Stop Nova's current training session/);
+console.log("Foundation progress event schema and native cancellation provenance guards OK.");

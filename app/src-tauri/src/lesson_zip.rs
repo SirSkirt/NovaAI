@@ -217,7 +217,7 @@ pub fn hybrid_zip_stop(app:AppHandle,queue:State<'_,ZipQueueState>,
     if !queue.is_active(){return false;}
     queue.inner.stopping.store(true,Ordering::Release);
     queue.update(&app,|s|s.stage="Stopping after current lesson".into());
-    let _=hybrid_lab::hybrid_stop(brain);
+    let _=hybrid_lab::hybrid_request_stop(&app,&brain,"native-zip-stop");
     true
 }
 /// Re-validates the original ZIP on the Rust side. No JS events are required
@@ -255,7 +255,8 @@ pub fn hybrid_zip_train(app:AppHandle,brain:State<'_,HybridState>,
                 // closed WebView cannot interrupt the sequence.
                 loop {
                     if queue.inner.stopping.load(Ordering::Acquire){
-                        let _=hybrid_lab::hybrid_stop(app.state::<HybridState>());
+                        let _=hybrid_lab::hybrid_request_stop(
+                            &app,&app.state::<HybridState>(),"native-zip-stop");
                     }
                     if !app.state::<HybridState>().is_training(){break;}
                     std::thread::sleep(Duration::from_millis(200));

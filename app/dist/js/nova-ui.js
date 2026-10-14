@@ -475,7 +475,8 @@ $("runBridgeProbe").addEventListener("click",()=>safe(async()=>{
   report("INFO","Bridge probe","Measured actual learned bridge magnitude and no-weight-change ablation.");
 },"Neural bridge measurement"));
 $("stopTraining").addEventListener("click",()=>safe(async()=>{
-  if(await invoke("hybrid_stop"))report("INFO","Training","Stop requested; the current epoch checkpoint will be saved.");
+  if(!confirm("Stop Nova's current training session? The best eligible checkpoint will be restored. This does not erase earlier learned weights."))return;
+  if(await invoke("hybrid_stop"))report("INFO","Training","Stop confirmed; best eligible checkpoint will be restored.");
 },"Training"));
 $("resetBrain").addEventListener("click",()=>safe(async()=>{
   if(!confirm("Reset BOTH hemispheres, the learned bridge, and the joint checkpoint? Independent older checkpoints are not deleted."))return;
@@ -733,7 +734,7 @@ $("inspectBrain").addEventListener("click",()=>safe(async()=>{
 },"Brain inspection"));
 $("inspectMessage").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("inspectBrain").click();}});
 $("copyDiagnostics").addEventListener("click",()=>safe(async()=>{
-  const text="Neural Nova hybrid v0.12.7\n"+JSON.stringify(latestStatus)+"\n"+
+  const text="Neural Nova hybrid v0.15.1\n"+JSON.stringify(latestStatus)+"\n"+
     debugEntries.map(e=>"["+e.time+"] ["+e.level+"] ["+e.source+"] "+e.message).join("\n\n");
   await navigator.clipboard.writeText(text);
   report("INFO","Debugger","Copied diagnostic report.");
@@ -757,7 +758,13 @@ async function listen(){
       $("trainingProgress").textContent="Epoch "+p.epoch+"/"+p.epochs+" · "+p.completed+"/"+p.total+" samples";
       $("trainingPercent").textContent=(100*p.completed/p.total).toFixed(1)+"%";
       $("trainingFill").style.width=(100*p.completed/p.total)+"%";
-      $("trainingSteps").textContent=p.step.toLocaleString();
+      // Historical and newly-added training modes may omit optional fields.
+      // Missing progress metadata must never crash the event listener.
+      if(Number.isFinite(p.step)){
+        $("trainingSteps").textContent=p.step.toLocaleString();
+      }else if(Number.isFinite(latestStatus?.transformerStep)){
+        $("trainingSteps").textContent=latestStatus.transformerStep.toLocaleString();
+      }
       $("trainingStage").textContent=p.stage+" · learning rate "+p.learningRate.toFixed(5);
       $("trainingSpeed").textContent="Throughput: "+p.tokensPerSecond.toFixed(1)+" tokens/s";
     });
@@ -833,6 +840,11 @@ async function listen(){
       }
       $("bestEpoch").textContent="Selected epoch: "+(p.bestEpoch||"baseline")+" · held-out loss "+p.bestLoss.toFixed(4);
       $("trainingSpeed").textContent="Throughput: "+p.tokensPerSecond.toFixed(1)+" tokens/s";
+    });
+    await events.listen("hybrid-stop-requested",({payload:p})=>{
+      report("WARN","Training stop source","Native stop request from "+
+        String(p.source||"unknown")+" at epoch "+String(p.epoch??"?")+
+        " / step "+String(p.step??"?")+".");
     });
     await events.listen("hybrid-done",({payload:p})=>{
       setRunning(false);

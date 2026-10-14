@@ -1837,6 +1837,7 @@ fn foundation_train_inner(
                     let _=app.emit("hybrid-progress",serde_json::json!({
                         "completed":done_samples,"total":s.total,
                         "epoch":epoch,"epochs":epochs,
+                        "step":brain.transformer.step,
                         "loss":loss,"stage":s.stage,"learningRate":lr,
                         "tokensPerSecond":s.tokens_per_second
                     }));
@@ -2657,11 +2658,26 @@ pub(crate) fn targeted_commit(app:&AppHandle,state:&HybridState,
     targeted_release(state);
     attempt
 }
-#[tauri::command]
-pub fn hybrid_stop(state:State<'_,HybridState>)->bool{
+/// Record the FIRST explicit stop request with its source. A normal Android
+/// process kill cannot call this helper; this event distinguishes intentional
+/// native cancellation from an unobserved lifecycle interruption.
+pub(crate) fn hybrid_request_stop(app:&AppHandle,state:&HybridState,source:&str)->bool{
     let training=state.inner.training.load(Ordering::Acquire);
-    if training{state.inner.stop.store(true,Ordering::Release);}
+    if training && !state.inner.stop.swap(true,Ordering::AcqRel){
+        let (epoch,step)=lock(state).map(|s|(s.epoch,s.brain.transformer.step))
+            .unwrap_or((0,0));
+        let entry=serde_json::json!({
+            "source":source,"epoch":epoch,"step":step,
+            "note":"explicit native stop flag set"
+        });
+        diag::record(&app.state::<Diagnostics>(),"training_stop_requested",entry.clone());
+        let _=app.emit("hybrid-stop-requested",entry);
+    }
     training
+}
+#[tauri::command]
+pub fn hybrid_stop(app:AppHandle,state:State<'_,HybridState>)->bool{
+    hybrid_request_stop(&app,&state,"teach-or-direct-command")
 }
 #[tauri::command]
 pub fn hybrid_reset(app:AppHandle,state:State<'_,HybridState>)->Result<HybridStatus,String>{
