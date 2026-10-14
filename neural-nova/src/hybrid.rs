@@ -14,6 +14,8 @@ const MAGIC:&[u8;8]=b"NHYB0300";
 pub struct BatchGradientDiagnostics{
     pub transformer_norm:f32,pub dense_norm:f32,pub bridge_norm:f32,
     pub transformer_clipped:bool,pub dense_clipped:bool,
+    pub transformer_clip_scale:f32,pub dense_clip_scale:f32,
+    pub clip_threshold:f32,
 }
 /// Update mask for teacher-directed foundation lessons. Frozen parameters
 /// remain computationally involved; no separate model performs inference.
@@ -151,12 +153,21 @@ impl HybridBrain {
         let inverse=1.0/samples.len() as f32;
         for value in &mut tf_grad{*value*=inverse;}
         dense_grad.scale(inverse);
-        let transformer_norm=(tf_grad.iter().map(|&g|(g as f64)*(g as f64)).sum::<f64>()).sqrt() as f32;
+        let transformer_norm=match focus.transformer(){
+            Some(mask)=>self.transformer.active_gradient_norm(&tf_grad,mask)?,
+            None=>0.0
+        };
         let dense_norm=dense_grad.global_norm();
         let bridge_norm=self.transformer.bridge_gradient_norm(&tf_grad)?;
         self.last_batch_diagnostics=Some(BatchGradientDiagnostics{
             transformer_norm,dense_norm,bridge_norm,
-            transformer_clipped:transformer_norm>1.0,dense_clipped:dense_norm>1.0,
+            transformer_clipped:focus.transformer().is_some()&&transformer_norm>1.0,
+            dense_clipped:focus.dense()&&dense_norm>1.0,
+            transformer_clip_scale:if focus.transformer().is_none(){1.0}
+                else{(1.0/transformer_norm.max(1.0)).min(1.0)},
+            dense_clip_scale:if !focus.dense(){1.0}
+                else{(1.0/dense_norm.max(1.0)).min(1.0)},
+            clip_threshold:1.0,
         });
         dense_grad.clip_global_norm(1.0);
         if let Some(mask)=focus.transformer(){
@@ -194,12 +205,21 @@ impl HybridBrain {
         let inv=1.0/samples.len() as f32;
         for x in &mut tf_grad{*x*=inv;}
         dense_grad.scale(inv);
-        let transformer_norm=(tf_grad.iter().map(|&g|(g as f64)*(g as f64)).sum::<f64>()).sqrt() as f32;
+        let transformer_norm=match focus.transformer(){
+            Some(mask)=>self.transformer.active_gradient_norm(&tf_grad,mask)?,
+            None=>0.0
+        };
         let dense_norm=dense_grad.global_norm();
         let bridge_norm=self.transformer.bridge_gradient_norm(&tf_grad)?;
         self.last_batch_diagnostics=Some(BatchGradientDiagnostics{
             transformer_norm,dense_norm,bridge_norm,
-            transformer_clipped:transformer_norm>1.0,dense_clipped:dense_norm>1.0,
+            transformer_clipped:focus.transformer().is_some()&&transformer_norm>1.0,
+            dense_clipped:focus.dense()&&dense_norm>1.0,
+            transformer_clip_scale:if focus.transformer().is_none(){1.0}
+                else{(1.0/transformer_norm.max(1.0)).min(1.0)},
+            dense_clip_scale:if !focus.dense(){1.0}
+                else{(1.0/dense_norm.max(1.0)).min(1.0)},
+            clip_threshold:1.0,
         });
         dense_grad.clip_global_norm(1.0);
         if let Some(mask)=focus.transformer(){
@@ -298,12 +318,21 @@ impl HybridBrain {
         let scale=1.0/samples.len() as f32;
         for val in &mut combined_tf{*val*=scale;}
         combined_dense.scale(scale);
-        let transformer_norm=(combined_tf.iter().map(|x|(*x as f64).powi(2)).sum::<f64>()).sqrt() as f32;
+        let transformer_norm=match focus.transformer(){
+            Some(mask)=>self.transformer.active_gradient_norm(&combined_tf,mask)?,
+            None=>0.0
+        };
         let dense_norm=combined_dense.global_norm();
         let bridge_norm=self.transformer.bridge_gradient_norm(&combined_tf)?;
         self.last_batch_diagnostics=Some(BatchGradientDiagnostics{
             transformer_norm,dense_norm,bridge_norm,
-            transformer_clipped:transformer_norm>1.0,dense_clipped:dense_norm>1.0,
+            transformer_clipped:focus.transformer().is_some()&&transformer_norm>1.0,
+            dense_clipped:focus.dense()&&dense_norm>1.0,
+            transformer_clip_scale:if focus.transformer().is_none(){1.0}
+                else{(1.0/transformer_norm.max(1.0)).min(1.0)},
+            dense_clip_scale:if !focus.dense(){1.0}
+                else{(1.0/dense_norm.max(1.0)).min(1.0)},
+            clip_threshold:1.0,
         });
         combined_dense.clip_global_norm(1.0);
         if let Some(mask)=focus.transformer(){
@@ -543,6 +572,35 @@ mod tests{
         assert_eq!(brain.transformer.momentum,m);
         assert_eq!(brain.transformer.variance,v);
         assert_ne!(original,saved);
+    }
+    #[test]
+    fn clipping_diagnostics_match_actual_optimizer_masks(){
+        let samples=[(b"U: hello\nN: ".to_vec(),b'H')];
+        for focus in [TrainingFocus::Joint,TrainingFocus::Dense,
+            TrainingFocus::Transformer,TrainingFocus::Interconnect]{
+            let mut brain=HybridBrain::new();
+            brain.train_batch_focused(&samples,0.001,focus).unwrap();
+            let d=brain.last_batch_diagnostics.as_ref().unwrap();
+            assert_eq!(d.clip_threshold,1.0);
+            assert!(d.transformer_clip_scale>0.0&&d.transformer_clip_scale<=1.0);
+            assert!(d.dense_clip_scale>0.0&&d.dense_clip_scale<=1.0);
+            if focus.transformer().is_none(){
+                assert_eq!(d.transformer_norm,0.0);
+                assert!(!d.transformer_clipped);
+                assert_eq!(d.transformer_clip_scale,1.0);
+            }else{
+                assert_eq!(d.transformer_clipped,d.transformer_norm>1.0);
+                assert!((d.transformer_clip_scale-
+                    (1.0/d.transformer_norm.max(1.0))).abs()<1e-6);
+            }
+            if !focus.dense(){
+                assert!(!d.dense_clipped);
+                assert_eq!(d.dense_clip_scale,1.0);
+            }else{
+                assert_eq!(d.dense_clipped,d.dense_norm>1.0);
+                assert!((d.dense_clip_scale-(1.0/d.dense_norm.max(1.0))).abs()<1e-6);
+            }
+        }
     }
     #[test]
     fn cooperative_joint_gradient_reaches_all_trainable_parts(){

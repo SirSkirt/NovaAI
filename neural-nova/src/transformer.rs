@@ -613,6 +613,24 @@ impl Transformer {
         if gradient.len()!=self.weights.len(){return Err("Bridge gradient shape mismatch".into());}
         Ok(vector_norm(&gradient[range]))
     }
+    /// Preclip norm over exactly those Transformer parameters whose Adam
+    /// moments and weights will be updated. Frozen groups do not count as
+    /// clipped, even though their gradients participate in backpropagation.
+    pub(crate) fn active_gradient_norm(&self,gradient:&[f32],
+        focus:TransformerUpdateFocus)->Result<f32,String>{
+        let l=layout();
+        if gradient.len()!=l.len{return Err("Transformer gradient length mismatch".into());}
+        let norm=gradient.iter().enumerate().filter(|(i,_)|{
+            let linked=l.bridge.contains(i)||l.feedback_query.contains(i)
+                ||l.context_query.contains(i)||l.feedback_response.contains(i);
+            match focus{
+                TransformerUpdateFocus::All=>true,
+                TransformerUpdateFocus::Language=>!linked,
+                TransformerUpdateFocus::Interconnect=>linked
+            }
+        }).map(|(_,g)|(*g as f64)*(*g as f64)).sum::<f64>().sqrt();
+        Ok(norm as f32)
+    }
     /// Which Transformer parameter groups may receive a learned update.
     /// All groups still participate in forward and reverse-mode computation.
     /// Frozen groups do not change their weights OR Adam moments.
@@ -632,8 +650,7 @@ impl Transformer {
             TransformerUpdateFocus::Language=>!is_link(i),
             TransformerUpdateFocus::Interconnect=>is_link(i),
         };
-        let norm=(sum.iter().enumerate().filter(|(i,_)|active(*i))
-            .map(|(_,g)|(*g as f64)*(*g as f64)).sum::<f64>()).sqrt();
+        let norm=self.active_gradient_norm(sum,focus)? as f64;
         let clip=if norm>1.0{(1.0/norm) as f32}else{1.0};
         self.step+=1;
         let bias1=(1.0f64-0.9f64.powf(self.step as f64)) as f32;

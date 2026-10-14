@@ -1769,6 +1769,8 @@ fn train_inner(
         let mut bridge_grad_norm=0.0f64;
         let mut transformer_clip_batches=0usize;
         let mut dense_clip_batches=0usize;
+        let mut transformer_clip_scale_total=0.0f64;
+        let mut dense_clip_scale_total=0.0f64;
         {
             let mut s=lock(state)?;
             s.epoch=epoch;s.stage=stage.into();s.learning_rate=learning_rate;
@@ -1801,6 +1803,9 @@ fn train_inner(
                     "bridgeGradientNorm":diag.bridge_norm,
                     "transformerClipped":diag.transformer_clipped,
                     "denseClipped":diag.dense_clipped,
+                    "clipThreshold":diag.clip_threshold,
+                    "transformerClipScale":diag.transformer_clip_scale,
+                    "denseClipScale":diag.dense_clip_scale,
                     "usesEpisodicMemory":lessons.mode=="conversation"||
                         (lessons.mode=="unified" && lessons.train_kinds[ids[0]]==2),
                     "learningObjective":if lessons.mode=="unified"{
@@ -1859,6 +1864,8 @@ fn train_inner(
             bridge_grad_norm+=diag.bridge_norm as f64;
             transformer_clip_batches+=usize::from(diag.transformer_clipped);
             dense_clip_batches+=usize::from(diag.dense_clipped);
+            transformer_clip_scale_total+=diag.transformer_clip_scale as f64;
+            dense_clip_scale_total+=diag.dense_clip_scale as f64;
             completed+=batch.len();
             epoch_loss+=loss as f64*batch.len() as f64;
             // Replay ONE real previous-lesson batch after every three new
@@ -1910,6 +1917,8 @@ fn train_inner(
                 bridge_grad_norm+=grad.bridge_norm as f64;
                 transformer_clip_batches+=usize::from(grad.transformer_clipped);
                 dense_clip_batches+=usize::from(grad.dense_clipped);
+                transformer_clip_scale_total+=grad.transformer_clip_scale as f64;
+                dense_clip_scale_total+=grad.dense_clip_scale as f64;
                 if diag::enabled(&app.state::<Diagnostics>()){
                     diag::record(&app.state::<Diagnostics>(),"rehearsal_batch",serde_json::json!({
                         "epoch":epoch,"sourceIndex":source,"sourceMode":old.mode,
@@ -1960,6 +1969,8 @@ fn train_inner(
                 bridge_grad_norm+=grad.bridge_norm as f64;
                 transformer_clip_batches+=usize::from(grad.transformer_clipped);
                 dense_clip_batches+=usize::from(grad.dense_clipped);
+                transformer_clip_scale_total+=grad.transformer_clip_scale as f64;
+                dense_clip_scale_total+=grad.dense_clip_scale as f64;
                 if diag::enabled(&app.state::<Diagnostics>()){
                     diag::record(&app.state::<Diagnostics>(),"reply_boundary_batch",
                         serde_json::json!({
@@ -2037,7 +2048,10 @@ fn train_inner(
                 "rejected: autonomous current-lesson regression or joint score"
             }else if !archived_autonomous_guard{
                 "rejected: earlier learned replies regressed"
-            }else{"selected: joint current-lesson score and earlier abilities retained"};
+            }else{if prior_baseline.is_none() && prior_autonomous_panels.is_empty() &&
+                    retention.is_empty(){
+                    "selected: joint lesson score; no earlier-skill baseline available"
+                }else{"selected: joint lesson score; sampled earlier abilities retained"}};
             if improved{
                 best_loss=loss;best_accuracy=accuracy;best_epoch=epoch;
                 best_autonomous=autonomous;
@@ -2099,6 +2113,9 @@ fn train_inner(
                 "bridgeGradientMean":bridge_grad_norm/batches.max(1) as f64,
                 "transformerClipFraction":transformer_clip_batches as f64/batches.max(1) as f64,
                 "denseClipFraction":dense_clip_batches as f64/batches.max(1) as f64,
+                "clipThreshold":1.0,
+                "transformerMeanClipScale":transformer_clip_scale_total/batches.max(1) as f64,
+                "denseMeanClipScale":dense_clip_scale_total/batches.max(1) as f64,
                 "modelStep":brain.transformer.step,"wordUnits":brain.tokenizer.words.len(),
                 "weightsFingerprint":diag::weight_digest(&brain),
                 "recurrentLatentSteps":neural_nova::transformer::REASONING_STEPS,
@@ -2123,7 +2140,10 @@ fn train_inner(
                     "denseGradientNorm":dense_grad_norm/batches.max(1) as f64,
                     "bridgeGradientNorm":bridge_grad_norm/batches.max(1) as f64,
                     "transformerClipFraction":transformer_clip_batches as f64/batches.max(1) as f64,
-                    "denseClipFraction":dense_clip_batches as f64/batches.max(1) as f64
+                    "denseClipFraction":dense_clip_batches as f64/batches.max(1) as f64,
+                "clipThreshold":1.0,
+                "transformerMeanClipScale":transformer_clip_scale_total/batches.max(1) as f64,
+                "denseMeanClipScale":dense_clip_scale_total/batches.max(1) as f64
                 }))?;
             observer::append(app,observer_id,&record)
         })();
@@ -2154,7 +2174,10 @@ fn train_inner(
             "denseGradientNorm":dense_grad_norm/batches.max(1) as f64,
             "bridgeGradientNorm":bridge_grad_norm/batches.max(1) as f64,
             "transformerClipFraction":transformer_clip_batches as f64/batches.max(1) as f64,
-            "denseClipFraction":dense_clip_batches as f64/batches.max(1) as f64
+            "denseClipFraction":dense_clip_batches as f64/batches.max(1) as f64,
+                "clipThreshold":1.0,
+                "transformerMeanClipScale":transformer_clip_scale_total/batches.max(1) as f64,
+                "denseMeanClipScale":dense_clip_scale_total/batches.max(1) as f64
         }));
         if cancelled{break;}
         if should_stop{
