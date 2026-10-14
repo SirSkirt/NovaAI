@@ -526,6 +526,10 @@ mod tests{
         old.train_batch(&[(b"U: hello\nN: ".to_vec(),b'H')],0.0003).unwrap();
         let prefix=Transformer::precooperation_parameter_count();
         let prompt=b"U: Susie has 2 apples. Tim has 4 apples. Who has more?\nN: ";
+        // Model trained with the new version must explicitly emulate the
+        // pre-evidence checkpoint whose original output we are comparing.
+        old.transformer.weights[Transformer::preevidence_parameter_count()..]
+            .fill(0.0);
         let original=old.predict_ablation_with_memory(prompt,256,&[],false,true).unwrap();
         let mut migrated=HybridBrain::new();
         migrated.dense=old.dense.clone();
@@ -556,7 +560,7 @@ mod tests{
             "dense pathway must contribute to the final distribution");
         assert_eq!(before,no_exchange,"new path starts neutral");
         let original=brain.transformer.weights.clone();
-        let response_index=brain.transformer.parameter_count()-128;
+        let response_index=Transformer::exchange_response_start();
         brain.transformer.weights[response_index]=0.4;
         let active=brain.predict_window(prompt,256).unwrap();
         let disabled=brain.predict_ablation_with_memory(prompt,256,&[],false,true).unwrap();

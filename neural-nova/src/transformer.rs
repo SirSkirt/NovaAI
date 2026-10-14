@@ -197,6 +197,7 @@ impl Transformer {
     /// Size of fully learned v0.13.1 joint checkpoints before recurrent
     /// evidence rereading. This is recognized by BOTH native import paths.
     pub fn preevidence_parameter_count()->usize {layout().evidence_query.start}
+    pub(crate) fn exchange_response_start()->usize {layout().feedback_response.start}
     /// Diagnostic-only view of learned latent refinement; no visualizer changes.
     pub fn reasoning_activity(&self,tokens:&[u16],dense:&[f32],memory:&[Vec<u16>])
         ->Result<Vec<f32>,String>{
@@ -1126,6 +1127,9 @@ mod tests {
         old.train_batch(&[(b"U: Mira owns the blue key. What is blue?\nN: ".to_vec(),
             b'T')],0.0003).unwrap();
         let history=b"U: Mira owns the blue key. What is blue?\nN: ";
+        // Emulate pre-v0.14 inference: old checkpoints had no trained
+        // evidence readout, even when modern code did the test training.
+        old.weights[layout().evidence_response.clone()].fill(0.0);
         let before=old.predict(history).unwrap();
         let mut imported=Transformer::new(99);
         imported.import_compatible_arrays(&old.weights[..boundary],
