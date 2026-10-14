@@ -242,7 +242,7 @@ async function updateRehearsalBank(){
   const completed=Number(bank.foundationLessonsCompleted||0);
   const remaining=Number(bank.foundationLessonsRemaining??Math.max(0,5-completed));
   $("foundationTrainingStatus").textContent=remaining===0
-    ?"Five foundation lessons completed for this checkpoint. Normal joint learning resumes automatically."
+    ?"Five checkpoint-scoped foundation lessons completed. Individual TXT lessons use joint training; ZIP courses can independently choose first five or entire ZIP Foundation v2."
     :$("foundationTrainingEnabled").checked
       ?"Enabled · "+completed+"/5 lessons completed · "+remaining+" selective lessons remaining."
       :"Paused · "+completed+"/5 completed. Enable to continue selective training.";
@@ -734,7 +734,7 @@ $("inspectBrain").addEventListener("click",()=>safe(async()=>{
 },"Brain inspection"));
 $("inspectMessage").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("inspectBrain").click();}});
 $("copyDiagnostics").addEventListener("click",()=>safe(async()=>{
-  const text="Neural Nova hybrid v0.15.1\n"+JSON.stringify(latestStatus)+"\n"+
+  const text="Neural Nova hybrid v0.16.0\n"+JSON.stringify(latestStatus)+"\n"+
     debugEntries.map(e=>"["+e.time+"] ["+e.level+"] ["+e.source+"] "+e.message).join("\n\n");
   await navigator.clipboard.writeText(text);
   report("INFO","Debugger","Copied diagnostic report.");
