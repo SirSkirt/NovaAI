@@ -57,6 +57,13 @@ jobs:
       - name: Install Tauri CLI
         working-directory: app
         run: npm install --no-audit --no-fund
+      # Keep the original preconfigured icons until an explicit icon-source
+      # commit exists. After the user checks in the PNG, generate fresh icons
+      # for every installer build, including .ico and 512px icon.png.
+      - name: Generate Windows icons from Neural Nova artwork
+        if: ${{ hashFiles('app/assets/nova-brain-icon.png') != '' }}
+        working-directory: app
+        run: npm run icons:generate
       - name: Compile Rust tests
         working-directory: app/src-tauri
         run: cargo test --lib
@@ -145,6 +152,20 @@ jobs:
       - name: Initialize Android project
         working-directory: app
         run: npm run android:init -- --ci --skip-targets-install
+      # Tauri's Android icons must be written AFTER android:init creates its
+      # Gradle res/mipmap folders, not just to src-tauri/icons on the host.
+      - name: Generate Android launcher icons from Neural Nova artwork
+        if: ${{ hashFiles('app/assets/nova-brain-icon.png') != '' }}
+        working-directory: app
+        run: npm run icons:generate
+      - name: Verify Android mipmap launcher resources
+        if: ${{ hashFiles('app/assets/nova-brain-icon.png') != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s app/src-tauri/gen/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          test -s app/src-tauri/gen/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+          echo 'Neural Nova launcher PNGs generated in the Android Gradle project'
       # Configure the generated Gradle/manifest files BEFORE the first build.
       # This avoids compiling Android twice and accidentally publishing an
       # unsigned or machine-dependent debug signature.

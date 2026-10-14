@@ -9,7 +9,9 @@
     "build": "tauri build",
     "android:init": "tauri android init",
     "android:debug-apk": "tauri android build --debug --apk",
-    "android:apk": "tauri android build --apk"
+    "android:apk": "tauri android build --apk",
+    "icons:generate": "tauri icon ./assets/nova-brain-icon.png",
+    "icons:apply": "node ./scripts/apply-icon.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"
