@@ -1311,6 +1311,12 @@ struct AutonomousValidation {
 }
 fn autonomous_validation(brain:&HybridBrain,lessons:&PreparedLessons)
     ->Result<Option<AutonomousValidation>,String>{
+    autonomous_validation_replies(brain,&lessons.heldout_replies)
+}
+/// Exact same neural rollout for the current lesson and older archived heldout
+/// lessons. Baseline and candidate MUST use identical fixed prompts.
+fn autonomous_validation_replies(brain:&HybridBrain,replies:&[neural_nova::trainer::HeldoutReply])
+    ->Result<Option<AutonomousValidation>,String>{
     const MAX_ROLLOUT:usize=12;
     const EARLY_END_MISSING_PENALTY:f32=6.0;
     let mut categories=[false;4];
@@ -1320,7 +1326,7 @@ fn autonomous_validation(brain:&HybridBrain,lessons:&PreparedLessons)
     let mut correct_first=0usize;
     let mut complete=0usize;
     let mut full_correct=0usize;
-    for (prompt,reply,memory,kind) in &lessons.heldout_replies {
+    for (prompt,reply,memory,kind) in replies {
         let k=*kind as usize;
         if k>=4 || categories[k] {continue;}
         categories[k]=true;
@@ -1367,6 +1373,64 @@ fn autonomous_validation(brain:&HybridBrain,lessons:&PreparedLessons)
         return Err("Non-finite autonomous held-out loss".into());
     }
     Ok(Some(score))
+}
+/// Fixed, bounded PREVIOUS-LESSON heldout panels for genuine conversation
+/// retention. Keep newest and oldest sampled answers by category so an
+/// improved current-lesson loss cannot hide loss of earlier complete replies.
+/// Each panel holds at most four independent withheld replies; never trained.
+fn archived_autonomous_panels(previous:&[PreparedLessons])
+    ->Vec<Vec<neural_nova::trainer::HeldoutReply>>{
+    if previous.is_empty(){return Vec::new();}
+    let collect=|recent_first:bool|{
+        let mut represented=[false;4];
+        let mut panel=Vec::new();
+        let ordered=if recent_first{
+            previous.iter().rev().collect::<Vec<_>>()
+        }else{previous.iter().collect::<Vec<_>>()};
+        for plan in ordered{
+            for entry in &plan.heldout_replies{
+                let kind=entry.3 as usize;
+                if kind<4&&!represented[kind]{
+                    panel.push(entry.clone());
+                    represented[kind]=true;
+                }
+            }
+            if represented.iter().all(|&x|x){break;}
+        }
+        panel
+    };
+    let newest=collect(true);
+    if newest.is_empty(){return Vec::new();}
+    let oldest=collect(false);
+    if oldest!=newest{vec![newest,oldest]}else{vec![newest]}
+}
+fn archived_autonomous_scores(
+    brain:&HybridBrain,panels:&[Vec<neural_nova::trainer::HeldoutReply>],
+)->Result<Vec<AutonomousValidation>,String>{
+    panels.iter().map(|panel|autonomous_validation_replies(brain,panel)?
+        .ok_or("Empty archived independent-response retention panel".into())).collect()
+}
+fn archived_autonomous_retained(before:&[AutonomousValidation],
+    candidate:&[AutonomousValidation])->bool{
+    before.len()==candidate.len()&&before.iter().zip(candidate).all(|(old,new)|{
+        old.represented_categories==new.represented_categories &&
+        old.complete_answers_checked==new.complete_answers_checked &&
+        new.complete_answers_correct>=old.complete_answers_correct &&
+        new.first_character_accuracy+1e-6>=old.first_character_accuracy &&
+        new.generated_prefix_accuracy+0.05>=old.generated_prefix_accuracy &&
+        new.self_conditioned_loss<=old.self_conditioned_loss+0.05
+    })
+}
+/// The numeric lesson baseline is fixed for the ENTIRE training session.
+/// Without this, several selected epochs can each spend a fresh +0.08
+/// tolerance and ratchet the "best" heldout loss arbitrarily far above
+/// the actual starting checkpoint.
+fn stays_near_original_baseline(
+    lesson_baseline_loss:f32,selected_loss:f32,candidate_loss:f32
+)->bool{
+    candidate_loss.is_finite() &&
+    candidate_loss<=lesson_baseline_loss+AUTONOMOUS_TEACHER_TOLERANCE &&
+    candidate_loss<=selected_loss+AUTONOMOUS_TEACHER_TOLERANCE
 }
 /// A new checkpoint must improve the already-established held-out loss,
 /// avoid regressing observed autonomous replies, AND improve the combined
