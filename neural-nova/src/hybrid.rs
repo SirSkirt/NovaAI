@@ -331,6 +331,13 @@ impl HybridBrain {
     pub fn save(&self,path:impl AsRef<Path>)->Result<(),String>{
         let path=path.as_ref();
         let tmp=path.with_extension("tmp");
+        // A .tmp destination would have the SAME name as our staging file.
+        // The old export code did exactly that, renaming the just-written
+        // file to .bak and then failing with "os error 2" on every export.
+        // Fail before any I/O rather than risking an incomplete checkpoint.
+        if tmp==path {
+            return Err("Checkpoint destination must not end with .tmp; use .nhyb".into());
+        }
         let mut file=File::create(&tmp).map_err(|e|e.to_string())?;
         file.write_all(MAGIC).map_err(|e|e.to_string())?;
         write_u32(&mut file,self.transformer.weights.len() as u32)?;
@@ -445,6 +452,32 @@ fn read_floats(f:&mut File,data:&mut [f32])->Result<(),String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn export_rejects_tmp_destination_without_touching_files(){
+        let path=std::env::temp_dir().join(format!(
+            "nova-export-{}-{}.tmp",std::process::id(),
+            std::time::SystemTime::now().duration_since(
+                std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let err=HybridBrain::new().save(&path).unwrap_err();
+        assert!(err.contains("must not end with .tmp"));
+        assert!(!path.exists(),"Invalid export must not create a target");
+        assert!(!path.with_extension("bak").exists());
+    }
+    #[test]
+    fn checkpoint_export_can_use_real_nhyb_filename(){
+        let path=std::env::temp_dir().join(format!(
+            "nova-export-{}-{}.nhyb",std::process::id(),
+            std::time::SystemTime::now().duration_since(
+                std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let brain=HybridBrain::new();
+        brain.save(&path).unwrap();
+        let restored=HybridBrain::load(&path).unwrap();
+        assert_eq!(restored.transformer.weights,brain.transformer.weights);
+        assert_eq!(restored.dense.dimensions(),brain.dense.dimensions());
+        let _=std::fs::remove_file(&path);
+    }
     /// Simulate the actual pre-recurrent checkpoint: all old weights and
     /// optimizer moments are preserved, new reasoning projection is neutral.
     fn emulate_pre_reasoning_checkpoint(brain:&mut HybridBrain){
