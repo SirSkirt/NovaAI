@@ -27,6 +27,18 @@ impl TransferState {
         if offset>state.export.len(){return Err("Checkpoint read offset outside export".into());}
         Ok(state.export[offset..(offset+CHUNK).min(state.export.len())].to_vec())
     }
+    /// Read a complete, already-serialized frozen neural checkpoint for a
+    /// native Android document export. This does not alter neural weights.
+    pub fn export_read(&self)->Result<Vec<u8>,String>{
+        let state=self.0.lock().map_err(|_|"Checkpoint transfer unavailable")?;
+        if state.export.is_empty(){return Err("Start checkpoint export first".into());}
+        Ok(state.export.clone())
+    }
+    pub fn export_cancel(&self)->Result<(),String>{
+        let mut state=self.0.lock().map_err(|_|"Checkpoint transfer unavailable")?;
+        state.export.clear();
+        Ok(())
+    }
     pub fn import_begin(&self,expected:usize)->Result<(),String>{
         if expected==0||expected>MAX_CHECKPOINT_BYTES{
             return Err("Checkpoint must be 1 byte–24 MiB".into());
@@ -76,5 +88,8 @@ mod tests{
         assert_eq!(x.begin_export(vec![1,2,3]).unwrap(),3);
         assert_eq!(x.chunk(0).unwrap(),vec![1,2,3]);
         assert_eq!(x.chunk(3).unwrap(),Vec::<u8>::new());
+        assert_eq!(x.export_read().unwrap(),vec![1,2,3]);
+        x.export_cancel().unwrap();
+        assert!(x.export_read().is_err());
     }
 }
