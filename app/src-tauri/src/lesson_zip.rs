@@ -116,6 +116,9 @@ pub struct ZipTrainingStatus {
     completed:usize,
     skipped:usize,
     failed:usize,
+    attempt:u8,
+    retry_strategy:String,
+    learning_evidence:Option<hybrid_lab::LessonLearningEvidence>,
     lesson:String,
     stage:String,
     error:Option<String>,
@@ -229,6 +232,11 @@ pub fn hybrid_zip_train(app:AppHandle,brain:State<'_,HybridState>,
     if !(1..=60).contains(&epochs){return Err("Choose 1–60 epochs".into());}
     if brain.is_training(){return Err("A neural training session is already active".into());}
     let prepared=read_bundle(&bytes,&mode)?;
+    let scope=options.as_ref().and_then(|o|o.foundation_zip_scope.as_deref())
+        .unwrap_or("firstFive").to_string();
+    if !matches!(scope.as_str(),"firstFive"|"entireZip"){
+        return Err("ZIP foundation duration must be firstFive or entireZip".into());
+    }
     if queue.inner.active.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire)
         .is_err(){return Err("ZIP training queue is already running".into());}
     queue.inner.stopping.store(false,Ordering::Release);
@@ -239,38 +247,85 @@ pub fn hybrid_zip_train(app:AppHandle,brain:State<'_,HybridState>,
     });
     tauri::async_runtime::spawn_blocking(move||{
         let result=(||->Result<(),String>{
-            for (i,lesson) in prepared.lessons.iter().enumerate(){
+            'lessons: for (i,lesson) in prepared.lessons.iter().enumerate(){
                 if queue.inner.stopping.load(Ordering::Acquire){break;}
+                let selective=options.as_ref().is_some_and(|o|o.zip_foundation_enabled()) &&
+                    (scope=="entireZip" || i<5);
+                let max_attempts:usize=if selective{4}else{1};
+                let starting_lr=options.as_ref()
+                    .map(|o|o.zip_learning_rate()).unwrap_or(0.001);
+                // Rates below 0.000020 are used only by recovery attempts.
+                // No failed candidate changes the complete accepted checkpoint.
+                let low_rate=(starting_lr*0.1).min(0.000015).max(0.00001)
+                    .min(starting_lr);
                 queue.update(&app,|s|{
                     s.current=i+1;s.lesson=lesson.name.clone();
-                    s.stage="Training in native Rust".into();
+                    s.attempt=0;s.retry_strategy.clear();s.learning_evidence=None;
+                    s.stage="Preparing lesson in native Rust".into();
                 });
-                // hybrid_train retains the existing rehearsal, heldout testing,
-                // best-checkpoint rollback and accepted-lesson archiving.
-                hybrid_lab::hybrid_train(
-                    app.clone(),app.state::<HybridState>(),
-                    Lesson{mode:lesson.mode.clone(),text:lesson.text.clone(),epochs},
-                    options.clone())?;
-                // Only Rust waits and starts the NEXT lesson. A suspended or
-                // closed WebView cannot interrupt the sequence.
-                loop {
-                    if queue.inner.stopping.load(Ordering::Acquire){
-                        let _=hybrid_lab::hybrid_request_stop(
-                            &app,&app.state::<HybridState>(),"native-zip-stop");
+                let mut final_outcome=LessonDisposition::BaselineRetained;
+                for attempt in 0..max_attempts {
+                    if queue.inner.stopping.load(Ordering::Acquire){break 'lessons;}
+                    let alt=attempt>=2;
+                    let rate=if attempt==1||attempt==3{low_rate}else{starting_lr};
+                    let attempt_epochs=if alt{epochs.saturating_add(6).min(60)}else{epochs};
+                    let strategy=match attempt{
+                        0=>"standard",
+                        1=>"lower learning rate",
+                        2=>"alternative example schedule + six extra epochs",
+                        _=>"combined alternative schedule + lower learning rate"
+                    };
+                    queue.update(&app,|s|{
+                        s.attempt=(attempt+1) as u8;
+                        s.retry_strategy=strategy.into();
+                        s.stage=format!("Lesson {} of {} · attempt {}/{} · {} · LR {:.6} · {} epochs",
+                            i+1,prepared.lessons.len(),attempt+1,max_attempts,
+                            strategy,rate,attempt_epochs);
+                    });
+                    // The ZIP defines scope. Every attempt restarts from the
+                    // last accepted complete brain and optimizer state.
+                    let attempt_options=options.clone().map(|o|o.for_zip_attempt(
+                        &scope,(i+1) as u32,prepared.lessons.len() as u32,
+                        attempt as u8,rate,alt));
+                    hybrid_lab::hybrid_train(
+                        app.clone(),app.state::<HybridState>(),
+                        Lesson{mode:lesson.mode.clone(),text:lesson.text.clone(),
+                            epochs:attempt_epochs},
+                        attempt_options)?;
+                    // Android WebView lifecycle never controls this queue.
+                    loop {
+                        if queue.inner.stopping.load(Ordering::Acquire){
+                            let _=hybrid_lab::hybrid_request_stop(
+                                &app,&app.state::<HybridState>(),"native-zip-stop");
+                        }
+                        if !app.state::<HybridState>().is_training(){break;}
+                        std::thread::sleep(Duration::from_millis(200));
                     }
-                    if !app.state::<HybridState>().is_training(){break;}
-                    std::thread::sleep(Duration::from_millis(200));
+                    let (best_epoch,error,evidence)=hybrid_lab::completed_training_outcome(
+                        &app.state::<HybridState>())?;
+                    if queue.inner.stopping.load(Ordering::Acquire){break 'lessons;}
+                    let disposition=classify_lesson_outcome(best_epoch,error)
+                        .map_err(|e|format!("{}: {}",lesson.name,e))?;
+                    queue.update(&app,|s|{
+                        s.learning_evidence=evidence;
+                    });
+                    if matches!(disposition,LessonDisposition::Accepted(_)){
+                        final_outcome=disposition;
+                        break;
+                    }
+                    if attempt+1<max_attempts {
+                        queue.update(&app,|s|{
+                            let finding=s.learning_evidence.as_ref()
+                                .map(|e|e.finding.as_str())
+                                .unwrap_or("insufficient-evidence");
+                            s.stage=format!(
+                                "No eligible checkpoint for {} · {} · retry {}/{} next",
+                                lesson.name,finding,attempt+1,max_attempts-1);
+                        });
+                    }
                 }
-                let (best_epoch,error)=hybrid_lab::completed_training_outcome(
-                    &app.state::<HybridState>())?;
-                // Explicit stop takes priority over baseline classification:
-                // cancellation is neither a learned lesson nor a validation
-                // failure and must not start the next lesson.
-                if queue.inner.stopping.load(Ordering::Acquire){break;}
-                let outcome=classify_lesson_outcome(best_epoch,error)
-                    .map_err(|e|format!("{}: {}",lesson.name,e))?;
                 queue.update(&app,|s|
-                    apply_lesson_disposition(s,&lesson.name,outcome));
+                    apply_lesson_disposition(s,&lesson.name,final_outcome));
             }
             Ok(())
         })();
