@@ -131,7 +131,9 @@ function showQueueStatus(p){
   }
   const evidence=p.learningEvidence;
   const learned=evidence?(" · practice "+evidence.practiceCorrect+"/"+evidence.practiceChecked+
-    ", held-out "+evidence.heldoutCorrect+"/"+evidence.heldoutChecked+
+    " (prefix "+(100*evidence.practicePrefix).toFixed(0)+"%), held-out "+
+    evidence.heldoutCorrect+"/"+evidence.heldoutChecked+
+    " (prefix "+(100*evidence.heldoutPrefix).toFixed(0)+"%)"+
     " · "+evidence.finding+" ["+evidence.evaluatedFrom+"]"+
     (evidence.retentionBlocked?" · earlier-skill protection blocked candidate":"")):"";
   view("Native background ZIP queue · "+(p.stage||"Working")+
