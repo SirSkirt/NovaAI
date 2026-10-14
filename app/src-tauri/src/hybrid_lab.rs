@@ -1378,6 +1378,26 @@ fn autonomous_validation_replies(brain:&HybridBrain,replies:&[neural_nova::train
 /// retention. Keep newest and oldest sampled answers by category so an
 /// improved current-lesson loss cannot hide loss of earlier complete replies.
 /// Each panel holds at most four independent withheld replies; never trained.
+/// Stable identity for the held-out questions in this lesson; it allows a
+/// human reviewer to tell whether a previous screenshot used the SAME test
+/// set. The fingerprint is teacher diagnostics, never an inference feature.
+fn heldout_panel_id(lessons:&PreparedLessons)->String{
+    let mut hash=0xcbf29ce484222325u64;
+    for (prompt,expected,memory,kind) in &lessons.heldout_replies{
+        for b in prompt.iter().copied().chain(expected.iter().copied())
+            .chain(std::iter::once(*kind)){
+            hash^=b as u64;
+            hash=hash.wrapping_mul(0x100000001b3);
+        }
+        for turn in memory {
+            for &b in turn.as_bytes(){
+                hash^=b as u64;
+                hash=hash.wrapping_mul(0x100000001b3);
+            }
+        }
+    }
+    format!("{hash:016x}")
+}
 fn archived_autonomous_panels(previous:&[PreparedLessons])
     ->Vec<Vec<neural_nova::trainer::HeldoutReply>>{
     if previous.is_empty(){return Vec::new();}
@@ -1612,6 +1632,7 @@ fn train_inner(
     // "Selected" cannot drift > tolerance from the original lesson baseline.
     let lesson_baseline_loss=best_loss;
     let lesson_baseline_autonomous=best_autonomous;
+    let current_heldout_panel_id=heldout_panel_id(lessons);
     // Independently generate prior archived responses under a fixed set of
     // held-out prompts. The archived panels are read-only: the learner never
     // receives their answers during the new lesson.
@@ -1899,7 +1920,7 @@ fn train_inner(
         let (validation_loss,validation_accuracy,prior_loss,retention_score,
             eligible,improved,reasoning_ranking_loss,reasoning_ranking_accuracy,
             current_autonomous,autonomous_guard,archived_autonomous_guard,
-            prior_autonomous_candidate)={
+            prior_autonomous_candidate,selection_reason)={
             let mut s=lock(state)?;
             s.stage="Evaluating current and earlier held-out lessons".into();
             let (loss,accuracy,ranking_loss,ranking_accuracy)=current_validation(&s.brain,lessons)?;
@@ -1933,6 +1954,17 @@ fn train_inner(
                 archived_autonomous_retained(&prior_autonomous_baseline,&archived_candidate)
             }else{false};
             let improved=candidate&&autonomous_guard&&archived_autonomous_guard;
+            // Explain the selected checkpoint rather than calling it the
+            // numerically lowest held-out loss when it may be a JOINT score.
+            let selection_reason=if !eligible{
+                "rejected: earlier-skill heldout/teacher guard"
+            }else if !candidate{
+                "rejected: current lesson exceeds fixed baseline tolerance"
+            }else if !autonomous_guard{
+                "rejected: autonomous current-lesson regression or joint score"
+            }else if !archived_autonomous_guard{
+                "rejected: earlier learned replies regressed"
+            }else{"selected: joint current-lesson score and earlier abilities retained"};
             if improved{
                 best_loss=loss;best_accuracy=accuracy;best_epoch=epoch;
                 best_autonomous=autonomous;
@@ -1945,7 +1977,7 @@ fn train_inner(
             s.heldout_accuracy=Some(accuracy);
             (loss,accuracy,old_loss,teacher,eligible,improved,ranking_loss,
                 ranking_accuracy,autonomous,autonomous_guard,
-                archived_autonomous_guard,archived_candidate)
+                archived_autonomous_guard,archived_candidate,selection_reason)
         };
         if let Some(value)=retention_score{lock(state)?.retention_accuracy=Some(value);}
         let should_stop=schedule.observe_validation(improved);
@@ -1960,6 +1992,8 @@ fn train_inner(
                 "selectedAutonomousHeldout":best_autonomous,
                 "lessonBaselineAutonomous":lesson_baseline_autonomous,
                 "lessonBaselineHeldoutLoss":lesson_baseline_loss,
+                "heldoutPanelId":current_heldout_panel_id,
+                "selectionReason":selection_reason,
                 "archivedAutonomousBaseline":prior_autonomous_baseline,
                 "archivedAutonomousCandidate":prior_autonomous_candidate,
                 "archivedAutonomousGuardAccepted":archived_autonomous_guard,
@@ -2006,6 +2040,8 @@ fn train_inner(
             "selectedAutonomousHeldout":best_autonomous,
             "lessonBaselineAutonomous":lesson_baseline_autonomous,
             "lessonBaselineLoss":lesson_baseline_loss,
+            "heldoutPanelId":current_heldout_panel_id,
+            "selectionReason":selection_reason,
             "archivedAutonomousBaseline":prior_autonomous_baseline,
             "archivedAutonomousCandidate":prior_autonomous_candidate,
             "archivedAutonomousGuardAccepted":archived_autonomous_guard,
@@ -2042,6 +2078,7 @@ fn train_inner(
         diag::record(&app.state::<Diagnostics>(),"training_selected_checkpoint",serde_json::json!({
             "requestedEpochs":epochs,"bestEpoch":best_epoch,"bestValidationLoss":best_loss,
             "lessonBaselineLoss":lesson_baseline_loss,
+            "heldoutPanelId":current_heldout_panel_id,
             "lessonBaselineAutonomous":lesson_baseline_autonomous,
             "archivedAutonomousBaseline":prior_autonomous_baseline,
             "bestAutonomousHeldout":best_autonomous,
