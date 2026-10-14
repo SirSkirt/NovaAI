@@ -6,6 +6,32 @@ const invoke=(cmd,args={})=>window.__TAURI__?.core?.invoke(cmd,args) ??
   Promise.reject(Error("Run the installed Neural Nova app"));
 const CHUNK=256*1024;
 let busy=false,lastRunning=false,current=null;
+let androidCheckpointBytes=null,androidCheckpointName=null;
+if(/Android/i.test(navigator.userAgent)){
+  // Android content:// document grants may not be readable by WebView File APIs.
+  // Native dialog + plugin-fs readFile is the same proven path as ZIP imports.
+  $("targetedBrowserImportLabel").hidden=true;
+  $("targetedBrowserImportLabel").style.display="none";
+  $("targetedImportFile").hidden=true;
+  $("targetedNativeImport").hidden=false;
+}
+$("targetedNativeImport").addEventListener("click",()=>safe(async()=>{
+  const dialog=window.__TAURI__?.dialog,fs=window.__TAURI__?.fs;
+  if(!dialog?.open||!fs?.readFile){
+    throw Error("Native Android Files picker unavailable in this build");
+  }
+  const uri=await dialog.open({multiple:false,directory:false,pickerMode:"document"});
+  if(uri===null||uri===undefined)return;
+  if(typeof uri!=="string")throw Error("Unexpected Android document selection");
+  const bytes=await fs.readFile(uri);
+  const input=bytes instanceof Uint8Array?bytes:new Uint8Array(bytes);
+  if(!input.length||input.length>24*1024*1024)throw Error("File must be 1 byte–24 MiB");
+  androidCheckpointBytes=input;
+  const last=decodeURIComponent(uri.split("/").pop()||"");
+  androidCheckpointName=last.toLowerCase().endsWith(".nhyb")?last:"neural-nova-targeted-import.nhyb";
+  $("targetedImportStatus").textContent="Selected Android document ("+input.length+
+    " bytes). Tap Stage imported checkpoint to validate without replacing Nova.";
+}));
 function error(err){$("targetedStage").textContent="Targeted error: "+String(err);console.error(err);}
 async function safe(fn){
   if(busy)return;
@@ -68,13 +94,16 @@ function render(s){
 }
 $("targetedImport").addEventListener("click",()=>safe(async()=>{
   const file=$("targetedImportFile").files[0];
-  if(!file||!file.name.toLowerCase().endsWith(".nhyb"))
-    throw Error("Select an .nhyb checkpoint");
-  if(file.size<1||file.size>24*1024*1024)
-    throw Error("Checkpoint must be 1 byte–24 MiB");
+  if(!androidCheckpointBytes &&
+      (!file||!file.name.toLowerCase().endsWith(".nhyb"))){
+    throw Error("Choose an .nhyb checkpoint to stage");
+  }
+  const size=androidCheckpointBytes?.length??file.size;
+  if(size<1||size>24*1024*1024)throw Error("Checkpoint must be 1 byte–24 MiB");
   const h=await invoke("hybrid_status");
   if(h.training)throw Error("Finish training before importing a candidate");
-  const bytes=new Uint8Array(await file.arrayBuffer());
+  const bytes=androidCheckpointBytes||new Uint8Array(await file.arrayBuffer());
+  const filename=androidCheckpointName||file.name;
   await invoke("targeted_import_begin",{bytes:bytes.length});
   try{
     let done=0;
@@ -85,7 +114,7 @@ $("targetedImport").addEventListener("click",()=>safe(async()=>{
       $("targetedImportStatus").textContent="Staging checkpoint · "+
         Math.floor(100*done/bytes.length)+"%";
     }
-    const s=await invoke("targeted_import_finish",{filename:file.name});
+    const s=await invoke("targeted_import_finish",{filename});
     $("targetedSource").value="imported";
     render(s);
   }finally{
