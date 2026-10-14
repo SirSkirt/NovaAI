@@ -260,6 +260,10 @@ fn prepare_reasoning(text:&str)->Result<PreparedLessons,String>{
     }
     let train=dialogue_examples(&train_pairs)?;
     let validation=dialogue_examples(&validation_pairs)?;
+    let heldout_replies=validation_pairs.iter().map(|pair|Ok((
+        dialogue_prefix(&pair.user)?,pair.assistant.as_bytes().to_vec(),
+        Vec::<String>::new(),3u8
+    ))).collect::<Result<Vec<_>,String>>()?;
     if train.len()>MAX_SAMPLES||reasoning_train.len()>1000{
         return Err("Reasoning lesson too large; split into smaller groups".into());
     }
@@ -269,7 +273,7 @@ fn prepare_reasoning(text:&str)->Result<PreparedLessons,String>{
         train_lessons:train_pairs.len(),validation_lessons:validation_pairs.len(),
         training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
         reasoning_train,reasoning_validation,evidence_train,evidence_validation,
-        understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),
+        understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies,
         train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5]})
 }
@@ -300,6 +304,10 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
             }
             let train=dialogue_examples(&train_pairs)?;
             let validation=dialogue_examples(&valid_pairs)?;
+            let heldout_replies=valid_pairs.iter().map(|pair|Ok((
+                dialogue_prefix(&pair.user)?,pair.assistant.as_bytes().to_vec(),
+                Vec::<String>::new(),0u8
+            ))).collect::<Result<Vec<_>,String>>()?;
             if train.len()>MAX_SAMPLES{
                 return Err(format!("Too many dialogue reply characters for one CPU run (max {MAX_SAMPLES} training tokens). Split the lesson set into sessions."));
             }
@@ -309,7 +317,7 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
                 mode:mode.into(),training_text,memory_train:Vec::new(),memory_validation:Vec::new(),
                 reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
         evidence_train:Vec::new(),evidence_validation:Vec::new(),
-        understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
+        understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies,train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],})
         },
         "reasoning"=>prepare_reasoning(text),
@@ -330,13 +338,25 @@ pub fn prepare(mode:&str,text:&str)->Result<PreparedLessons,String>{
                 .map(|p|format!("{} {}\n",p.user,p.assistant)).collect::<String>();
             let (train,memory_train)=memory_samples(&sessions)?;
             let (validation,memory_validation)=memory_samples(&held)?;
+            let heldout_replies=held.iter().flat_map(|session|{
+                let mut prior=Vec::<String>::new();let mut probes=Vec::new();
+                for turn in session{
+                    probes.push((
+                        dialogue_prefix(&turn.user).expect("validated dialogue"),
+                        turn.assistant.as_bytes().to_vec(),prior.clone(),2u8
+                    ));
+                    prior.push(format!("U: {}\nN: {}",turn.user,turn.assistant));
+                    if prior.len()>12{prior.remove(0);}
+                }
+                probes
+            }).collect::<Vec<_>>();
             if train.len()>MAX_SAMPLES{return Err("Too many conversation training characters".into());}
             Ok(PreparedLessons{train,validation,
                 train_lessons:sessions.len(),validation_lessons:held.len(),mode:mode.into(),
                 training_text,memory_train,memory_validation,
                 reasoning_train:Vec::new(),reasoning_validation:Vec::new(),
         evidence_train:Vec::new(),evidence_validation:Vec::new(),
-        understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies:Vec::new(),train_kinds:Vec::new(),validation_kinds:Vec::new(),
+        understanding_train:Vec::new(),understanding_validation:Vec::new(),heldout_replies,train_kinds:Vec::new(),validation_kinds:Vec::new(),
         category_train:[0;5],category_validation:[0;5],})
         },
         _=>Err("Select dialogue, text, conversation, or reasoning lessons".into())
@@ -395,6 +415,25 @@ pub fn training_order(samples:&[Example],epoch:u32,mode:&str)->Vec<usize>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn legacy_dialogue_has_actual_heldout_answers_not_training_prompts(){
+        let text="hello\tHi!\nbye\tBye!\ncat\tAnimal.\ndog\tPet.\nbird\tBird.\n";
+        let lesson=prepare("dialogue",text).unwrap();
+        assert!(!lesson.heldout_replies.is_empty());
+        assert!(lesson.heldout_replies.iter().all(|(prefix,answer,memory,kind)|
+            *kind==0&&memory.is_empty()&&!answer.is_empty()&&
+            !lesson.train.iter().any(|(history,_)|history==prefix)));
+    }
+    #[test]
+    fn legacy_conversation_probes_include_actual_past_turns(){
+        let mut text=String::new();
+        for i in 0..6{
+            text.push_str(&format!(
+                "U: My name is N{i}.\nN: Hi N{i}.\nU: What is my name?\nN: N{i}.\n\n"));
+        }
+        let lesson=prepare("conversation",&text).unwrap();
+        assert!(lesson.heldout_replies.iter().any(|(_,_,memory,_)|!memory.is_empty()));
+    }
     #[test]
     fn conversation_memory_targets_are_aligned_and_split_by_session(){
         let mut text=String::new();
