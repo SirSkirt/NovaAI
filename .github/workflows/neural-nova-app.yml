@@ -37,6 +37,8 @@ jobs:
         run: python3 -m py_compile app/scripts/configure_android_ci.py
       - run: node --check app/dist/js/checkpoint-ui.js
       - run: node app/tests/checkpoint-ui.test.cjs
+      - run: node --check app/dist/js/training-observer.js
+      - run: node app/tests/training-observer.test.cjs
       - run: node --check app/dist/js/targeted-training.js
       - run: node --check app/dist/js/brain.js
       - run: node --check app/dist/js/transformer.js

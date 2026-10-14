@@ -13,6 +13,7 @@
   <script defer src="./js/mass-learning-ui.js"></script>
   <script defer src="./js/checkpoint-ui.js"></script>
   <script defer src="./js/targeted-training.js"></script>
+  <script defer src="./js/training-observer.js"></script>
   <script defer src="./js/test-ui.js"></script>
 </head>
 <body>
@@ -20,7 +21,7 @@
   <header class="app-header">
     <div class="brand">
       <span class="brand-symbol" aria-hidden="true">◉</span>
-      <div><h1>Neural Nova <span class="beta">v0.12.10</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
+      <div><h1>Neural Nova <span class="beta">v0.13.0</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
     </div>
     <div class="status-pill" id="brainState" role="status"><span class="status-indicator"></span><span id="brainStateText">Starting…</span></div>
   </header>
@@ -388,6 +389,32 @@ hey there</textarea>
           <p class="muted">The bridge projects dense pre-softmax features into the Transformer's hidden representation. Its weights are trained jointly with both networks.</p>
         </aside>
       </div>
+      <section class="card" aria-label="Saved epoch observations" style="margin-top:16px">
+        <h3>Training activity and Nova's actual responses</h3>
+        <p class="muted">Read-only records after each unified or targeted epoch, including rejected epochs. The original brain visualization stays above. Green interconnect fibers mean removing the dense pathway changed the output distribution. Signals are not readable thoughts or proof of reasoning.</p>
+        <div class="row wrap">
+          <label for="observerSession">Training session</label>
+          <select id="observerSession" aria-label="Training observation session"></select>
+          <label for="observerEpoch">Epoch</label>
+          <select id="observerEpoch" aria-label="Saved training epoch"></select>
+          <button type="button" class="secondary compact" id="observerRefresh">Refresh saved activity</button>
+        </div>
+        <p class="muted" id="observerStatus" role="status">Loading recorded activity…</p>
+        <div class="metric-grid">
+          <div><span>Full vs no dense (output change)</span><strong id="observerDenseEffect">—</strong></div>
+          <div><span>Full vs no reciprocal exchange</span><strong id="observerExchangeEffect">—</strong></div>
+          <div><span>Bridge signal RMS</span><strong id="observerBridgeRms">—</strong></div>
+          <div><span>Epoch / model step</span><strong id="observerStep">—</strong></div>
+        </div>
+        <p class="muted" id="observerMetrics">Select an epoch to inspect the model's responses, training scores and pathway measurements.</p>
+        <h3>What Nova generated during practice and validation</h3>
+        <pre id="observerReplies" class="epoch-history" style="max-height:520px;overflow:auto;white-space:pre-wrap">No saved responses yet.</pre>
+        <details class="teacher-extra">
+          <summary>Per-epoch network and reasoning activity details</summary>
+          <pre id="observerActivity" class="epoch-history" style="max-height:360px;overflow:auto;white-space:pre-wrap">No saved neural activity yet.</pre>
+        </details>
+        <p class="muted">Up to one training and one held-out reply per available category, capped at 24 generated characters. Held-out answers are teacher-only scoring references, never Nova's input. Each epoch saves actual attention, activations, bridge signals and pathway ablations locally in app-private JSONL (not complete weight checkpoints).</p>
+      </section>
     </section>
   </main>
   <details id="diagnostics" class="diagnostics">

@@ -696,12 +696,15 @@ function showVisual(trace){
     predictions.append(chip);
   }
   const bridge=trace.bridgeSignal||[];
+  const verifiedInterconnect=trace.interconnectUsed===true;
   const maximum=Math.max(1e-8,...bridge.map(Math.abs));
   $("bridgeFibers").querySelectorAll("path").forEach((path,i)=>{
     const start=Math.floor(i*bridge.length/5),end=Math.floor((i+1)*bridge.length/5);
     const mean=bridge.slice(start,end).reduce((sum,v)=>sum+Math.abs(v),0)/Math.max(1,end-start);
     const intensity=Math.min(1,mean/maximum);
     path.style.opacity=(.12+.85*intensity).toFixed(2);
+    path.style.stroke=verifiedInterconnect?"#34dc80":"#48d0b4";
+    path.style.filter=verifiedInterconnect?"drop-shadow(0 0 4px rgba(52,220,128,.65))":"";
     path.style.strokeWidth=(1+3*intensity).toFixed(2);
   });
   $("visualizerDetail").textContent=
@@ -709,6 +712,8 @@ function showVisual(trace){
     layers.reduce((sum,l)=>sum+l.length,0).toLocaleString()+
     " dense neurons. The center fibers show learned bridge signal magnitudes (32 channels). These are neural signals, not a literal brain scan.";
 }
+// Reuse the ORIGINAL visualizer for recorded epochs without changing its SVG.
+window.NovaVisualObserver={replay:showVisual};
 $("inspectBrain").addEventListener("click",()=>safe(async()=>{
   const message=$("inspectMessage").value.trim();
   if(!message)throw Error("Enter a message to inspect.");
