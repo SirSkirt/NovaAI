@@ -1,5 +1,5 @@
 //! Native interface for ONE hybrid Nova brain. Both pathways jointly optimize one loss.
-use neural_nova::hybrid::HybridBrain;
+use neural_nova::hybrid::{HybridBrain,TrainingFocus};
 use neural_nova::dialogue::dialogue_prefix;
 use neural_nova::transformer::VOCAB;
 use neural_nova::trainer::{prepare,training_order,Example,PreparedLessons,ScheduleConfig,ScheduleState};
@@ -154,7 +154,8 @@ fn rehearsal_for_current(app:&AppHandle,brain:&HybridBrain)->Result<RehearsalBan
 }
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
-pub struct RehearsalInfo{names:Vec<String>,modes:Vec<String>,matched:bool}
+pub struct RehearsalInfo{names:Vec<String>,modes:Vec<String>,matched:bool,
+    foundation_lessons_completed:u8,foundation_lessons_remaining:u8}
 #[tauri::command]
 pub fn hybrid_rehearsal_info(app:AppHandle,state:State<'_,HybridState>)->Result<RehearsalInfo,String>{
     let s=lock(&state)?;
@@ -162,7 +163,9 @@ pub fn hybrid_rehearsal_info(app:AppHandle,state:State<'_,HybridState>)->Result<
     let matched=file.model_fingerprint==diag::weight_digest(&s.brain);
     let bank=rehearsal::matched(file,&diag::weight_digest(&s.brain));
     Ok(RehearsalInfo{names:bank.lessons.iter().map(|l|l.name.clone()).collect(),
-        modes:bank.lessons.iter().map(|l|l.mode.clone()).collect(),matched})
+        modes:bank.lessons.iter().map(|l|l.mode.clone()).collect(),matched,
+        foundation_lessons_completed:bank.foundation_lessons_completed,
+        foundation_lessons_remaining:rehearsal::FOUNDATION_LESSON_LIMIT.saturating_sub(bank.foundation_lessons_completed)})
 }
 #[tauri::command]
 pub fn hybrid_rehearsal_add(app:AppHandle,state:State<'_,HybridState>,
@@ -913,6 +916,7 @@ pub struct TrainOptions {
     rehearsal:Option<bool>,
     protect_previous:Option<bool>,
     retention_loss_tolerance:Option<f32>,
+    foundation_training:Option<bool>,
 }
 fn resolved_switches(options:Option<&TrainOptions>)->(bool,bool){
     let legacy=options.and_then(|o|o.adaptive);
@@ -970,6 +974,16 @@ pub fn hybrid_train(
         state.inner.training.store(false,Ordering::Release);
         return Err("Rehearsal archive is full (128). Export the lesson archive before continuing; older entries were not deleted".into());
     }
+    // Foundation is deliberately opt-in, but automatically ends after five
+    // COMPLETED lesson sessions, regardless of whether a candidate is accepted.
+    // The counter belongs to the current weights' teacher archive, not UI state.
+    let foundation_requested=options.as_ref().and_then(|o|o.foundation_training).unwrap_or(false);
+    let foundation=foundation_requested &&
+        starting_bank.foundation_lessons_completed<rehearsal::FOUNDATION_LESSON_LIMIT;
+    if foundation && (!rehearsal_enabled || !guard_enabled){
+        state.inner.training.store(false,Ordering::Release);
+        return Err("Foundation Training requires rehearsal and prior-skill protection enabled".into());
+    }
     let previous=if rehearsal_enabled || guard_enabled{
         match rehearsal::previous_plans(&starting_bank){
             Ok(v)=>v,
@@ -987,7 +1001,7 @@ pub fn hybrid_train(
         let boundary=reply_boundary_batches(&plan,epoch,batches)
             .iter().map(Vec::len).sum::<usize>();
         plan.train.len()+extra+boundary
-    }).sum::<usize>();
+    }).sum::<usize>() * if foundation{4}else{1};
     let ready=(||->Result<(),String>{
         let mut s=lock(&state)?;
         if s.trained{snapshot_active_checkpoint(&app,&s.brain,"before-lesson")?;}
@@ -1044,9 +1058,16 @@ pub fn hybrid_train(
         }
     };
     tauri::async_runtime::spawn_blocking(move||{
-        let result=train_inner(&app,&state,&plan,lesson.epochs,
-            adaptive_learning_rate,early_stopping,starting_lr,patience,&retention,
-            &previous,rehearsal_enabled,guard_enabled,tolerance,&observer_id);
+        let result=if foundation {
+            foundation_train_inner(&app,&state,&plan,lesson.epochs,
+                adaptive_learning_rate,early_stopping,starting_lr,patience,&retention,
+                &previous,rehearsal_enabled,tolerance,&observer_id,
+                starting_bank.foundation_lessons_completed)
+        }else{
+            train_inner(&app,&state,&plan,lesson.epochs,
+                adaptive_learning_rate,early_stopping,starting_lr,patience,&retention,
+                &previous,rehearsal_enabled,guard_enabled,tolerance,&observer_id)
+        };
         if let Err(ref e)=result{
             if let Ok(mut s)=lock(&state){s.error=Some(e.clone());s.stage="Training failed".into();}
             eprintln!("Neural Nova hybrid trainer error: {e}");
@@ -1056,16 +1077,24 @@ pub fn hybrid_train(
         // Keep training exclusive until teacher archive has been saved.
         match result{
             Ok((cancelled,early_stopped,best_epoch))=>{
-                if best_epoch>0 {
+                if best_epoch>0 || (foundation && !cancelled) {
                     // Advance the teacher archive only after the selected joint
                     // neural checkpoint is saved. No held-out examples enter replay.
                     let saved=(||->Result<(),String>{
                         let end=diag::weight_digest(&lock(&state)?.brain);
                         let mut bank=starting_bank;
-                        rehearsal::append(&mut bank,LessonRecord{
-                            mode:lesson.mode.clone(),text:lesson.text.clone(),
-                            name:format!("{} lesson · step {}",lesson.mode,lock(&state)?.brain.transformer.step)
-                        },end)?;
+                        if best_epoch>0{
+                            rehearsal::append(&mut bank,LessonRecord{
+                                mode:lesson.mode.clone(),text:lesson.text.clone(),
+                                name:format!("{} lesson · step {}",lesson.mode,
+                                    lock(&state)?.brain.transformer.step)
+                            },end.clone())?;
+                        }
+                        // Rejections also consume a completed foundation
+                        // lesson: the five-slot schedule never silently extends.
+                        if foundation && !cancelled{
+                            rehearsal::advance_foundation(&mut bank,&end)?;
+                        }
                         rehearsal::write(&rehearsal_path(&app)?,&bank)
                     })();
                     if let Err(e)=saved{

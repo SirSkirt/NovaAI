@@ -5,6 +5,7 @@ use serde::{Serialize,Deserialize};
 use std::{fs,path::Path};
 
 pub const MAX_ARCHIVED_LESSONS:usize=128;
+pub const FOUNDATION_LESSON_LIMIT:u8=5;
 pub const RETENTION_VALIDATION_LIMIT:usize=64;
 pub const RETENTION_PLANS_PER_CHECK:usize=16;
 pub const MAX_ACTIVE_REPLAY_LESSONS:usize=12;
@@ -17,12 +18,14 @@ pub struct LessonRecord{
 #[serde(rename_all="camelCase")]
 pub struct RehearsalBank{
     pub model_fingerprint:String,pub lessons:Vec<LessonRecord>,
+    #[serde(default)] pub foundation_lessons_completed:u8,
 }
 pub fn read(path:&Path)->Result<RehearsalBank,String>{
     if !path.exists(){return Ok(RehearsalBank::default());}
     let raw=fs::read(path).map_err(|e|e.to_string())?;
     if raw.len()>8_000_000{return Err("Rehearsal bank exceeds 8MB; export or archive it before adding more lessons".into());}
     let bank:RehearsalBank=serde_json::from_slice(&raw).map_err(|e|e.to_string())?;
+    if bank.foundation_lessons_completed>FOUNDATION_LESSON_LIMIT{return Err("Invalid foundation lesson count".into());}
     if bank.lessons.len()>MAX_ARCHIVED_LESSONS ||
       bank.lessons.iter().any(|x|x.text.len()>50_000 || x.name.len()>80){
         return Err("Rehearsal bank contains invalid lesson records".into());
@@ -30,6 +33,7 @@ pub fn read(path:&Path)->Result<RehearsalBank,String>{
     Ok(bank)
 }
 pub fn write(path:&Path,bank:&RehearsalBank)->Result<(),String>{
+    if bank.foundation_lessons_completed>FOUNDATION_LESSON_LIMIT {return Err("Invalid foundation lesson count".into());}
     if bank.lessons.len()>MAX_ARCHIVED_LESSONS {
         return Err("Rehearsal archive full; export old lessons rather than deleting them".into());
     }
@@ -53,7 +57,7 @@ pub fn write(path:&Path,bank:&RehearsalBank)->Result<(),String>{
 }
 pub fn matched(bank:RehearsalBank,fingerprint:&str)->RehearsalBank{
     if bank.model_fingerprint==fingerprint {bank}
-    else {RehearsalBank{model_fingerprint:fingerprint.to_string(),lessons:Vec::new()}}
+    else {RehearsalBank{model_fingerprint:fingerprint.to_string(),lessons:Vec::new(),foundation_lessons_completed:0}}
 }
 pub fn append(bank:&mut RehearsalBank,record:LessonRecord,ending_fingerprint:String)->Result<(),String>{
     if record.text.len()>50_000||record.name.len()>80 {
@@ -69,6 +73,19 @@ pub fn append(bank:&mut RehearsalBank,record:LessonRecord,ending_fingerprint:Str
     }
     bank.lessons.push(record);
     bank.model_fingerprint=ending_fingerprint;
+    Ok(())
+}
+/// Count successfully completed FOUNDATION lesson sessions even when no
+/// candidate was eligible. Restores/foreign models cannot inherit the counter.
+pub fn advance_foundation(bank:&mut RehearsalBank,ending_fingerprint:&str)
+    ->Result<(),String>{
+    if bank.model_fingerprint!=ending_fingerprint{
+        return Err("Foundation counter fingerprint does not match selected checkpoint".into());
+    }
+    if bank.foundation_lessons_completed>=FOUNDATION_LESSON_LIMIT{
+        return Err("Foundation's five lessons are already complete".into());
+    }
+    bank.foundation_lessons_completed+=1;
     Ok(())
 }
 /// The replay set contains only previous TRAIN splits. Held-out material is
@@ -189,6 +206,16 @@ mod tests{
         mode:"dialogue".into(),name:s.into(),
         text:format!("hello\tHi {s}\nbye\tBye {s}\ncat\tAnimal {s}\ndog\tPet {s}\nbird\tBird {s}\n")
     }}
+    #[test]fn foundation_progress_survives_rejected_lessons_and_resets_on_new_brain(){
+        let mut bank=matched(RehearsalBank::default(),"brain-a");
+        for _ in 0..FOUNDATION_LESSON_LIMIT{
+            advance_foundation(&mut bank,"brain-a").unwrap();
+        }
+        assert_eq!(bank.foundation_lessons_completed,5);
+        assert!(advance_foundation(&mut bank,"brain-a").is_err());
+        assert_eq!(matched(bank.clone(),"brain-a").foundation_lessons_completed,5);
+        assert_eq!(matched(bank,"new-checkpoint").foundation_lessons_completed,0);
+    }
     #[test]fn archive_never_silently_discards_older_lessons(){
         let mut bank=RehearsalBank::default();
         for i in 0..5{append(&mut bank,lesson(&i.to_string()),format!("fp-{i}")).unwrap();}
