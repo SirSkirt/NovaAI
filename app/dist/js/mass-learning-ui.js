@@ -4,7 +4,7 @@ const $=id=>document.getElementById(id);
 const invoke=(command,args={})=>window.__TAURI__?.core?.invoke(command,args)
   ?? Promise.reject(Error("Installed native Neural Nova required"));
 let bundle=null,mode=null,selectedMode=null,active=false,stopping=false,at=0,success=0,skipped=0,failures=0;
-let nativeZipBytes=null,nativeZipName=null,bundleBytes=null,lastQueueLesson=0,lastQueueCompleted=0,lastQueueSkipped=0;
+let nativeZipBytes=null,nativeZipName=null,bundleBytes=null,lastQueueLesson=0,lastQueueCompleted=0,lastQueueSkipped=0,lastQueueAttempt=0;
 const android=/Android/i.test(navigator.userAgent);
 if(android){
   // Android WebView File.arrayBuffer() can throw NotReadableError for files
@@ -114,19 +114,29 @@ function showQueueStatus(p){
   if(p.current>lastQueueLesson){
     addLog("START "+p.current+"/"+p.total+": "+p.lesson);
     lastQueueLesson=p.current;
+    lastQueueAttempt=0;
+  }
+  if(p.attempt>lastQueueAttempt){
+    const strategy=p.retryStrategy||"standard";
+    addLog("ATTEMPT "+p.attempt+" · "+strategy+" · "+p.lesson);
+    lastQueueAttempt=p.attempt;
   }
   if(p.completed>lastQueueCompleted){
     addLog("ACCEPTED "+p.completed+" lesson(s); best checkpoint retained");
     lastQueueCompleted=p.completed;
   }
   if((p.skipped||0)>lastQueueSkipped){
-    addLog("SKIPPED "+p.skipped+" lesson(s): no eligible validation improvement; baseline kept, continuing");
+    addLog("SKIPPED "+p.skipped+" lesson(s): retries exhausted or no eligible improvement; accepted baseline retained");
     lastQueueSkipped=p.skipped;
   }
+  const evidence=p.learningEvidence;
+  const learned=evidence?(" · practice "+evidence.practiceCorrect+"/"+evidence.practiceChecked+
+    ", held-out "+evidence.heldoutCorrect+"/"+evidence.heldoutChecked+
+    " · "+evidence.finding):"";
   view("Native background ZIP queue · "+(p.stage||"Working")+
     " · lesson "+(p.current||0)+"/"+(p.total||0)+
     " · "+success+" accepted · "+skipped+" skipped"+
-    (p.error?" · ERROR: "+p.error:"")+
+    learned+(p.error?" · ERROR: "+p.error:"")+
     (p.stopping?" · stopping":""));
 }
 async function recoverQueue(){
@@ -144,8 +154,13 @@ async function runQueue(){
   if(selectedMode!==currentMode())throw Error("Legacy fallback type changed. Validate the ZIP again.");
   const started=await invoke("hybrid_status");
   if(started.training)throw Error("Another training session is already running.");
+  const foundationScope=$("foundationZipScope").value;
   if(!confirm("Teach "+bundle.lessons.length+" "+mode+
-    " lessons as ONE native background session? Existing checkpoints will be retained between lessons."))return;
+    " lessons as ONE native background session? "+
+    ($("foundationTrainingEnabled").checked?
+      ("Foundation v2: "+(foundationScope==="entireZip"?"entire ZIP":"first five lessons")+
+      ", up to 3 recovery retries per foundation lesson. "):"")+
+    "Existing accepted checkpoints are retained between lessons."))return;
   const cfg={
     adaptiveLearningRate:$("adaptiveTraining").checked,
     earlyStopping:$("earlyStopping").checked,
@@ -154,12 +169,13 @@ async function runQueue(){
     rehearsal:$("rehearsalEnabled").checked,
     protectPrevious:$("retentionGuardEnabled").checked,
     retentionLossTolerance:Number($("retentionTolerance").value),
-    foundationTraining:$("foundationTrainingEnabled").checked
+    foundationTraining:$("foundationTrainingEnabled").checked,
+    foundationZipScope:foundationScope
   };
   const epochs=Number($("trainingEpochs").value);
   if(!Number.isInteger(epochs)||epochs<1||epochs>60)throw Error("Choose 1–60 epochs.");
   active=true;stopping=false;at=0;success=0;skipped=0;failures=0;
-  lastQueueLesson=0;lastQueueCompleted=0;lastQueueSkipped=0;
+  lastQueueLesson=0;lastQueueCompleted=0;lastQueueSkipped=0;lastQueueAttempt=0;
   readyButtons();
   try{
     await window.NovaTrainingBackground?.start();
