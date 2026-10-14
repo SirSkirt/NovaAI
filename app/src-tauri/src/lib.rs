@@ -14,6 +14,8 @@ mod rehearsal;
 mod lesson_zip;
 mod checkpoint_transfer;
 #[cfg(target_os="android")]
+mod android_checkpoint_export;
+#[cfg(target_os="android")]
 mod training_keepalive;
 #[cfg(target_os="android")]
 mod android_lesson_notification;
@@ -83,6 +85,8 @@ pub fn run() {
             lesson_zip::hybrid_zip_status,
             hybrid_lab::hybrid_checkpoint_export_begin,
             hybrid_lab::hybrid_checkpoint_export_chunk,
+            hybrid_lab::hybrid_checkpoint_export_android,
+            hybrid_lab::hybrid_checkpoint_export_cancel,
             hybrid_lab::hybrid_checkpoint_import_begin,
             hybrid_lab::hybrid_checkpoint_import_append,
             hybrid_lab::hybrid_checkpoint_import_finish,
