@@ -138,6 +138,18 @@ fn classify_lesson_outcome(best_epoch:u32,error:Option<String>)
     if best_epoch==0{Ok(LessonDisposition::BaselineRetained)}
     else{Ok(LessonDisposition::Accepted(best_epoch))}
 }
+/// Recovery plans are teacher-only scheduling, never changes to inference.
+fn recovery_plan(attempt:usize,base_rate:f32,epochs:u32)->(f32,u32,bool,&'static str){
+    let lower=(base_rate*0.1).min(0.000015).max(0.00001).min(base_rate);
+    match attempt {
+        0=>(base_rate,epochs,false,"standard"),
+        1=>(lower,epochs,false,"lower learning rate"),
+        2=>(base_rate,epochs.saturating_add(6).min(60),true,
+            "alternative example schedule + six extra epochs"),
+        _=>(lower,epochs.saturating_add(6).min(60),true,
+            "combined alternative schedule + lower learning rate"),
+    }
+}
 /// Record a lesson's actual education outcome without inventing learning.
 /// Zero eligible epochs means the baseline was retained, so it is NOT counted
 /// as accepted and MUST NOT be written to the rehearsal archive.
@@ -256,8 +268,6 @@ pub fn hybrid_zip_train(app:AppHandle,brain:State<'_,HybridState>,
                     .map(|o|o.zip_learning_rate()).unwrap_or(0.001);
                 // Rates below 0.000020 are used only by recovery attempts.
                 // No failed candidate changes the complete accepted checkpoint.
-                let low_rate=(starting_lr*0.1).min(0.000015).max(0.00001)
-                    .min(starting_lr);
                 queue.update(&app,|s|{
                     s.current=i+1;s.lesson=lesson.name.clone();
                     s.attempt=0;s.retry_strategy.clear();s.learning_evidence=None;
@@ -266,15 +276,8 @@ pub fn hybrid_zip_train(app:AppHandle,brain:State<'_,HybridState>,
                 let mut final_outcome=LessonDisposition::BaselineRetained;
                 for attempt in 0..max_attempts {
                     if queue.inner.stopping.load(Ordering::Acquire){break 'lessons;}
-                    let alt=attempt>=2;
-                    let rate=if attempt==1||attempt==3{low_rate}else{starting_lr};
-                    let attempt_epochs=if alt{epochs.saturating_add(6).min(60)}else{epochs};
-                    let strategy=match attempt{
-                        0=>"standard",
-                        1=>"lower learning rate",
-                        2=>"alternative example schedule + six extra epochs",
-                        _=>"combined alternative schedule + lower learning rate"
-                    };
+                    let (rate,attempt_epochs,alt,strategy)=
+                        recovery_plan(attempt,starting_lr,epochs);
                     queue.update(&app,|s|{
                         s.attempt=(attempt+1) as u8;
                         s.retry_strategy=strategy.into();
@@ -354,6 +357,20 @@ pub fn hybrid_zip_train(app:AppHandle,brain:State<'_,HybridState>,
 mod tests{
     use super::*;
     use std::io::Write;
+    #[test]fn foundation_retries_use_distinct_approaches(){
+        let baseline=recovery_plan(0,0.0001,12);
+        let precision=recovery_plan(1,0.0001,12);
+        let alternate=recovery_plan(2,0.0001,12);
+        let combined=recovery_plan(3,0.0001,12);
+        assert_eq!((baseline.0,baseline.1,baseline.2),(0.0001,12,false));
+        assert!(precision.0<0.00002 && precision.0<baseline.0);
+        assert_eq!((precision.1,precision.2),(12,false));
+        assert_eq!((alternate.0,alternate.1,alternate.2),
+            (baseline.0,18,true));
+        assert_eq!((combined.0,combined.1,combined.2),
+            (precision.0,18,true));
+        assert_eq!(recovery_plan(3,0.0001,60).1,60);
+    }
     fn make_zip(entries:&[(&str,&str)])->Vec<u8>{
         let mut out=Cursor::new(Vec::new());
         {
