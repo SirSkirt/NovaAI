@@ -150,8 +150,8 @@ function status(s){
       "% (baseline "+(100*s.retentionBaseline).toFixed(1)+
       "%). When protection is on, any decline prevents selection of that checkpoint."
     :"Choose a saved teacher benchmark to protect specific earlier answers (optional).";
-  $("bestEpoch").textContent=(s.bestEpoch>0?"Best epoch: "+s.bestEpoch:"Best epoch: baseline")+
-    (Number.isFinite(s.bestHeldoutLoss)?" · loss "+s.bestHeldoutLoss.toFixed(4):"");
+  $("bestEpoch").textContent=(s.bestEpoch>0?"Selected epoch: "+s.bestEpoch:"Selected checkpoint: baseline")+
+    (Number.isFinite(s.bestHeldoutLoss)?" · held-out loss "+s.bestHeldoutLoss.toFixed(4):"");
 
   if(s.total){
     const fraction=Math.min(1,s.completed/s.total);
@@ -789,7 +789,7 @@ async function listen(){
       if(Number.isFinite(p.reasoningRankingAccuracy)){
         $("reasoningAccuracy").textContent=(100*p.reasoningRankingAccuracy).toFixed(1)+"%";
       }
-      $("bestEpoch").textContent="Best epoch: "+(p.bestEpoch||"baseline")+" · loss "+p.bestLoss.toFixed(4);
+      $("bestEpoch").textContent="Selected epoch: "+(p.bestEpoch||"baseline")+" · held-out loss "+p.bestLoss.toFixed(4);
       $("trainingSpeed").textContent="Throughput: "+p.tokensPerSecond.toFixed(1)+" tokens/s";
     });
     await events.listen("hybrid-done",({payload:p})=>{
@@ -798,7 +798,7 @@ async function listen(){
       void updateRehearsalBank().catch(e=>report("WARN","Rehearsal archive",e));
       report("INFO","Training",p.cancelled?"Training stopped; best joint checkpoint restored.":
         p.earlyStopped?"Validation stalled; early stopped at best epoch "+p.bestEpoch+".":
-        "Shared training finished; best validation checkpoint restored (epoch "+p.bestEpoch+").");
+        "Shared training finished; best eligible joint checkpoint restored (epoch "+p.bestEpoch+").");
       void poll();
     });
     await events.listen("hybrid-error",({payload:p})=>{setRunning(false);if(!window.NovaMassLearning?.active)void window.NovaTrainingBackground?.stop();report("ERROR","Rust training",p);void poll();});
