@@ -1608,6 +1608,18 @@ fn train_inner(
         }
         (s.brain.clone(),loss,accuracy,s.trained,autonomous)
     };
+    // Preserve an immutable benchmark for THIS lesson across every epoch.
+    // "Selected" cannot drift > tolerance from the original lesson baseline.
+    let lesson_baseline_loss=best_loss;
+    let lesson_baseline_autonomous=best_autonomous;
+    // Independently generate prior archived responses under a fixed set of
+    // held-out prompts. The archived panels are read-only: the learner never
+    // receives their answers during the new lesson.
+    let prior_autonomous_panels=if protect_previous{
+        archived_autonomous_panels(previous)
+    }else{Vec::new()};
+    let prior_autonomous_baseline=archived_autonomous_scores(
+        &best_brain,&prior_autonomous_panels)?;
     // Diagnostic baseline is measured after existing vocabulary expansion.
     // The dedicated tokenizer-only A/B command measures the earlier stage.
     if !retention.is_empty(){
@@ -1886,7 +1898,8 @@ fn train_inner(
         if trained_count==0 {break;}
         let (validation_loss,validation_accuracy,prior_loss,retention_score,
             eligible,improved,reasoning_ranking_loss,reasoning_ranking_accuracy,
-            current_autonomous,autonomous_guard)={
+            current_autonomous,autonomous_guard,archived_autonomous_guard,
+            prior_autonomous_candidate)={
             let mut s=lock(state)?;
             s.stage="Evaluating current and earlier held-out lessons".into();
             let (loss,accuracy,ranking_loss,ranking_accuracy)=current_validation(&s.brain,lessons)?;
@@ -1905,7 +1918,7 @@ fn train_inner(
             // qualifies must ALSO preserve autonomous first-character and
             // full-answer performance on independent held-out examples.
             let candidate=eligible && if lessons.mode=="unified"{
-                loss<=best_loss+AUTONOMOUS_TEACHER_TOLERANCE
+                stays_near_original_baseline(lesson_baseline_loss,best_loss,loss)
             }else{loss+MIN_IMPROVEMENT<best_loss};
             let autonomous=if candidate && lessons.mode=="unified"{
                 autonomous_validation(&s.brain,lessons)?
@@ -1913,7 +1926,13 @@ fn train_inner(
             let autonomous_guard=if candidate{
                 autonomous_selection_ok(best_autonomous,autonomous,best_loss,loss)
             }else{false};
-            let improved=candidate && autonomous_guard;
+            let archived_candidate=if candidate && autonomous_guard{
+                archived_autonomous_scores(&s.brain,&prior_autonomous_panels)?
+            }else{Vec::new()};
+            let archived_autonomous_guard=if candidate && autonomous_guard{
+                archived_autonomous_retained(&prior_autonomous_baseline,&archived_candidate)
+            }else{false};
+            let improved=candidate&&autonomous_guard&&archived_autonomous_guard;
             if improved{
                 best_loss=loss;best_accuracy=accuracy;best_epoch=epoch;
                 best_autonomous=autonomous;
@@ -1925,7 +1944,8 @@ fn train_inner(
             s.heldout_loss=Some(loss);
             s.heldout_accuracy=Some(accuracy);
             (loss,accuracy,old_loss,teacher,eligible,improved,ranking_loss,
-                ranking_accuracy,autonomous,autonomous_guard)
+                ranking_accuracy,autonomous,autonomous_guard,
+                archived_autonomous_guard,archived_candidate)
         };
         if let Some(value)=retention_score{lock(state)?.retention_accuracy=Some(value);}
         let should_stop=schedule.observe_validation(improved);
@@ -1938,6 +1958,11 @@ fn train_inner(
                 "trainingLoss":epoch_loss/trained_count as f64,
                 "autonomousHeldout":current_autonomous,
                 "selectedAutonomousHeldout":best_autonomous,
+                "lessonBaselineAutonomous":lesson_baseline_autonomous,
+                "lessonBaselineHeldoutLoss":lesson_baseline_loss,
+                "archivedAutonomousBaseline":prior_autonomous_baseline,
+                "archivedAutonomousCandidate":prior_autonomous_candidate,
+                "archivedAutonomousGuardAccepted":archived_autonomous_guard,
                 "autonomousGuardAccepted":autonomous_guard,
                 "autonomousSelectionUsesTeacherHeldoutOnly":true,
                 "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
@@ -1979,6 +2004,11 @@ fn train_inner(
             "trainLoss":epoch_loss/trained_count as f64,
             "autonomousHeldout":current_autonomous,
             "selectedAutonomousHeldout":best_autonomous,
+            "lessonBaselineAutonomous":lesson_baseline_autonomous,
+            "lessonBaselineLoss":lesson_baseline_loss,
+            "archivedAutonomousBaseline":prior_autonomous_baseline,
+            "archivedAutonomousCandidate":prior_autonomous_candidate,
+            "archivedAutonomousGuardAccepted":archived_autonomous_guard,
             "autonomousGuardAccepted":autonomous_guard,
             "validationLoss":validation_loss,"validationAccuracy":validation_accuracy,
             "bestLoss":best_loss,"bestEpoch":best_epoch,"improved":improved,
@@ -2011,6 +2041,9 @@ fn train_inner(
             .map(|p|p.to_string()).collect::<Vec<_>>();
         diag::record(&app.state::<Diagnostics>(),"training_selected_checkpoint",serde_json::json!({
             "requestedEpochs":epochs,"bestEpoch":best_epoch,"bestValidationLoss":best_loss,
+            "lessonBaselineLoss":lesson_baseline_loss,
+            "lessonBaselineAutonomous":lesson_baseline_autonomous,
+            "archivedAutonomousBaseline":prior_autonomous_baseline,
             "bestAutonomousHeldout":best_autonomous,
             "earlyStopped":early_stopped,"cancelled":cancelled,
             "selectedStep":best_brain.transformer.step,
@@ -2020,8 +2053,8 @@ fn train_inner(
             "recurrentUpdateNorms":best_brain.reasoning_activity(b"U: hello\nN: ").ok(),
             "retentionAccuracy":restored_retention,
             "selectionPolicy":if protect_previous{
-                "minimum current-lesson heldout loss subject to prior loss and optional teacher accuracy guard"
-            }else{"minimum current-lesson heldout loss (guard disabled)"},
+                "joint current-lesson score subject to fixed lesson baseline, archived prior full-answer retention, prior heldout and optional teacher accuracy safeguards"
+            }else{"joint current-lesson score subject to fixed lesson baseline (earlier-skill guard disabled by teacher)"},
             "rehearsalEnabled":rehearsal_enabled,"priorLessonCount":previous.len(),
             "priorHeldoutBaseline":prior_baseline,"lossTolerance":loss_tolerance,
         }));
