@@ -68,6 +68,8 @@ pub(crate) struct LessonLearningEvidence {
     pub(crate) heldout_checked:usize,
     pub(crate) heldout_prefix:f32,
     pub(crate) finding:String,
+    pub(crate) evaluated_from:String,
+    pub(crate) retention_blocked:bool,
 }
 /// Read-only teacher outcome for the native ZIP scheduler.
 pub(crate) fn completed_training_outcome(state:&HybridState)
@@ -1758,6 +1760,10 @@ fn foundation_train_inner(
         "sessionId":observer_id,"epoch":0,"error":obs_err
     }));
     let mut best_epoch=0u32;
+    // Keep ONE rejected proposal for post-lesson diagnostic sampling.
+    // This candidate NEVER becomes the active neural checkpoint.
+    let mut best_rejected:Option<(HybridBrain,f32,Option<AutonomousValidation>,
+        String,bool,bool)>=None;
     let mut done_samples=0usize;
     let mut cancelled=false;
     let mut stopped=false;
@@ -1913,6 +1919,10 @@ fn foundation_train_inner(
                 autonomous_selection_ok(best_autonomous,autonomous,best_loss,loss);
             let score=loss+autonomous.map(|v|0.35*v.self_conditioned_loss)
                 .unwrap_or(0.0);
+            if !valid && best_rejected.as_ref().is_none_or(|candidate|score<candidate.1){
+                best_rejected=Some((brain.clone(),score,autonomous,
+                    focus_name.to_string(),retained,archived_ok));
+            }
             proposals.push(serde_json::json!({
                 "pathway":focus_name,"eligible":valid,"heldoutLoss":loss,
                 "nextCharacterAccuracy":acc,"autonomous":autonomous,
@@ -1988,8 +1998,15 @@ fn foundation_train_inner(
     }
     // Exact practice prompts measure fit; independent withheld prompts measure
     // generalization. Both are READ ONLY and are not used for optimizer steps.
-    let practice_fit=autonomous_validation_replies(&best_brain,&practice)?;
-    let learning_evidence=match (practice_fit,best_autonomous){
+    let (probe_brain,probe_heldout,probe_source,retention_blocked)=
+        if best_epoch==0 {
+            if let Some((candidate,_,heldout,pathway,retained,archived_ok))=&best_rejected{
+                (candidate, *heldout, format!("rejected {} candidate",pathway),
+                    !retained||!archived_ok)
+            }else{(&best_brain,best_autonomous,"retained baseline".into(),false)}
+        }else{(&best_brain,best_autonomous,"accepted checkpoint".into(),false)};
+    let practice_fit=autonomous_validation_replies(probe_brain,&practice)?;
+    let learning_evidence=match (practice_fit,probe_heldout){
         (Some(p),Some(h))=>{
             let finding=if p.generated_prefix_accuracy<0.30{
                 "practice-fit-limited"
@@ -2004,13 +2021,17 @@ fn foundation_train_inner(
                 heldout_correct:h.complete_answers_correct,
                 heldout_checked:h.complete_answers_checked,
                 heldout_prefix:h.generated_prefix_accuracy,
-                finding:finding.into()
+                finding:finding.into(),
+                evaluated_from:probe_source,
+                retention_blocked
             })
         },_=>None
     };
     diag::record(&app.state::<Diagnostics>(),"foundation_fit_vs_generalization",
         serde_json::json!({"foundationLesson":foundation_number,
             "fitVsGeneralization":learning_evidence,
+            "selectedEpoch":best_epoch,
+            "candidateWasRejected":best_epoch==0 && best_rejected.is_some(),
             "sampledOnly":true,"heldoutExcludedFromTraining":true}));
     // Live Nova was not exposed to ANY candidate before final acceptance.
     // A cancellation can keep an earlier accepted epoch, matching normal trainer.
