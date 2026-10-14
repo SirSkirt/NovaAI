@@ -7,6 +7,7 @@
 mod neural;
 mod transformer_lab;
 mod hybrid_lab;
+mod targeted_lab;
 mod test_lab;
 mod diagnostic_log;
 mod rehearsal;
@@ -20,6 +21,7 @@ mod android_lesson_notification;
 use neural::NeuralState;
 use transformer_lab::TransformerState;
 use hybrid_lab::HybridState;
+use targeted_lab::TargetedState;
 use diagnostic_log::Diagnostics;
 use checkpoint_transfer::TransferState;
 use lesson_zip::ZipQueueState;
@@ -39,6 +41,7 @@ pub fn run() {
         .manage(NeuralState::default())
         .manage(TransformerState::default())
         .manage(HybridState::default())
+        .manage(TargetedState::default())
         .manage(ZipQueueState::default())
         .manage(Diagnostics::default())
         .manage(TransferState::default())
@@ -65,6 +68,15 @@ pub fn run() {
             diagnostic_log::nova_log_stop,
             diagnostic_log::nova_log_read,
             hybrid_lab::hybrid_train,
+            targeted_lab::targeted_status,
+            targeted_lab::targeted_import_begin,
+            targeted_lab::targeted_import_append,
+            targeted_lab::targeted_import_cancel,
+            targeted_lab::targeted_import_finish,
+            targeted_lab::targeted_train,
+            targeted_lab::targeted_stop,
+            targeted_lab::targeted_discard,
+            targeted_lab::targeted_accept,
             lesson_zip::hybrid_zip_preview,
             lesson_zip::hybrid_zip_train,
             lesson_zip::hybrid_zip_stop,
