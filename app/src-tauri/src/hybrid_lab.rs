@@ -25,6 +25,7 @@ const HISTORY_LIMIT:usize=64;
 const BATCH:usize=8;
 const DEFAULT_LEARNING_RATE:f32=0.001;
 const MIN_IMPROVEMENT:f32=0.0005;
+const AUTONOMOUS_TEACHER_TOLERANCE:f32=0.08; // Teacher scoring only; not an inference rule.
 
 struct Session{
     brain:HybridBrain,trained:bool,
@@ -1376,17 +1377,21 @@ fn autonomous_selection_ok(
     candidate:Option<AutonomousValidation>,
     previous_heldout:f32,candidate_heldout:f32,
 )->bool {
-    if !(candidate_heldout+MIN_IMPROVEMENT<previous_heldout){return false;}
     match (previous,candidate) {
         (Some(old),Some(new))=>{
+            // A real improvement in independent generation can justify a
+            // *small* increase in teacher-forced loss. Otherwise this would
+            // remain a next-character-only selector with a rollout veto.
+            // The joint score and existing retention check still must win.
             let old_combined=previous_heldout+0.35*old.self_conditioned_loss;
             let new_combined=candidate_heldout+0.35*new.self_conditioned_loss;
+            candidate_heldout<=previous_heldout+AUTONOMOUS_TEACHER_TOLERANCE &&
             new.self_conditioned_loss<=old.self_conditioned_loss+0.05 &&
             new.first_character_accuracy+1e-6>=old.first_character_accuracy &&
             new.complete_answers_correct>=old.complete_answers_correct &&
             new_combined+MIN_IMPROVEMENT<old_combined
         },
-        (None,None)=>true,
+        (None,None)=>candidate_heldout+MIN_IMPROVEMENT<previous_heldout,
         _=>false,
     }
 }
@@ -1835,7 +1840,9 @@ fn train_inner(
             // rollouts when an epoch obviously regressed. A candidate that
             // qualifies must ALSO preserve autonomous first-character and
             // full-answer performance on independent held-out examples.
-            let candidate=eligible && loss+MIN_IMPROVEMENT<best_loss;
+            let candidate=eligible && if lessons.mode=="unified"{
+                loss<=best_loss+AUTONOMOUS_TEACHER_TOLERANCE
+            }else{loss+MIN_IMPROVEMENT<best_loss};
             let autonomous=if candidate && lessons.mode=="unified"{
                 autonomous_validation(&s.brain,lessons)?
             }else{None};
@@ -2480,6 +2487,13 @@ mod test_runner_tests{
             complete_answers_correct:1,..original
         };
         assert!(autonomous_selection_ok(Some(original),Some(recovered),4.0,3.9));
+        // Unlike a simple veto, genuinely better autonomous generation may
+        // be selected when teacher-forced heldout loss rises only slightly.
+        let much_better=AutonomousValidation{
+            self_conditioned_loss:2.2,generated_prefix_accuracy:0.55,..recovered
+        };
+        assert!(autonomous_selection_ok(Some(original),Some(much_better),4.0,4.04));
+        assert!(!autonomous_selection_ok(Some(original),Some(much_better),4.0,4.11));
         // No hidden answer solver, no hardcoded requirement for already-fluent
         // output: 0/2 complete answers can still make measurable progress.
         let novice=AutonomousValidation{
