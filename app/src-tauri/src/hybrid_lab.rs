@@ -941,6 +941,16 @@ pub struct TrainOptions {
 impl TrainOptions {
     pub(crate) fn zip_foundation_enabled(&self)->bool {self.foundation_training.unwrap_or(false)}
     pub(crate) fn zip_learning_rate(&self)->f32 {self.learning_rate.unwrap_or(DEFAULT_LEARNING_RATE)}
+    pub(crate) fn for_zip_attempt(mut self,scope:&str,index:u32,total:u32,
+        attempt:u8,rate:f32,alternate:bool)->Self{
+        self.foundation_zip_scope=Some(scope.into());
+        self.foundation_zip_index=Some(index);
+        self.foundation_zip_total=Some(total);
+        self.foundation_retry_attempt=Some(attempt);
+        self.foundation_alternate_schedule=Some(alternate);
+        self.learning_rate=Some(rate);
+        self
+    }
 }
 fn resolved_switches(options:Option<&TrainOptions>)->(bool,bool){
     let legacy=options.and_then(|o|o.adaptive);
