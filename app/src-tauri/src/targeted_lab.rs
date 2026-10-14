@@ -166,6 +166,7 @@ struct FocusedPlan {
     training:Vec<(Example,Vec<String>)>,
     validation:Vec<(Example,Vec<String>)>,
     contrastive_train:Vec<neural_nova::trainer::ReasoningExample>,
+    evidence_train:Vec<neural_nova::trainer::EvidenceExample>,
     contrastive_test:Vec<neural_nova::trainer::ReasoningExample>,
     heldout:Vec<HeldoutReply>,
     training_text:String,
@@ -187,6 +188,9 @@ fn select(plan:PreparedLessons,skill:Skill)->Result<FocusedPlan,String>{
     if training.is_empty() || validation.is_empty(){
         return Err(format!("This lesson lacks enough distinct {:?} examples for both training and held-out evaluation. Supply at least five independent examples of the selected block type.",skill));
     }
+    let evidence_train=if skill==Skill::Reasoning{
+        plan.evidence_train.clone()
+    }else{Vec::new()};
     let heldout=plan.heldout_replies.into_iter().filter(|x|x.3==k).collect();
     let (contrastive_train,contrastive_test)=match skill{
         Skill::Context=>(plan.understanding_train,plan.understanding_validation),
@@ -204,6 +208,7 @@ fn select(plan:PreparedLessons,skill:Skill)->Result<FocusedPlan,String>{
         focused_text.push('\n');
     }
     Ok(FocusedPlan{training,validation,heldout,contrastive_train,contrastive_test,
+        evidence_train,
         training_text:focused_text})
 }
 fn evaluate(brain:&HybridBrain,plan:&FocusedPlan,archive:&[HeldoutReply])
@@ -404,6 +409,12 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
                         let idx=(batch_index+epoch as usize-1)%plan.contrastive_train.len();
                         let pair=plan.contrastive_train[idx].clone();
                         brain.train_preference_batch_focused(&[pair],learning_rate,gradient_focus)?;
+                    }
+                    if !plan.evidence_train.is_empty()&&batch_index%24==0{
+                        let id=(batch_index+epoch as usize-1)%plan.evidence_train.len();
+                        brain.train_evidence_batch_focused(
+                            &[plan.evidence_train[id].clone()],
+                            (learning_rate*0.5).max(0.0001),gradient_focus)?;
                     }
                     if batch_index%16==0 {
                         let mut s=session.lock().map_err(|_|"Targeted progress lock poisoned")?;

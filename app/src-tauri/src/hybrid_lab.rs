@@ -1764,6 +1764,8 @@ fn train_inner(
         }else{Vec::new()};
         let mut replay_batches=0usize;
         let mut contextual_batches=0usize;
+        let mut evidence_batches=0usize;
+        let mut evidence_loss_sum=0.0f64;
         let mut epoch_loss=0.0f64;
         let mut trained_count=0usize;
         let mut batches=0usize;
@@ -1834,6 +1836,25 @@ fn train_inner(
                         serde_json::json!({"epoch":epoch,"optimizerStep":reasoning_step,
                             "rankLoss":rank_loss,"curriculumIndex":index,
                             "bothNetworksUpdated":true}));
+                }
+            }
+            // Optional explicit, ordered evidence step supervision.
+            // This teaches recurrent attention on source facts; the teacher's
+            // phrases NEVER enter inference or determine Nova's reply.
+            if !lessons.evidence_train.is_empty() &&
+                ((new_batch_index+1)%4==0 || new_batch_index+1==batches_new.len()){
+                let index=(new_batch_index/4+epoch as usize-1)%lessons.evidence_train.len();
+                let item=lessons.evidence_train[index].clone();
+                let mut s=lock(state)?;
+                let evidence_lr=(learning_rate*0.5).max(0.0001);
+                let evidence_loss=s.brain.train_evidence_batch(&[item],evidence_lr)?;
+                if !evidence_loss.is_finite(){return Err("Nonfinite evidence alignment loss".into());}
+                evidence_batches+=1;evidence_loss_sum+=evidence_loss as f64;
+                if diag::enabled(&app.state::<Diagnostics>()){
+                    diag::record(&app.state::<Diagnostics>(),"reasoning_evidence_alignment",
+                        serde_json::json!({"epoch":epoch,"loss":evidence_loss,
+                            "trainingExampleIndex":index,"modelStep":s.brain.transformer.step,
+                            "learningRate":evidence_lr,"sourceOnly":true}));
                 }
             }
             // A separate teacher-provided contextual contrast objective
@@ -2078,6 +2099,9 @@ fn train_inner(
             diag::record(&app.state::<Diagnostics>(),"train_epoch",serde_json::json!({
                 "epoch":epoch,"learningRate":learning_rate,
                 "trainingLoss":epoch_loss/trained_count as f64,
+                "evidenceAlignmentUpdates":evidence_batches,
+                "evidenceAlignmentLoss":if evidence_batches==0{None}
+                    else{Some(evidence_loss_sum/evidence_batches as f64)},
                 "autonomousHeldout":current_autonomous,
                 "selectedAutonomousHeldout":best_autonomous,
                 "lessonBaselineAutonomous":lesson_baseline_autonomous,
@@ -2133,6 +2157,12 @@ fn train_inner(
             let record=observer::capture(&guard.brain,"unified",&lessons.mode,epoch,
                 &practice,&lessons.heldout_replies,&training_contexts,serde_json::json!({
                     "trainingLoss":epoch_loss/trained_count as f64,
+                "evidenceAlignmentUpdates":evidence_batches,
+                "evidenceAlignmentLoss":if evidence_batches==0{None}
+                    else{Some(evidence_loss_sum/evidence_batches as f64)},
+                    "evidenceAlignmentUpdates":evidence_batches,
+                    "evidenceAlignmentLoss":if evidence_batches==0{None}
+                        else{Some(evidence_loss_sum/evidence_batches as f64)},
                     "heldoutLoss":validation_loss,
                     "heldoutAccuracy":validation_accuracy,
                     "selected":improved,"selectedEpoch":best_epoch,

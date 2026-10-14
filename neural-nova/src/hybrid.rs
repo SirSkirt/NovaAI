@@ -393,6 +393,10 @@ impl HybridBrain {
     /// same weights/Adam and exact backward gradients as conversational loss.
     pub fn train_evidence_batch(&mut self,samples:&[(Vec<u8>,Vec<String>)],
         learning_rate:f32)->Result<f32,String>{
+        self.train_evidence_batch_focused(samples,learning_rate,TrainingFocus::Joint)
+    }
+    pub fn train_evidence_batch_focused(&mut self,samples:&[(Vec<u8>,Vec<String>)],
+        learning_rate:f32,focus:TrainingFocus)->Result<f32,String>{
         if samples.is_empty()||samples.len()>4{
             return Err("Evidence batch size must be 1–4".into());
         }
@@ -417,10 +421,13 @@ impl HybridBrain {
         // Apply existing jointly trained optimizers; the evidence objective
         // cannot replace the language head or install a scripted reasoner.
         dense_grad.clip_global_norm(1.0);
-        self.transformer.apply_gradients_focused(
-            &mut sum,learning_rate,crate::transformer::TransformerUpdateFocus::All)?;
-        self.dense_adam.set_learning_rate(learning_rate)?;
-        self.dense_adam.apply(&mut self.dense,&dense_grad)?;
+        if let Some(mask)=focus.transformer(){
+            self.transformer.apply_gradients_focused(&mut sum,learning_rate,mask)?;
+        }
+        if focus.dense(){
+            self.dense_adam.set_learning_rate(learning_rate)?;
+            self.dense_adam.apply(&mut self.dense,&dense_grad)?;
+        }
         Ok(total*scale)
     }
     pub fn evaluate(&self,samples:&[(Vec<u8>,u8)])->Result<(f32,f32),String>{
