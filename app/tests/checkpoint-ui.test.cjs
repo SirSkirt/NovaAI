@@ -4,6 +4,16 @@ const fs=require("node:fs");
 const path=require("node:path");
 const vm=require("node:vm");
 const script=fs.readFileSync(path.join(__dirname,"../dist/js/checkpoint-ui.js"),"utf8");
+// Guard the real Tauri ACL: mocked dialog.save() cannot catch missing native
+// permissions, which previously prevented the Android save picker from opening.
+const capability=JSON.parse(fs.readFileSync(
+  path.join(__dirname,"../src-tauri/capabilities/main.json"),"utf8"));
+assert.ok(capability.windows.includes("main"),"capability must apply to main window");
+for(const permission of ["dialog:allow-open","dialog:allow-save","fs:allow-read-file"]){
+  assert.ok(capability.permissions.includes(permission),
+    "Checkpoint Android picker requires Tauri capability: "+permission);
+}
+
 
 function mock(userAgent="Android"){
   const elements=new Map();
