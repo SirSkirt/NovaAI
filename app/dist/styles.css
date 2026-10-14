@@ -117,3 +117,12 @@ label.checkbox-line{display:flex;align-items:center;gap:9px;color:#c8d8ee;font-s
 .test-attempt select{width:auto;min-width:150px}
 @media(max-width:960px){.test-options{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:640px){.test-bar,.test-import-grid{grid-template-columns:1fr}.test-options{grid-template-columns:repeat(2,minmax(0,1fr))}.test-overview-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Targeted Training: scroll four accessible workspace tabs on small screens. */
+.nav-tabs{overflow-x:auto;scrollbar-width:thin}
+.nav-tab{white-space:nowrap;flex-shrink:0}
+#pane-targeted .field-row{flex-wrap:wrap}
+#pane-targeted .wide-field{min-width:min(100%,190px)}
+#pane-targeted .metric-grid>div{min-width:0}
+#pane-targeted .metric-grid strong{overflow-wrap:anywhere}
+@media(max-width:660px){.nav-tabs .nav-tab{flex:0 0 auto;padding:10px 9px;font-size:11px}}
