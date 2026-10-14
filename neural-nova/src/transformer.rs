@@ -31,7 +31,8 @@ struct Layout {
     output:Range<usize>, bout:Range<usize>, bridge:Range<usize>,
     words:Range<usize>,memory_write:Range<usize>,memory_read:Range<usize>,
     reason_read:Range<usize>,reason_bias:Range<usize>,reason_update:Range<usize>,
-    feedback_query:Range<usize>,context_query:Range<usize>,feedback_response:Range<usize>,len:usize,
+    feedback_query:Range<usize>,context_query:Range<usize>,feedback_response:Range<usize>,
+    evidence_query:Range<usize>,evidence_response:Range<usize>,len:usize,
 }
 fn allocate(cursor:&mut usize,n:usize)->Range<usize> {
     let start=*cursor;*cursor+=n;start..*cursor
@@ -63,9 +64,13 @@ fn layout_for(window:usize)->Layout {
     let feedback_query=allocate(&mut n,DENSE_INPUT*D);
     let context_query=allocate(&mut n,DENSE_INPUT*D);
     let feedback_response=allocate(&mut n,D*VOCAB);
+    // Append after ALL v0.13.1 parameters. Imported neurons and Adam moments
+    // retain their exact numerical positions. New residual starts neutral.
+    let evidence_query=allocate(&mut n,D*D);
+    let evidence_response=allocate(&mut n,D*D);
     Layout{tok,pos,q,k,v,o,f1,b1,f2,b2,output,bout,bridge,words,memory_write,memory_read,
         reason_read,reason_bias,reason_update,
-        feedback_query,context_query,feedback_response,len:n}
+        feedback_query,context_query,feedback_response,evidence_query,evidence_response,len:n}
 }
 fn random(seed:&mut u64)->f32 {
     *seed^=*seed>>12;*seed^=*seed<<25;*seed^=*seed>>27;
@@ -119,7 +124,16 @@ struct Cache {
 }
 // Internal states used for exact reverse-mode differentiation through all
 // recurrent latent steps. No text templates, rules or alternate decoder.
-struct ReasoningCache {input:Vec<f32>,candidate:Vec<f32>,exchange:Option<ExchangeCache>}
+struct ReasoningCache {
+    input:Vec<f32>,candidate:Vec<f32>,exchange:Option<ExchangeCache>,
+    evidence:EvidenceCache,
+}
+// Each recurrent step re-queries source token keys with its UPDATED state.
+// Store the distribution for exact softmax BPTT and teacher diagnostics.
+struct EvidenceCache {
+    query_input:Vec<f32>,query:Vec<f32>,
+    attention:Vec<f32>,context:Vec<f32>,
+}
 /// One queried second computation by the original dense network.
 struct ExchangeCache {
     pre_exchange:Vec<f32>,input:Vec<f32>,features:Vec<f32>,gate:Vec<f32>,
@@ -151,7 +165,8 @@ impl Transformer {
             (&l.q,D),(&l.k,D),(&l.v,D),(&l.o,D),
             (&l.f1,D),(&l.f2,FF),(&l.output,D),(&l.bridge,VOCAB),
             (&l.words,D),(&l.memory_write,D),(&l.memory_read,D),(&l.reason_read,D),
-            (&l.feedback_query,D),(&l.context_query,D)
+            (&l.feedback_query,D),(&l.context_query,D),
+            (&l.evidence_query,D)
         ] {
             let radius=(2.0/input_size as f32).sqrt()*0.5;
             for w in &mut weights[r.clone()] {
@@ -169,6 +184,7 @@ impl Transformer {
         // No change to old predictions until learning makes response nonzero.
         // Query/context matrices already learnable (random); response learns first.
         weights[l.feedback_response.clone()].fill(0.0);
+        weights[l.evidence_response.clone()].fill(0.0);
         Self {
             weights, momentum:vec![0.0;l.len],variance:vec![0.0;l.len],step:0
         }
@@ -178,6 +194,9 @@ impl Transformer {
     pub fn previous_parameter_count()->usize {layout().reason_read.start}
     /// Parameter count of complete v0.9/v0.10 checkpoints, pre-cooperation.
     pub fn precooperation_parameter_count()->usize {layout().feedback_query.start}
+    /// Size of fully learned v0.13.1 joint checkpoints before recurrent
+    /// evidence rereading. This is recognized by BOTH native import paths.
+    pub fn preevidence_parameter_count()->usize {layout().evidence_query.start}
     /// Diagnostic-only view of learned latent refinement; no visualizer changes.
     pub fn reasoning_activity(&self,tokens:&[u16],dense:&[f32],memory:&[Vec<u16>])
         ->Result<Vec<f32>,String>{
@@ -187,6 +206,13 @@ impl Transformer {
             let z=mv(&self.weights,&l.reason_update,D,D,&step.candidate);
             vector_norm(&z)/REASONING_STEPS as f32
         }).collect())
+    }
+    /// Read-only per-iteration attention maps of the actual neural evidence
+    /// reread. These are not separate answers and never control inference.
+    pub fn evidence_attention(&self,context:&[u16],dense:&[f32],
+        memory:&[Vec<u16>])->Result<Vec<Vec<f32>>,String>{
+        let cache=self.forward_tokens_with_memory(context,Some(dense),CONTEXT,memory)?;
+        Ok(cache.reasoning.iter().map(|step|step.evidence.attention.clone()).collect())
     }
     pub fn context_length(&self)->usize {CONTEXT}
     fn forward(&self,context:&[u8])->Result<Cache,String> {self.forward_with_dense(context,None)}
@@ -319,7 +345,25 @@ impl Transformer {
                     exchange=Some(ExchangeCache{pre_exchange,input,features,gate});
                 }
             }
-            reasoning.push(ReasoningCache{input:old,candidate:raw,exchange});
+            // NEW: every reasoning round has a fresh learned query over the
+            // source evidence. Unlike reusing the initial attention-pooled
+            // context, this read can select DIFFERENT facts after an exchange.
+            // There is no rule, string matching or teacher-selected answer.
+            let query_input=hidden.clone();
+            let evidence_query=mv(&self.weights,&l.evidence_query,D,D,&query_input);
+            let evidence_attention=stable_softmax(&keys.iter().map(|key|
+                dot(&evidence_query,key)*scale).collect::<Vec<_>>());
+            let mut evidence_context=vec![0.0;D];
+            for (weight,value) in evidence_attention.iter().zip(&values){
+                for j in 0..D{evidence_context[j]+=weight*value[j];}
+            }
+            let evidence_update=mv(&self.weights,&l.evidence_response,D,D,&evidence_context);
+            for j in 0..D{hidden[j]+=evidence_update[j]/REASONING_STEPS as f32;}
+            reasoning.push(ReasoningCache{input:old,candidate:raw,exchange,
+                evidence:EvidenceCache{
+                    query_input,query:evidence_query,
+                    attention:evidence_attention,context:evidence_context
+                }});
         }
         let mut logits=mv(&self.weights,&l.output,VOCAB,D,&hidden);
         for j in 0..VOCAB {logits[j]+=self.weights[l.bout.start+j];}
@@ -372,7 +416,37 @@ impl Transformer {
         // Exact BPTT across the recurrent reasoning steps. Each residual
         // update contributes to the same fused state's gradient.
         let mut extra_context_gradient=vec![0.0;D];
+        // Attention rereads share Transformer token K/V projections; store
+        // their contributions until the original attention backprop below.
+        let mut evidence_dx=vec![vec![0.0;D];c.tokens.len()];
         for step in c.reasoning.iter().rev(){
+            // Evidence residual is LAST in forward round: differentiate it
+            // BEFORE reciprocal dense exchange and before latent refinement.
+            let ev=&step.evidence;
+            let de=dh.iter().map(|value|value/REASONING_STEPS as f32)
+                .collect::<Vec<_>>();
+            let dc=back_mv(&self.weights,&l.evidence_response,D,D,
+                &ev.context,&de,&mut grad);
+            let attention_scores=c.values.iter().map(|value|dot(&dc,value))
+                .collect::<Vec<_>>();
+            let mean_score=attention_scores.iter().zip(&ev.attention)
+                .map(|(value,weight)|value*weight).sum::<f32>();
+            let mut dq=vec![0.0;D];
+            let scale=(D as f32).sqrt().recip();
+            for i in 0..c.tokens.len(){
+                let dp=ev.attention[i]*(attention_scores[i]-mean_score)*scale;
+                let dv=dc.iter().map(|value|value*ev.attention[i]).collect::<Vec<_>>();
+                let dxv=back_mv(&self.weights,&l.v,D,D,&c.inputs[i],&dv,&mut grad);
+                let dk=ev.query.iter().map(|value|value*dp).collect::<Vec<_>>();
+                let dxk=back_mv(&self.weights,&l.k,D,D,&c.inputs[i],&dk,&mut grad);
+                for j in 0..D{
+                    evidence_dx[i][j]+=dxv[j]+dxk[j];
+                    dq[j]+=dp*c.keys[i][j];
+                }
+            }
+            let dquery=back_mv(&self.weights,&l.evidence_query,D,D,
+                &ev.query_input,&dq,&mut grad);
+            for j in 0..D{dh[j]+=dquery[j];}
             if let Some(ref exchange)=step.exchange{
                 let dresponse=dh.iter().map(|x|x/EXCHANGE_ROUNDS as f32).collect::<Vec<_>>();
                 let dfeatures=back_mv(&self.weights,&l.feedback_response,D,VOCAB,
@@ -441,7 +515,7 @@ impl Transformer {
         }
         let dmid_ff=back_mv(&self.weights,&l.f1,FF,D,&c.mid,&dpre,&mut grad);
         for j in 0..D {dh[j]+=dmid_ff[j];}
-        let mut dx=vec![vec![0.0;D];c.tokens.len()];
+        let mut dx=evidence_dx;
         let last=dx.len()-1;
         for j in 0..D {dx[last][j]+=dh[j];}
         let mut dcontext=back_mv(&self.weights,&l.o,D,D,&c.context,&dh,&mut grad);
@@ -561,6 +635,12 @@ impl Transformer {
         }
         // v0.8 full hybrid Transformer has no recurrent latent matrices.
         // Append neutral, trainable parameters without perturbing predictions.
+        if weights.len()==current.evidence_query.start {
+            self.weights[..weights.len()].copy_from_slice(weights);
+            self.momentum[..weights.len()].copy_from_slice(momentum);
+            self.variance[..weights.len()].copy_from_slice(variance);
+            return Ok(());
+        }
         if weights.len()==current.feedback_query.start{
             self.weights[..weights.len()].copy_from_slice(weights);
             self.momentum[..weights.len()].copy_from_slice(momentum);
@@ -744,7 +824,7 @@ impl Transformer {
         // original parameters/moments are retained; the appended trainable
         // bridge receives fresh initialization and zero optimizer moments.
         let old=layout_for(ORIGINAL_CONTEXT);
-        if stored_count!=layout().len && stored_count!=layout().feedback_query.start && stored_count!=layout().reason_read.start && stored_count!=layout().words.start && stored_count!=old.words.start && stored_count!=old.bridge.start {
+        if stored_count!=layout().len && stored_count!=layout().evidence_query.start && stored_count!=layout().feedback_query.start && stored_count!=layout().reason_read.start && stored_count!=layout().words.start && stored_count!=old.words.start && stored_count!=old.bridge.start {
             return Err("Transformer checkpoint parameter count mismatch".into());
         }
         let mut step=[0u8;8];
@@ -1036,6 +1116,62 @@ mod tests {
                 }
             }
             assert!(changed>0);
+        }
+    }
+
+    #[test]
+    fn evidence_reread_is_neutral_on_v0131_and_preserves_optimizer_moments(){
+        let mut old=Transformer::new(99);
+        let boundary=Transformer::preevidence_parameter_count();
+        old.train_batch(&[(b"U: Mira owns the blue key. What is blue?\nN: ".to_vec(),
+            b'T')],0.0003).unwrap();
+        let history=b"U: Mira owns the blue key. What is blue?\nN: ";
+        let before=old.predict(history).unwrap();
+        let mut imported=Transformer::new(99);
+        imported.import_compatible_arrays(&old.weights[..boundary],
+            &old.momentum[..boundary],&old.variance[..boundary]).unwrap();
+        imported.step=old.step;
+        assert_eq!(imported.predict(history).unwrap(),before);
+        assert_eq!(&imported.weights[..boundary],&old.weights[..boundary]);
+        assert_eq!(&imported.momentum[..boundary],&old.momentum[..boundary]);
+        assert_eq!(&imported.variance[..boundary],&old.variance[..boundary]);
+        assert!(imported.weights[layout().evidence_response].iter().all(|v|*v==0.0));
+    }
+    #[test]
+    fn reasoning_rereads_token_evidence_then_trains_the_query(){
+        let mut model=Transformer::new(76);
+        let l=layout();
+        let tokens=b"U: Red box holds a key. Blue box holds a coin. What is in the blue box?\nN: "
+            .iter().map(|c|*c as u16).collect::<Vec<_>>();
+        let dense=vec![0.07;VOCAB];
+        let maps=model.evidence_attention(&tokens,&dense,&[]).unwrap();
+        assert_eq!(maps.len(),REASONING_STEPS);
+        assert!(maps.iter().all(|att|(att.iter().sum::<f32>()-1.0).abs()<1e-5));
+        assert_eq!(model.weights[l.evidence_response.clone()],
+            vec![0.0;l.evidence_response.len()]);
+        let (_,first,_)=model.gradient_tokens_with_memory(&tokens,b'A',Some(&dense),&[]).unwrap();
+        assert!(first[l.evidence_response.clone()].iter().any(|v|v.abs()>1e-8),
+            "evidence readout must get supervised output gradients on first step");
+        // Make residual nonzero; ensure exact derivatives reach evidence
+        // query, reread keys, and upstream token values.
+        for j in 0..D{
+            model.weights[l.evidence_response.start+j*D+j]=0.28;
+        }
+        let (_,gradient,_)=model.gradient_tokens_with_memory(
+            &tokens,b'A',Some(&dense),&[]).unwrap();
+        let eps=0.003;
+        for index in [l.evidence_response.start+33,l.evidence_query.start+35,
+                      l.v.start+25,l.k.start+11]{
+            let mut plus=model.clone();plus.weights[index]+=eps;
+            let mut minus=model.clone();minus.weights[index]-=eps;
+            let loss=|m:&Transformer|{
+                -m.forward_tokens_with_memory(&tokens,Some(&dense),CONTEXT,&[])
+                    .unwrap().probabilities[b'A' as usize].max(1e-30).ln()
+            };
+            let finite_difference=(loss(&plus)-loss(&minus))/(2.0*eps);
+            assert!((gradient[index]-finite_difference).abs()<0.045,
+                "evidence BPTT index {index}: analytic {} numerical {finite_difference}",
+                gradient[index]);
         }
     }
     #[test]

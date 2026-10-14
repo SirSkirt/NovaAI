@@ -416,6 +416,7 @@ impl HybridBrain {
         if old_count!=brain.transformer.weights.len() &&
             old_count!=Transformer::previous_parameter_count() &&
             old_count!=Transformer::precooperation_parameter_count() &&
+            old_count!=Transformer::preevidence_parameter_count() &&
             old_count!=24800 && old_count!=28896{
             return Err("Hybrid Transformer parameter count mismatch".into());
         }
