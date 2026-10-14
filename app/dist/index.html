@@ -127,8 +127,9 @@
             <p class="muted">Export or restore one .nhyb file containing both pathways, bridge, tokenizer, optimizer state and learned memory weights. Checkpoint import overwrites the active brain only after validation and creates a pre-import backup. Conversation history is cleared; the prior lesson archive is used only if its weight fingerprint matches.</p>
             <div class="row wrap actions">
               <button type="button" id="exportCheckpoint" class="secondary">Export checkpoint</button>
-              <label class="file-button" for="importCheckpointFile">＋ Choose .nhyb</label>
+              <label class="file-button" id="importCheckpointFileLabel" for="importCheckpointFile">＋ Choose .nhyb</label>
               <input type="file" id="importCheckpointFile" accept=".nhyb,application/octet-stream">
+              <button type="button" id="importCheckpointNative" class="secondary" hidden>＋ Choose .nhyb from Android Files</button>
               <button type="button" id="importCheckpoint" class="secondary" disabled>Restore selected checkpoint</button>
             </div>
             <p id="checkpointTransferStatus" class="muted">No checkpoint transfer in progress.</p>
