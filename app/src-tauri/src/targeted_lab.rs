@@ -13,6 +13,16 @@ use std::sync::{Arc,Mutex};
 use std::sync::atomic::{AtomicBool,Ordering};
 use tauri::{AppHandle,Manager,State};
 
+#[cfg(target_os="android")]
+fn target_training_notification(app:&AppHandle,body:String,finished:bool){
+    use tauri_plugin_notification::NotificationExt;
+    let mut note=app.notification().builder().id(90217).silent()
+        .title(if finished{"Nova targeted training finished"}
+               else{"Nova targeted training in progress"})
+        .body(body);
+    if !finished{note=note.ongoing();}
+    let _=note.show();
+}
 #[derive(Default)]
 pub struct TargetedState {
     inner:Arc<Mutex<TargetedSession>>,
@@ -332,6 +342,8 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
     let session=state.inner.clone();
     let cancelled=state.stop.clone();
     let hybrid=hybrid.inner().clone();
+    #[cfg(target_os="android")]
+    let notice_app=app.clone();
     tauri::async_runtime::spawn_blocking(move||{
         let outcome=(||->Result<Staged,String>{
             let mut brain=start.clone();
@@ -375,6 +387,11 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
                     best_scores=score;
                     best_epoch=epoch;
                 }
+                #[cfg(target_os="android")]
+                target_training_notification(&notice_app,format!(
+                    "{} focus · {} objective · epoch {}/{} · held-out loss {:.4}",
+                    focus_name,skill_name,epoch,epochs,score.heldout_loss
+                ),false);
                 let mut s=session.lock().map_err(|_|"Targeted progress lock poisoned")?;
                 s.epoch=epoch;s.completed=epoch as usize*plan.training.len();
                 s.last_loss=Some((losses/count as f64) as f32);
@@ -403,6 +420,9 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
             },Err(_)=>{}
         }
         hybrid_lab::targeted_release(&hybrid);
+        #[cfg(target_os="android")]
+        target_training_notification(&notice_app,
+            "Targeted learning completed. Review the candidate before accepting.".into(),true);
     });
     Ok(())
 }
