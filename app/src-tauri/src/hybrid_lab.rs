@@ -2124,6 +2124,66 @@ fn train_inner(
     ),true);
     Ok((cancelled,early_stopped,best_epoch))
 }
+/// Experimental targeted teaching can hold the shared training lock while
+/// training a separate cloned candidate, preventing ordinary ZIP teaching,
+/// checkpoint imports, reset, or chat from racing the eventual commit.
+pub(crate) fn targeted_reserve(state:&HybridState)->Result<(),String>{
+    state.inner.training.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire)
+        .map_err(|_|"Finish the existing Nova training session first".to_string())?;
+    Ok(())
+}
+pub(crate) fn targeted_release(state:&HybridState){
+    state.inner.training.store(false,Ordering::Release);
+}
+pub(crate) fn targeted_snapshot(state:&HybridState)
+    ->Result<(HybridBrain,String),String>{
+    let s=lock(state)?;
+    Ok((s.brain.clone(),diag::weight_digest(&s.brain)))
+}
+/// Return only PREVIOUS, withheld teacher benchmarks. Targets are never
+/// included in a focused gradient update.
+pub(crate) fn targeted_archived_validation(
+    app:&AppHandle,state:&HybridState
+)->Result<Vec<neural_nova::trainer::HeldoutReply>,String>{
+    let s=lock(state)?;
+    let bank=rehearsal_for_current(app,&s.brain)?;
+    let plans=rehearsal::previous_plans(&bank)?;
+    Ok(archived_autonomous_panels(&plans).into_iter().flatten().collect())
+}
+/// Apply a manually approved whole-brain candidate using the same validated
+/// checkpoint backup/atomic save path as normal teaching. Never splice
+/// individual neuron arrays between different checkpoint lineages.
+pub(crate) fn targeted_commit(app:&AppHandle,state:&HybridState,
+    candidate:&HybridBrain,expected_active_fingerprint:&str
+)->Result<HybridStatus,String>{
+    targeted_reserve(state)?;
+    let attempt=(||->Result<HybridStatus,String>{
+        let mut s=lock(state)?;
+        if diag::weight_digest(&s.brain)!=expected_active_fingerprint{
+            return Err("Active Nova weights changed since targeted training began. Discard this stale candidate or begin again; no checkpoint was overwritten".into());
+        }
+        if s.trained{snapshot_active_checkpoint(app,&s.brain,"before-targeted-accept")?;}
+        candidate.save(path(app)?)?;
+        save_conversation(app,&[])?;
+        s.brain=candidate.clone();
+        s.trained=true;
+        s.history.clear();
+        s.epoch=0;s.epochs=0;s.completed=0;s.total=0;
+        s.heldout_loss=None;s.heldout_accuracy=None;s.train_loss=None;
+        s.best_heldout_loss=None;s.best_epoch=0;
+        s.early_stopped=false;s.retention_baseline=None;s.retention_accuracy=None;
+        s.error=None;s.stage="Teacher accepted targeted neural candidate".into();
+        diag::record(&app.state::<Diagnostics>(),"targeted_checkpoint_accepted",serde_json::json!({
+            "optimizerStep":s.brain.transformer.step,
+            "denseStep":s.brain.dense_adam_steps(),
+            "fingerprint":diag::weight_digest(&s.brain),
+            "wholeBrain":true,"originalCheckpointBackedUp":true,
+        }));
+        Ok(status(state,&s))
+    })();
+    targeted_release(state);
+    attempt
+}
 #[tauri::command]
 pub fn hybrid_stop(state:State<'_,HybridState>)->bool{
     let training=state.inner.training.load(Ordering::Acquire);
