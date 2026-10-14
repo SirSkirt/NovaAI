@@ -2640,6 +2640,88 @@ mod test_runner_tests{
         assert!(autonomous_selection_ok(Some(novice),Some(improving),5.0,4.8));
     }
     #[test]
+    fn joint_selection_cannot_ratchet_heldout_loss_above_original_baseline(){
+        let initial=1.4332;
+        assert!(stays_near_original_baseline(initial,initial,1.48));
+        // Multiple accepted small regressions may not compound into a
+        // "NEW BEST" at a much worse heldout loss than session start.
+        assert!(!stays_near_original_baseline(initial,1.50,1.57));
+        assert!(!stays_near_original_baseline(initial,1.49,2.1174));
+        assert!(!stays_near_original_baseline(initial,1.49,f32::NAN));
+    }
+    #[test]
+    fn archived_full_reply_regressions_block_checkpoint_selection(){
+        let baseline=AutonomousValidation{
+            self_conditioned_loss:1.2,first_character_accuracy:0.75,
+            generated_prefix_accuracy:0.708,complete_answers_correct:3,
+            complete_answers_checked:4,represented_categories:4,
+            max_characters_per_probe:12,
+        };
+        let deteriorated=AutonomousValidation{
+            self_conditioned_loss:1.0,first_character_accuracy:1.0,
+            generated_prefix_accuracy:0.76,complete_answers_correct:1,
+            ..baseline
+        };
+        // Even with BETTER prediction loss, first-character performance
+        // and prefix accuracy, losing two correct complete replies is a
+        // measurable earlier-skill regression.
+        assert!(!archived_autonomous_retained(&[baseline],&[deteriorated]));
+        assert!(archived_autonomous_retained(&[baseline],&[baseline]));
+        let lost_first=AutonomousValidation{
+            first_character_accuracy:0.50,..baseline
+        };
+        assert!(!archived_autonomous_retained(&[baseline],&[lost_first]));
+        let lost_prefix=AutonomousValidation{
+            generated_prefix_accuracy:0.60,..baseline
+        };
+        assert!(!archived_autonomous_retained(&[baseline],&[lost_prefix]));
+        assert!(!archived_autonomous_retained(&[baseline],&[]));
+    }
+    #[test]
+    fn archived_retention_panels_prefer_newest_and_cover_oldest(){
+        let old=prepare("unified",concat!(
+            "[Dialogue Lesson]\nGreeting practice.\n[examples]\n",
+            "hi  Hello.\nhey  Hey.\nbye  Goodbye.\nthanks  Thanks.\n",
+            "good morning  Morning.\n[/examples]\n[/Dialogue Lesson]"
+        )).unwrap();
+        let new=prepare("unified",concat!(
+            "[Dialogue Lesson]\nMore greetings.\n[examples]\n",
+            "hello  Hi!\nfarewell  Bye!\nappreciate it  Welcome!\n",
+            "goodnight  Night!\ngreetings  Hello!\n",
+            "[/examples]\n[/Dialogue Lesson]"
+        )).unwrap();
+        let p=archived_autonomous_panels(&[old.clone(),new.clone()]);
+        assert_eq!(p.len(),2,"older and newer lessons need distinct retention");
+        assert_eq!(p[0].len(),1);
+        assert_eq!(p[1].len(),1);
+        assert_eq!(p[0][0].0,new.heldout_replies[0].0);
+        assert_eq!(p[1][0].0,old.heldout_replies[0].0);
+        let src=std::slice::from_ref(&new);
+        let same=archived_autonomous_panels(src);
+        assert_eq!(same.len(),1,"identical oldest and latest must not duplicate");
+    }
+    #[test]
+    fn autonomous_retention_checks_never_mutate_the_neural_checkpoint(){
+        let old=prepare("unified",concat!(
+            "[Dialogue Lesson]\nGreeting examples.\n[examples]\n",
+            "hello  Hello!\nhi  Hi!\nbye  Goodbye!\n",
+            "thanks  Thanks!\ngood night  Good night!\n",
+            "[/examples]\n[/Dialogue Lesson]"
+        )).unwrap();
+        let panels=archived_autonomous_panels(&[old]);
+        let brain=HybridBrain::new();
+        let weights=brain.transformer.weights.clone();
+        let momentum=brain.transformer.momentum.clone();
+        let step=brain.transformer.step;
+        let a=archived_autonomous_scores(&brain,&panels).unwrap();
+        let b=archived_autonomous_scores(&brain,&panels).unwrap();
+        assert_eq!(a.len(),b.len());
+        assert_eq!(a[0].self_conditioned_loss,b[0].self_conditioned_loss);
+        assert_eq!(brain.transformer.weights,weights);
+        assert_eq!(brain.transformer.momentum,momentum);
+        assert_eq!(brain.transformer.step,step);
+    }
+    #[test]
     fn autonomous_heldout_is_readonly_and_reproducible(){
         let raw=concat!(
             "[Dialogue Lesson]\nGreetings teach reply beginnings and endings.\n",
