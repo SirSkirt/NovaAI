@@ -1,3 +1,14 @@
+NEURAL NOVA v0.12.6 — FINAL VERIFIED ARTIFACTS (2026-10-13 / UTC 2026-10-14)
+GitHub Actions Build #461: https://github.com/SirSkirt/NovaAI/actions/runs/38490997772 — ALL THREE JOBS SUCCEEDED:
+- JavaScript and neural-network tests SUCCESS (60 Rust core tests, 0 failures).
+- Windows NSIS (experimental) SUCCESS, including Rust app tests and installer packaging. Artifact Neural-Nova-Experimental-Windows ID 11861428668.
+- Android debug APK (experimental) SUCCESS; includes all four ABI versions of libapp_core.so, validated SAME pinned experimental signing certificate, and uploaded artifact Neural-Nova-Experimental-Android ID 11861328938.
+Prior Build #460 failed on serde_json::json! macro recursion limit because larger teacher epoch diagnostics exceeded default macro limit; app/src-tauri/src/lib.rs now has #![recursion_limit = "256"] and the FULL v0.12.6 rebuild succeeded. No neural recurrence or inference depth changed.
+CHECKPOINT SELECTION FIX: Session-start lesson loss is immutable for selection ceiling, older complete generated replies must be retained in newest/oldest category-heldout panels, new default older-loss tolerance 0.02 with previous user choices preserved, and ambiguous NEW BEST is replaced with SELECTED (joint score). Each epoch reports heldout-set ID and real selection reason to disambiguate comparisons across lessons.
+USER NEXT: Wait until active training finishes (installer replacement kills a training process); export .nhyb and separately preserve archived lesson material. Install v0.12.6 over previous version. In Teach > Keep earlier lessons expand settings and set Maximum older held-out loss increase to Strict · 0.02 if old saved preference 0.10 persists. Keep Reject checkpoints that lose earlier skills checked. On subsequent epoch logs confirm selected loss stays within 0.08 of CURRENT lesson starting heldout loss, older archived autonomous complete answers don't regress on sampled panel, and SELECTED corresponds to JOINT score rather than necessarily lowest character loss. The panels are bounded and do not prove global nonforgetting or general reasoning; conduct separate unseen exam after retraining.
+
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA v0.12.6 — ACCURATE BEST CHECKPOINT / OLD ANSWER RETENTION (2026-10-13)
 
 USER ISSUE: In a prior v0.12.5 training log epoch 4 was tagged NEW BEST with train loss 0.4322, CURRENT heldout 2.1174, older heldout 1.3143 vs older baseline 1.2330, and self-generated complete 1/4. A different baseline screenshot showed heldout 1.4332 and 3/4 complete. Without the identical evaluation set/lesson ID across screenshots, those numeric complete-answer scores are not strictly comparable; however the trainer exposed real defects:
