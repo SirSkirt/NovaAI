@@ -1232,7 +1232,7 @@ mod tests {
         let token_ids=prompt.iter().map(|&c|c as u16).collect::<Vec<_>>();
         let base=crate::encode_ascii_context(prompt).unwrap();
         let dense=dense_network.logits(&base).unwrap();
-        let evidence=vec![(6..13).collect::<Vec<_>(),(37..49).collect::<Vec<_>>()];
+        let evidence=vec![(6..13).collect::<Vec<_>>(),(37..49).collect::<Vec<_>>()];
         let mut dense_grads=Gradients::zeros(&dense_network);
         let (_,grad,_)=model.gradient_evidence_cooperative(
             &token_ids,&evidence,&dense,&dense_network,&base,&mut dense_grads).unwrap();
