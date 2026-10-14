@@ -255,10 +255,17 @@ pub fn hybrid_checkpoint_export_begin(app:AppHandle,
     if state.inner.training.load(Ordering::Acquire){return Err("Wait until training completes".into());}
     let s=lock(&state)?;
     if !s.trained{return Err("Teach Nova before exporting neural weights".into());}
-    let temp=path(&app)?.with_extension("checkpoint-export.tmp");
-    s.brain.save(&temp)?;
-    let bytes=fs::read(&temp).map_err(|e|e.to_string())?;
+    // Always serialize to a REAL .nhyb path. HybridBrain::save stages its
+    // output by changing the extension to .tmp; if the requested destination
+    // ALREADY ends in .tmp those names collide and its atomic rename fails
+    // with "No such file or directory (os error 2)".
+    let temp=path(&app)?.with_file_name("neural-nova-checkpoint-export.nhyb");
+    let serialized=(||->Result<Vec<u8>,String>{
+        s.brain.save(&temp)?;
+        fs::read(&temp).map_err(|e|format!("Cannot read serialized checkpoint: {e}"))
+    })();
     let _=fs::remove_file(&temp);
+    let bytes=serialized?;
     let length=transfer.begin_export(bytes)?;
     Ok(CheckpointTransferInfo{bytes:length,step:s.brain.transformer.step,
         words:s.brain.tokenizer.words.len(),parameters:s.brain.parameter_count()})
@@ -268,6 +275,47 @@ pub fn hybrid_checkpoint_export_chunk(
     transfer:State<'_,TransferState>,offset:usize)->Result<Vec<u8>,String>{
     transfer.chunk(offset)
 }
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct AndroidCheckpointExportResult{bytes:usize,verified:bool}
+/// Save the SAME immutable export bytes via Android's system document picker.
+/// Unlike WebView Blob URLs or some Tauri FS content:// writes, this passes
+/// the data through a Java ContentResolver stream that remains open until
+/// writing and SHA-256 read-back verification both complete.
+#[tauri::command]
+pub fn hybrid_checkpoint_export_android(
+    app:AppHandle,transfer:State<'_,TransferState>,destination_uri:String
+)->Result<AndroidCheckpointExportResult,String>{
+    #[cfg(target_os="android")]
+    {
+        if !destination_uri.starts_with("content://"){
+            return Err("Choose a .nhyb document destination with Android Files".into());
+        }
+        let bytes=transfer.export_read()?;
+        let scratch=path(&app)?.with_file_name("neural-nova-android-transfer.nhyb");
+        let write=fs::write(&scratch,&bytes)
+            .map_err(|e|format!("Could not stage the checkpoint in app-private storage: {e}"));
+        if let Err(e)=write {return Err(e);}
+        let attempted=crate::android_checkpoint_export::write_android_document(
+            &scratch,&destination_uri);
+        let _=fs::remove_file(&scratch);
+        let actual=attempted?;
+        if actual as usize!=bytes.len(){
+            return Err(format!("Android checkpoint save was incomplete: {actual}/{} bytes; do not rely on this file",bytes.len()));
+        }
+        transfer.export_cancel()?;
+        Ok(AndroidCheckpointExportResult{bytes:bytes.len(),verified:true})
+    }
+    #[cfg(not(target_os="android"))]
+    {
+        let _=(app,transfer,destination_uri);
+        Err("Android document export is only available in the Android app".into())
+    }
+}
+#[tauri::command]
+pub fn hybrid_checkpoint_export_cancel(
+    transfer:State<'_,TransferState>
+)->Result<(),String>{transfer.export_cancel()}
 #[tauri::command]
 pub fn hybrid_checkpoint_import_begin(
     state:State<'_,HybridState>,transfer:State<'_,TransferState>,
