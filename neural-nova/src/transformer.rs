@@ -95,6 +95,9 @@ fn stable_softmax(values:&[f32])->Vec<f32> {
     for value in &mut p {*value/=sum;}
     p
 }
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub(crate) enum TransformerUpdateFocus{All,Language,Interconnect}
+
 #[derive(Clone)]
 pub struct Transformer {
     pub weights:Vec<f32>,
@@ -610,24 +613,47 @@ impl Transformer {
         if gradient.len()!=self.weights.len(){return Err("Bridge gradient shape mismatch".into());}
         Ok(vector_norm(&gradient[range]))
     }
-    pub(crate) fn apply_gradients(&mut self,sum:&mut [f32],lr:f32)->Result<(),String> {
-        if sum.len()!=self.weights.len() {return Err("Transformer gradient length mismatch".into());}
-        if !lr.is_finite()||!(1e-6..=0.05).contains(&lr) {return Err("Invalid learning rate".into());}
-        let norm=(sum.iter().map(|g|(*g as f64).powi(2)).sum::<f64>()).sqrt();
-        let clip=if norm>1.0 {(1.0/norm) as f32}else{1.0};
+    /// Which Transformer parameter groups may receive a learned update.
+    /// All groups still participate in forward and reverse-mode computation.
+    /// Frozen groups do not change their weights OR Adam moments.
+    pub(crate) fn apply_gradients_focused(&mut self,sum:&mut [f32],lr:f32,
+        focus:TransformerUpdateFocus)->Result<(),String>{
+        if sum.len()!=self.weights.len(){return Err("Transformer gradient length mismatch".into());}
+        if !lr.is_finite() || !(1e-6..=0.05).contains(&lr){
+            return Err("Invalid learning rate".into());
+        }
+        let l=layout();
+        let is_link=|i:usize| l.bridge.contains(&i)
+            ||l.feedback_query.contains(&i)
+            ||l.context_query.contains(&i)
+            ||l.feedback_response.contains(&i);
+        let active=|i:usize|match focus {
+            TransformerUpdateFocus::All=>true,
+            TransformerUpdateFocus::Language=>!is_link(i),
+            TransformerUpdateFocus::Interconnect=>is_link(i),
+        };
+        let norm=(sum.iter().enumerate().filter(|(i,_)|active(*i))
+            .map(|(_,g)|(*g as f64)*(*g as f64)).sum::<f64>()).sqrt();
+        let clip=if norm>1.0{(1.0/norm) as f32}else{1.0};
         self.step+=1;
         let bias1=(1.0f64-0.9f64.powf(self.step as f64)) as f32;
         let bias2=(1.0f64-0.999f64.powf(self.step as f64)) as f32;
-        for i in 0..self.weights.len() {
+        for i in 0..self.weights.len(){
+            if !active(i){continue;}
             let g=sum[i]*clip;
             self.momentum[i]=0.9*self.momentum[i]+0.1*g;
             self.variance[i]=0.999*self.variance[i]+0.001*g*g;
             let m=self.momentum[i]/bias1;
             let v=self.variance[i]/bias2;
             self.weights[i]-=lr*m/(v.sqrt()+1e-8);
-            if !self.weights[i].is_finite() {return Err("Non-finite weight during training".into());}
+            if !self.weights[i].is_finite(){
+                return Err("Non-finite weight during focused training".into());
+            }
         }
         Ok(())
+    }
+    pub(crate) fn apply_gradients(&mut self,sum:&mut [f32],lr:f32)->Result<(),String>{
+        self.apply_gradients_focused(sum,lr,TransformerUpdateFocus::All)
     }
     pub fn train_batch(&mut self,samples:&[(Vec<u8>,u8)],lr:f32)->Result<f32,String> {
         if samples.is_empty() {return Err("Cannot train on empty batch".into());}
@@ -965,6 +991,32 @@ mod tests {
         assert!((dense_grad.layers[0].weights[0]-numeric).abs()<0.04,
             "dense-backward analytic {} numerical {numeric}",
             dense_grad.layers[0].weights[0]);
+    }
+    #[test]
+    fn focused_optimizer_freezes_untargeted_weights_and_adam_moments(){
+        let original=Transformer::new(2026);
+        let groups=[TransformerUpdateFocus::Language,TransformerUpdateFocus::Interconnect];
+        let l=layout();
+        for focus in groups {
+            let mut net=original.clone();
+            let mut gradient=vec![0.25;net.weights.len()];
+            net.apply_gradients_focused(&mut gradient,0.001,focus).unwrap();
+            let link=|i:usize|l.bridge.contains(&i)||
+                l.feedback_query.contains(&i)||l.context_query.contains(&i)||
+                l.feedback_response.contains(&i);
+            let mut changed=0usize;
+            for i in 0..net.weights.len(){
+                let targeted=if focus==TransformerUpdateFocus::Language{!link(i)}else{link(i)};
+                if targeted {
+                    if net.weights[i]!=original.weights[i]{changed+=1;}
+                }else{
+                    assert_eq!(net.weights[i],original.weights[i]);
+                    assert_eq!(net.momentum[i],original.momentum[i]);
+                    assert_eq!(net.variance[i],original.variance[i]);
+                }
+            }
+            assert!(changed>0);
+        }
     }
     #[test]
     fn can_train_reply_character_and_restore_optimizer() {
