@@ -2,7 +2,7 @@
 //! Both pathways and the bridge receive gradients from the SAME next-token loss.
 //! No independent answer selection, no heuristic replies, no ML frameworks.
 use crate::{encode_ascii_context,Adam,Gradients,Network,NetworkConfig};
-use crate::transformer::{Transformer,Attention,BridgeMeasurement};
+use crate::transformer::{Transformer,Attention,BridgeMeasurement,TransformerUpdateFocus};
 use crate::tokenizer::Tokenizer;
 use std::fs::{self,File};
 use std::io::{Read,Write};
@@ -14,6 +14,21 @@ const MAGIC:&[u8;8]=b"NHYB0300";
 pub struct BatchGradientDiagnostics{
     pub transformer_norm:f32,pub dense_norm:f32,pub bridge_norm:f32,
     pub transformer_clipped:bool,pub dense_clipped:bool,
+}
+/// Update mask for teacher-directed foundation lessons. Frozen parameters
+/// remain computationally involved; no separate model performs inference.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum TrainingFocus{Joint,Dense,Transformer,Interconnect}
+impl TrainingFocus{
+    fn transformer(self)->Option<TransformerUpdateFocus>{
+        match self{
+            Self::Joint=>Some(TransformerUpdateFocus::All),
+            Self::Dense=>None,
+            Self::Transformer=>Some(TransformerUpdateFocus::Language),
+            Self::Interconnect=>Some(TransformerUpdateFocus::Interconnect)
+        }
+    }
+    fn dense(self)->bool{matches!(self,Self::Joint|Self::Dense)}
 }
 #[derive(Clone)]
 pub struct HybridBrain {
@@ -112,6 +127,10 @@ impl HybridBrain {
         self.transformer.measure_bridge(&tokens,&features,window)
     }
     pub fn train_batch(&mut self,samples:&[(Vec<u8>,u8)],lr:f32)->Result<f32,String>{
+        self.train_batch_focused(samples,lr,TrainingFocus::Joint)
+    }
+    pub fn train_batch_focused(&mut self,samples:&[(Vec<u8>,u8)],lr:f32,
+        focus:TrainingFocus)->Result<f32,String>{
         if samples.is_empty(){return Err("Cannot train an empty hybrid batch".into());}
         if !lr.is_finite() || !(1e-6..=0.05).contains(&lr){
             return Err("Hybrid learning rate outside supported range".into());
@@ -140,15 +159,23 @@ impl HybridBrain {
             transformer_clipped:transformer_norm>1.0,dense_clipped:dense_norm>1.0,
         });
         dense_grad.clip_global_norm(1.0);
-        self.transformer.apply_gradients(&mut tf_grad,lr)?;
-        self.dense_adam.set_learning_rate(lr)?;
-        self.dense_adam.apply(&mut self.dense,&dense_grad)?;
+        if let Some(mask)=focus.transformer(){
+            self.transformer.apply_gradients_focused(&mut tf_grad,lr,mask)?;
+        }
+        if focus.dense(){
+            self.dense_adam.set_learning_rate(lr)?;
+            self.dense_adam.apply(&mut self.dense,&dense_grad)?;
+        }
         Ok(loss*inverse)
     }
     /// Multi-turn supervised teacher examples. Prior turns are compressed into
     /// bounded neural memory slots; gradients update both memory matrices and
     /// the existing dense/Transformer learning pathways together.
     pub fn train_memory_batch(&mut self,samples:&[(Vec<u8>,u8,Vec<String>)],lr:f32)->Result<f32,String>{
+        self.train_memory_batch_focused(samples,lr,TrainingFocus::Joint)
+    }
+    pub fn train_memory_batch_focused(&mut self,samples:&[(Vec<u8>,u8,Vec<String>)],lr:f32,
+        focus:TrainingFocus)->Result<f32,String>{
         if samples.is_empty(){return Err("Empty memory training batch".into());}
         let mut tf_grad=vec![0f32;self.transformer.parameter_count()];
         let mut dense_grad=Gradients::zeros(&self.dense);
@@ -175,9 +202,13 @@ impl HybridBrain {
             transformer_clipped:transformer_norm>1.0,dense_clipped:dense_norm>1.0,
         });
         dense_grad.clip_global_norm(1.0);
-        self.transformer.apply_gradients(&mut tf_grad,lr)?;
-        self.dense_adam.set_learning_rate(lr)?;
-        self.dense_adam.apply(&mut self.dense,&dense_grad)?;
+        if let Some(mask)=focus.transformer(){
+            self.transformer.apply_gradients_focused(&mut tf_grad,lr,mask)?;
+        }
+        if focus.dense(){
+            self.dense_adam.set_learning_rate(lr)?;
+            self.dense_adam.apply(&mut self.dense,&dense_grad)?;
+        }
         Ok(loss*inv)
     }
 
@@ -234,6 +265,11 @@ impl HybridBrain {
     }
     pub fn train_preference_batch(&mut self,
         samples:&[(Vec<u8>,Vec<u8>,Vec<u8>)],learning_rate:f32)->Result<f32,String>{
+        self.train_preference_batch_focused(samples,learning_rate,TrainingFocus::Joint)
+    }
+    pub fn train_preference_batch_focused(&mut self,
+        samples:&[(Vec<u8>,Vec<u8>,Vec<u8>)],learning_rate:f32,
+        focus:TrainingFocus)->Result<f32,String>{
         if samples.is_empty() || samples.len()>4 {
             return Err("Reasoning batch requires 1–4 comparisons".into());
         }
@@ -270,9 +306,13 @@ impl HybridBrain {
             transformer_clipped:transformer_norm>1.0,dense_clipped:dense_norm>1.0,
         });
         combined_dense.clip_global_norm(1.0);
-        self.transformer.apply_gradients(&mut combined_tf,learning_rate)?;
-        self.dense_adam.set_learning_rate(learning_rate)?;
-        self.dense_adam.apply(&mut self.dense,&combined_dense)?;
+        if let Some(mask)=focus.transformer(){
+            self.transformer.apply_gradients_focused(&mut combined_tf,learning_rate,mask)?;
+        }
+        if focus.dense(){
+            self.dense_adam.set_learning_rate(learning_rate)?;
+            self.dense_adam.apply(&mut self.dense,&combined_dense)?;
+        }
         Ok(total*scale)
     }
 
@@ -581,6 +621,38 @@ mod tests{
         assert!(initially.iter().all(|value|*value==0.0));
         assert!(activity.iter().any(|value|*value>0.0));
         assert!(brain.reasoning_margin(&prompt,&good,&bad).unwrap().0.is_finite());
+    }
+    #[test]
+    fn targeted_update_masks_are_real_and_checkpoint_compatible(){
+        let original=HybridBrain::new();
+        let sample=[(b"U: hello\\nN: ".to_vec(),b'H')];
+        for focus in [TrainingFocus::Dense,TrainingFocus::Transformer,
+            TrainingFocus::Interconnect,TrainingFocus::Joint] {
+            let mut brain=original.clone();
+            // This is an ordinary neural gradient pass; only the optimizer
+            // update is selected. Both hemispheres still receive gradients.
+            brain.train_batch_focused(&sample,0.003,focus).unwrap();
+            let tf_change=brain.transformer.weights!=original.transformer.weights;
+            let dense_change=brain.dense.layers.iter().zip(&original.dense.layers)
+                .any(|(a,b)|a.weights!=b.weights||a.biases!=b.biases);
+            assert_eq!(dense_change,matches!(focus,TrainingFocus::Dense|TrainingFocus::Joint));
+            assert_eq!(tf_change,!matches!(focus,TrainingFocus::Dense));
+            if !dense_change {
+                assert_eq!(brain.dense_adam.step,original.dense_adam.step);
+                for (a,b) in brain.dense_adam.m.layers.iter().zip(&original.dense_adam.m.layers){
+                    assert_eq!(a.weights,b.weights);assert_eq!(a.biases,b.biases);
+                }
+            }
+            if !tf_change {
+                assert_eq!(brain.transformer.step,original.transformer.step);
+                assert_eq!(brain.transformer.momentum,original.transformer.momentum);
+                assert_eq!(brain.transformer.variance,original.transformer.variance);
+            }
+            let diagnostics=brain.last_batch_diagnostics.as_ref().unwrap();
+            assert!(diagnostics.transformer_norm.is_finite());
+            assert!(diagnostics.dense_norm.is_finite());
+            assert!(diagnostics.bridge_norm.is_finite());
+        }
     }
     #[test]
     fn pre_reasoning_joint_checkpoint_import_preserves_predictions_optimizer_and_tokenizer(){
