@@ -41,7 +41,7 @@ assert.match(bulk,/learningEvidence/);
 assert.match(native,/foundation_zip_scope:Option<String>/);
 assert.match(native,/foundation_retry_attempt:Option<u8>/);
 assert.match(native,/foundation_alternate_schedule:Option<bool>/);
-assert.match(native,/autonomous_validation_replies\(&best_brain,&practice\)/);
+assert.match(native,/autonomous_validation_replies\(probe_brain,&practice\)/);
 assert.match(native,/foundation_fit_vs_generalization/);
 assert.match(native,/generalization-gap-suspected/);
 assert.match(zip,/fn recovery_plan/);
