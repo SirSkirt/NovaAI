@@ -650,7 +650,10 @@ impl Transformer {
             TransformerUpdateFocus::Language=>!is_link(i),
             TransformerUpdateFocus::Interconnect=>is_link(i),
         };
-        let norm=self.active_gradient_norm(sum,focus)? as f64;
+        // Preserve the original f64 optimizer calculation exactly.
+        // The separate f32 probe exists only for diagnostics.
+        let norm=(sum.iter().enumerate().filter(|(i,_)|active(*i))
+            .map(|(_,g)|(*g as f64)*(*g as f64)).sum::<f64>()).sqrt();
         let clip=if norm>1.0{(1.0/norm) as f32}else{1.0};
         self.step+=1;
         let bias1=(1.0f64-0.9f64.powf(self.step as f64)) as f32;
