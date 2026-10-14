@@ -7,7 +7,7 @@ use crate::hybrid_lab::{self,HybridState};
 use neural_nova::hybrid::{HybridBrain,TrainingFocus};
 use neural_nova::trainer::{prepare,training_order,Example,HeldoutReply,PreparedLessons};
 use neural_nova::unified::{DIALOGUE,UNDERSTANDING,CONVERSATION,REASONING};
-use serde::{Serialize,Deserialize};
+use serde::Serialize;
 use std::fs;
 use std::sync::{Arc,Mutex};
 use std::sync::atomic::{AtomicBool,Ordering};
@@ -95,7 +95,8 @@ fn status(s:&TargetedSession)->TargetedStatus{
 }
 #[tauri::command]
 pub fn targeted_status(state:State<'_,TargetedState>)->Result<TargetedStatus,String>{
-    Ok(status(&lock(&state)?))
+    let session=lock(&state)?;
+    Ok(status(&session))
 }
 #[tauri::command]
 pub fn targeted_import_begin(state:State<'_,TargetedState>,
