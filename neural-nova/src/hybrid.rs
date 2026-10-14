@@ -345,6 +345,84 @@ impl HybridBrain {
         Ok(total*scale)
     }
 
+
+    /// Teacher-only alignment from exact, teacher-selected source phrases to
+    /// input token positions, safe under learned word-token compression.
+    /// The network NEVER runs this lookup when producing a response.
+    fn evidence_token_positions(&self,prompt:&[u8],fragments:&[String])
+        ->Result<(Vec<u16>,Vec<Vec<usize>>),String>{
+        if fragments.is_empty()||fragments.len()>crate::transformer::REASONING_STEPS{
+            return Err("Evidence lesson needs one to three ordered source phrases".into());
+        }
+        let source=std::str::from_utf8(prompt).map_err(|e|e.to_string())?;
+        let source=source.strip_prefix("U: ").ok_or("Evidence requires a dialogue prompt")?;
+        let fact=source.split("\nN: ").next().ok_or("Evidence dialogue marker missing")?;
+        let tokens=self.tokenizer.encode(std::str::from_utf8(prompt).map_err(|e|e.to_string())?)?;
+        let mut offsets=Vec::with_capacity(tokens.len());
+        let mut offset=0usize;
+        for &token in &tokens{
+            let len=if (token as usize)<128{1}
+                else{self.tokenizer.words[token as usize-128].len()};
+            offsets.push((offset,offset+len));offset+=len;
+        }
+        if offset!=prompt.len(){return Err("Lossless evidence token offset mismatch".into());}
+        let skip=tokens.len().saturating_sub(crate::transformer::CONTEXT);
+        let mut positions=Vec::new();
+        for phrase in fragments{
+            if phrase.trim().len()<3 || !phrase.is_ascii(){
+                return Err("Evidence phrase must contain at least three ASCII characters".into());
+            }
+            let count=fact.matches(phrase).count();
+            if count!=1{return Err(format!(
+                "Evidence phrase must occur exactly once in the premise and question ({count} matches): {phrase}"
+            ));}
+            let start=3+fact.find(phrase).unwrap();
+            let end=start+phrase.len();
+            let target=offsets.iter().enumerate()
+                .filter(|(_, &(a,b))|a<end&&b>start)
+                .filter_map(|(i,_)|i.checked_sub(skip))
+                .collect::<Vec<_>>();
+            if target.is_empty(){return Err(
+                "Evidence source lies outside the retained 256-token context".into());}
+            positions.push(target);
+        }
+        Ok((tokens,positions))
+    }
+    /// Additional objective independent of generated characters. It trains
+    /// which source facts each learned reasoning round re-reads, using the
+    /// same weights/Adam and exact backward gradients as conversational loss.
+    pub fn train_evidence_batch(&mut self,samples:&[(Vec<u8>,Vec<String>)],
+        learning_rate:f32)->Result<f32,String>{
+        if samples.is_empty()||samples.len()>4{
+            return Err("Evidence batch size must be 1–4".into());
+        }
+        if !learning_rate.is_finite()||!(1e-6..=0.05).contains(&learning_rate){
+            return Err("Invalid evidence learning rate".into());
+        }
+        let mut sum=vec![0.0;self.transformer.parameter_count()];
+        let mut dense_grad=Gradients::zeros(&self.dense);
+        let mut total=0.0;
+        for (prompt,fragments) in samples{
+            let (tokens,positions)=self.evidence_token_positions(prompt,fragments)?;
+            let (base,dense)=self.dense_input(prompt)?;
+            let (loss,g,upstream)=self.transformer.gradient_evidence_cooperative(
+                &tokens,&positions,&dense,&self.dense,&base,&mut dense_grad)?;
+            self.dense.accumulate_logits_gradients(&base,&upstream,&mut dense_grad)?;
+            for (v,d) in sum.iter_mut().zip(g){*v+=d;}
+            total+=loss;
+        }
+        let scale=1.0/samples.len() as f32;
+        for value in &mut sum{*value*=scale;}
+        dense_grad.scale(scale);
+        // Apply existing jointly trained optimizers; the evidence objective
+        // cannot replace the language head or install a scripted reasoner.
+        dense_grad.clip_global_norm(1.0);
+        self.transformer.apply_gradients_focused(
+            &mut sum,learning_rate,crate::transformer::TransformerUpdateFocus::All)?;
+        self.dense_adam.set_learning_rate(learning_rate)?;
+        self.dense_adam.apply(&mut self.dense,&dense_grad)?;
+        Ok(total*scale)
+    }
     pub fn evaluate(&self,samples:&[(Vec<u8>,u8)])->Result<(f32,f32),String>{
         if samples.is_empty(){return Err("Empty validation set".into());}
         let mut loss=0.0f64;
@@ -577,6 +655,25 @@ mod tests{
         assert_eq!(brain.transformer.momentum,m);
         assert_eq!(brain.transformer.variance,v);
         assert_ne!(original,saved);
+    }
+    #[test]
+    fn teacher_evidence_alignment_updates_recurrent_query_without_answer_shortcuts(){
+        let mut brain=HybridBrain::new();
+        brain.learn_token_units("Mira has red box. Mira has blue key.");
+        let prompt=b"U: Mira has a red box. A blue key is in the box. What is in the box?\nN: ".to_vec();
+        let data=vec![(prompt.clone(),vec![
+            "Mira has a red box.".to_string(),
+            "A blue key is in the box.".to_string()
+        ])];
+        let prefix=brain.transformer.weights.clone();
+        let answer_before=brain.predict(&prompt).unwrap();
+        let loss=brain.train_evidence_batch(&data,0.0003).unwrap();
+        assert!(loss.is_finite()&&loss>0.0);
+        assert_ne!(brain.transformer.weights,prefix);
+        assert_ne!(brain.predict(&prompt).unwrap(),answer_before);
+        assert!(brain.train_evidence_batch(&[(
+            prompt.clone(),vec!["phrase never present".into()]
+        )],0.0003).is_err());
     }
     #[test]
     fn clipping_diagnostics_match_actual_optimizer_masks(){

@@ -391,7 +391,7 @@ impl Transformer {
         self.gradient_tokens_with_memory(&history.iter().map(|&c|c as u16).collect::<Vec<_>>(),target,dense,&[])
     }
     pub(crate) fn gradient_tokens_with_memory(&self,history:&[u16],target:u8,dense:Option<&[f32]>,memory:&[Vec<u16>])->Result<(f32,Vec<f32>,Vec<f32>),String> {
-        self.gradient_tokens_internal(history,target,dense,memory,None)
+        self.gradient_tokens_internal(history,target,dense,memory,None,None)
     }
     /// Joint backpropagation through Transformer -> dense -> Transformer
     /// exchanges. Accumulates into the SAME dense-hemisphere gradient buffer.
@@ -399,28 +399,56 @@ impl Transformer {
         dense:&[f32],memory:&[Vec<u16>],network:&Network,base:&[f32],
         dense_grad:&mut Gradients)->Result<(f32,Vec<f32>,Vec<f32>),String>{
         self.gradient_tokens_internal(history,target,Some(dense),memory,
-            Some((network,base,dense_grad)))
+            Some((network,base,dense_grad)),None)
+    }
+    /// Optional ordered teacher evidence spans supervise WHICH source tokens
+    /// each recurrent read attends to. Target spans affect GRADIENTS only,
+    /// never forward inference, network architecture or generated responses.
+    pub(crate) fn gradient_evidence_cooperative(&self,history:&[u16],
+        targets:&[Vec<usize>],dense:&[f32],network:&Network,base:&[f32],
+        dense_grad:&mut Gradients)->Result<(f32,Vec<f32>,Vec<f32>),String>{
+        self.gradient_tokens_internal(history,b'\n',Some(dense),&[],
+            Some((network,base,dense_grad)),Some(targets))
     }
     fn gradient_tokens_internal(&self,history:&[u16],target:u8,dense:Option<&[f32]>,
-        memory:&[Vec<u16>],mut cooperation:Option<(&Network,&[f32],&mut Gradients)>)
+        memory:&[Vec<u16>],mut cooperation:Option<(&Network,&[f32],&mut Gradients)>,
+        evidence_targets:Option<&[Vec<usize>]>)
         ->Result<(f32,Vec<f32>,Vec<f32>),String> {
         if target as usize>=VOCAB {return Err("Target character must be ASCII".into());}
         let c=self.forward_tokens_internal(history,dense,CONTEXT,memory,
             cooperation.as_ref().map(|(network,base,_)|(*network,*base)))?;
         let l=layout();
         let mut grad=vec![0.0;l.len];
-        let loss=-(c.probabilities[target as usize].max(1e-30)).ln();
-        let mut delta=c.probabilities.clone();
-        delta[target as usize]-=1.0;
-        for (j,d) in delta.iter().enumerate() {grad[l.bout.start+j]+=*d;}
-        let mut dh=back_mv(&self.weights,&l.output,VOCAB,D,&c.hidden,&delta,&mut grad);
+        let mut dh=vec![0.0;D];
+        let loss=if let Some(spans)=evidence_targets{
+            if spans.is_empty()||spans.len()>REASONING_STEPS {
+                return Err("Provide 1–3 ordered evidence spans".into());
+            }
+            let mut loss=0.0;
+            for (round,positions) in spans.iter().enumerate(){
+                if positions.is_empty() || positions.iter().any(|&i|i>=c.tokens.len()){
+                    return Err("Teacher evidence target outside retained token context".into());
+                }
+                let attention=&c.reasoning[round].evidence.attention;
+                let mass=positions.iter().map(|&i|attention[i]).sum::<f32>();
+                if mass<=0.0{return Err("Evidence attention mass underflow".into());}
+                loss-=mass.max(1e-30).ln()/spans.len() as f32;
+            }
+            loss
+        }else{
+            let mut delta=c.probabilities.clone();
+            delta[target as usize]-=1.0;
+            for (j,d) in delta.iter().enumerate(){grad[l.bout.start+j]+=*d;}
+            dh=back_mv(&self.weights,&l.output,VOCAB,D,&c.hidden,&delta,&mut grad);
+            -(c.probabilities[target as usize].max(1e-30)).ln()
+        };
         // Exact BPTT across the recurrent reasoning steps. Each residual
         // update contributes to the same fused state's gradient.
         let mut extra_context_gradient=vec![0.0;D];
         // Attention rereads share Transformer token K/V projections; store
         // their contributions until the original attention backprop below.
         let mut evidence_dx=vec![vec![0.0;D];c.tokens.len()];
-        for step in c.reasoning.iter().rev(){
+        for (round,step) in c.reasoning.iter().enumerate().rev(){
             // Evidence residual is LAST in forward round: differentiate it
             // BEFORE reciprocal dense exchange and before latent refinement.
             let ev=&step.evidence;
@@ -435,7 +463,17 @@ impl Transformer {
             let mut dq=vec![0.0;D];
             let scale=(D as f32).sqrt().recip();
             for i in 0..c.tokens.len(){
-                let dp=ev.attention[i]*(attention_scores[i]-mean_score)*scale;
+                let supervised=if let Some(spans)=evidence_targets{
+                    if round<spans.len(){
+                        let mass=spans[round].iter()
+                            .map(|&position|ev.attention[position]).sum::<f32>();
+                        let included=spans[round].contains(&i);
+                        (ev.attention[i]-if included{ev.attention[i]/mass.max(1e-30)}
+                            else{0.0}) / spans.len() as f32
+                    }else{0.0}
+                }else{0.0};
+                let dp=(ev.attention[i]*(attention_scores[i]-mean_score)
+                    +supervised)*scale;
                 let dv=dc.iter().map(|value|value*ev.attention[i]).collect::<Vec<_>>();
                 let dxv=back_mv(&self.weights,&l.v,D,D,&c.inputs[i],&dv,&mut grad);
                 let dk=ev.query.iter().map(|value|value*dp).collect::<Vec<_>>();
@@ -703,7 +741,8 @@ impl Transformer {
         if gradient.len()!=l.len{return Err("Transformer gradient length mismatch".into());}
         let norm=gradient.iter().enumerate().filter(|(i,_)|{
             let linked=l.bridge.contains(i)||l.feedback_query.contains(i)
-                ||l.context_query.contains(i)||l.feedback_response.contains(i);
+                ||l.context_query.contains(i)||l.feedback_response.contains(i)
+                ||l.evidence_query.contains(i)||l.evidence_response.contains(i);
             match focus{
                 TransformerUpdateFocus::All=>true,
                 TransformerUpdateFocus::Language=>!linked,
@@ -725,7 +764,8 @@ impl Transformer {
         let is_link=|i:usize| l.bridge.contains(&i)
             ||l.feedback_query.contains(&i)
             ||l.context_query.contains(&i)
-            ||l.feedback_response.contains(&i);
+            ||l.feedback_response.contains(&i)
+            ||l.evidence_query.contains(&i)||l.evidence_response.contains(&i);
         let active=|i:usize|match focus {
             TransformerUpdateFocus::All=>true,
             TransformerUpdateFocus::Language=>!is_link(i),
@@ -1104,7 +1144,8 @@ mod tests {
             net.apply_gradients_focused(&mut gradient,0.001,focus).unwrap();
             let link=|i:usize|l.bridge.contains(&i)||
                 l.feedback_query.contains(&i)||l.context_query.contains(&i)||
-                l.feedback_response.contains(&i);
+                l.feedback_response.contains(&i)||
+                l.evidence_query.contains(&i)||l.evidence_response.contains(&i);
             let mut changed=0usize;
             for i in 0..net.weights.len(){
                 let targeted=if focus==TransformerUpdateFocus::Language{!link(i)}else{link(i)};
