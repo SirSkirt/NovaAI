@@ -74,6 +74,15 @@
             </div>
             <div><label for="trainingRate">Learning rate</label><select id="trainingRate"><option value="0.0001">Extra gentle · 0.0001</option><option value="0.0003">Very gentle · 0.0003</option><option value="0.001" selected>Gentle · 0.001</option><option value="0.003">Balanced · 0.003</option><option value="0.005">Faster · 0.005</option></select></div>
           </div>
+          <details class="teacher-extra" id="foundationTrainingSettings">
+            <summary>Foundation Training v1 · automatic selective learning</summary>
+            <label class="checkbox-line" for="foundationTrainingEnabled">
+              <input type="checkbox" id="foundationTrainingEnabled">
+              <span>Compare Dense / Transformer / Interconnect / Joint candidates for 5 lessons</span>
+            </label>
+            <p class="muted" id="foundationTrainingStatus">Off. Standard joint learning remains available.</p>
+            <p class="muted">Each candidate starts with identical complete weights and optimizer state. The trainer compares true held-out validation, autonomous replies, and earlier-skill retention, keeping only an eligible whole checkpoint. Five completed lessons count even when all candidates are rejected; joint training automatically resumes after lesson five. Rehearsal and previous-skill protection must be enabled. Android training can take roughly four times longer per epoch.</p>
+          </details>
           <div class="field-row" style="margin-top:10px">
             <div class="wide-field">
               <label for="retentionBenchmark">Earlier-skill benchmark (optional; diagnostics only)</label>

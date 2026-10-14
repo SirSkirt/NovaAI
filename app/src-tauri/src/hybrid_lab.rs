@@ -1805,6 +1805,7 @@ fn foundation_train_inner(
                         }
                         training_loss+=replay_loss as f64*old_ids.len() as f64;
                         learned+=old_ids.len();
+                        done_samples+=old_ids.len();
                     }
                 }
                 if lessons.mode=="unified"&&
@@ -1822,6 +1823,7 @@ fn foundation_train_inner(
                     }else{brain.train_batch_focused(&focused,lr,mask)?};
                     training_loss+=output as f64*ids.len() as f64;
                     learned+=ids.len();
+                    done_samples+=ids.len();
                 }
                 done_samples+=ids.len();
                 if done_samples%64<ids.len(){
@@ -1936,6 +1938,7 @@ fn foundation_train_inner(
         s.brain=best_brain;s.trained=initially_trained||best_epoch>0;
         s.best_epoch=best_epoch;s.best_heldout_loss=Some(best_loss);
         s.heldout_loss=Some(best_loss);s.heldout_accuracy=Some(best_accuracy);
+        s.completed=done_samples;
         s.early_stopped=stopped;s.learning_rate=schedule.learning_rate;
         s.tokens_per_second=done_samples as f32/
             started.elapsed().as_secs_f32().max(0.001);

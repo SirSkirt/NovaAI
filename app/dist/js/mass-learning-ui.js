@@ -153,7 +153,8 @@ async function runQueue(){
     patience:6,retentionTestId:$("retentionBenchmark").value||null,
     rehearsal:$("rehearsalEnabled").checked,
     protectPrevious:$("retentionGuardEnabled").checked,
-    retentionLossTolerance:Number($("retentionTolerance").value)
+    retentionLossTolerance:Number($("retentionTolerance").value),
+    foundationTraining:$("foundationTrainingEnabled").checked
   };
   const epochs=Number($("trainingEpochs").value);
   if(!Number.isInteger(epochs)||epochs<1||epochs>60)throw Error("Choose 1–60 epochs.");

@@ -124,7 +124,7 @@ function setRunning(value){
   for(const id of ["chatLength","chatTemperature","chatContext","chatSampling"]){
     $(id).disabled=running||busy||(id==="chatTemperature"&&$("chatSampling").value==="greedy");
   }
-  for(const id of ["adaptiveTraining","earlyStopping","trainingRate","trainingEpochs"]){
+  for(const id of ["adaptiveTraining","earlyStopping","trainingRate","trainingEpochs","foundationTrainingEnabled"]){
     $(id).disabled=running;
   }
   setState(running?"Nova is learning":initialized?"Nova ready":"Loading…",running?"running":"ok");
@@ -211,7 +211,8 @@ function saveSchedule(){
       learningRate:$("trainingRate").value,
       rehearsal:$("rehearsalEnabled").checked,
       protectPrevious:$("retentionGuardEnabled").checked,
-      retentionLossTolerance:Number($("retentionTolerance").value)
+      retentionLossTolerance:Number($("retentionTolerance").value),
+      foundationTraining:$("foundationTrainingEnabled").checked
     }));
   }catch(_){}
 }
@@ -222,6 +223,7 @@ function loadSchedule(){
       if(typeof p.adaptiveLearningRate==="boolean")$("adaptiveTraining").checked=p.adaptiveLearningRate;
       if(typeof p.earlyStopping==="boolean")$("earlyStopping").checked=p.earlyStopping;
       if(["0.0001","0.0003","0.001","0.003","0.005"].includes(p.learningRate))$("trainingRate").value=p.learningRate;
+      if(typeof p.foundationTraining==="boolean")$("foundationTrainingEnabled").checked=p.foundationTraining;
       if(typeof p.rehearsal==="boolean")$("rehearsalEnabled").checked=p.rehearsal;
       if(typeof p.protectPrevious==="boolean")$("retentionGuardEnabled").checked=p.protectPrevious;
       if([0.02,0.05,0.10,0.20].includes(p.retentionLossTolerance))
@@ -231,11 +233,19 @@ function loadSchedule(){
   describeSchedule();
 }
 for(const id of ["adaptiveTraining","earlyStopping","trainingRate",
-  "rehearsalEnabled","retentionGuardEnabled","retentionTolerance"]){
+  "rehearsalEnabled","retentionGuardEnabled","retentionTolerance",
+  "foundationTrainingEnabled"]){
   $(id).addEventListener("change",saveSchedule);
 }
 async function updateRehearsalBank(){
   const bank=await invoke("hybrid_rehearsal_info");
+  const completed=Number(bank.foundationLessonsCompleted||0);
+  const remaining=Number(bank.foundationLessonsRemaining??Math.max(0,5-completed));
+  $("foundationTrainingStatus").textContent=remaining===0
+    ?"Five foundation lessons completed for this checkpoint. Normal joint learning resumes automatically."
+    :$("foundationTrainingEnabled").checked
+      ?"Enabled · "+completed+"/5 lessons completed · "+remaining+" selective lessons remaining."
+      :"Paused · "+completed+"/5 completed. Enable to continue selective training.";
   $("rehearsalBankStatus").textContent=bank.names.length
     ?"Saved past lessons: "+bank.names.map((n,i)=>n+" ("+bank.modes[i]+")").join(" · ")
     :"No previous lessons saved for these weights. Future accepted lessons will be archived automatically.";
@@ -348,9 +358,11 @@ $("startTraining").addEventListener("click",()=>safe(async()=>{
         retentionTestId:$("retentionBenchmark").value||null,
         rehearsal:$("rehearsalEnabled").checked,
         protectPrevious:$("retentionGuardEnabled").checked,
-        retentionLossTolerance:Number($("retentionTolerance").value)}
+        retentionLossTolerance:Number($("retentionTolerance").value),
+      foundationTraining:$("foundationTrainingEnabled").checked}
     });
-    report("INFO","Training","Joint training started: "+activeMode+" · max "+epochs+
+    report("INFO","Training",($("foundationTrainingEnabled").checked?
+        "Foundation candidate selection requested":"Joint training started")+": "+activeMode+" · max "+epochs+
       " epochs · "+(adaptiveLearningRate?"adaptive":"fixed")+" LR "+learningRate+
       " · early stopping "+(earlyStopping?"on":"off")+".");
     await poll();
@@ -786,6 +798,13 @@ async function listen(){
         (Array.isArray(p.categoryHeldoutLoss)?" | per-objective heldout "+
           p.categoryHeldoutLoss.map((v,i)=>Number.isFinite(v)?["dialogue","understanding","conversation","reasoning","language"][i]+":"+v.toFixed(3):null)
             .filter(Boolean).join(", "):""));
+      if(Array.isArray(p.candidateScores)){
+        history("Foundation lesson "+p.foundationLesson+"/5 · "+p.selectionReason+
+          " · "+p.candidateScores.map(c=>c.pathway+" loss "+
+            Number(c.heldoutLoss).toFixed(4)+" joint "+
+            Number(c.jointScore).toFixed(4)+
+            (c.eligible?" eligible":" rejected")).join(" | "));
+      }
       if(Number.isFinite(p.transformerGradientNorm)){
         history("Gradient norms (before clipping): Transformer "+
           p.transformerGradientNorm.toFixed(4)+" · Dense "+
