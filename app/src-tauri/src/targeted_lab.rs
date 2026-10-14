@@ -381,6 +381,7 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
                 }
                 if count==0{break;}
                 let score=evaluate(&brain,&plan,&archive)?;
+                let epoch_heldout_loss=score.heldout_loss;
                 let improves=selection_score(&score)+0.0005<selection_score(&best_scores);
                 if improves {
                     best_brain=brain.clone();
@@ -390,7 +391,7 @@ pub fn targeted_train(app:AppHandle,state:State<'_,TargetedState>,
                 #[cfg(target_os="android")]
                 target_training_notification(&notice_app,format!(
                     "{} focus · {} objective · epoch {}/{} · held-out loss {:.4}",
-                    focus_name,skill_name,epoch,epochs,score.heldout_loss
+                    focus_name,skill_name,epoch,epochs,epoch_heldout_loss
                 ),false);
                 let mut s=session.lock().map_err(|_|"Targeted progress lock poisoned")?;
                 s.epoch=epoch;s.completed=epoch as usize*plan.training.len();
