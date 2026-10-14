@@ -185,7 +185,9 @@ pub fn hybrid_rehearsal_add(app:AppHandle,state:State<'_,HybridState>,
         "note":"Previous lesson archived for actual neural rehearsal, no update performed"
     }));
     Ok(RehearsalInfo{names:bank.lessons.iter().map(|l|l.name.clone()).collect(),
-        modes:bank.lessons.iter().map(|l|l.mode.clone()).collect(),matched:true})
+        modes:bank.lessons.iter().map(|l|l.mode.clone()).collect(),matched:true,
+        foundation_lessons_completed:bank.foundation_lessons_completed,
+        foundation_lessons_remaining:rehearsal::FOUNDATION_LESSON_LIMIT.saturating_sub(bank.foundation_lessons_completed)})
 }
 #[tauri::command]
 pub fn hybrid_rehearsal_clear(app:AppHandle,state:State<'_,HybridState>)->Result<(),String>{
