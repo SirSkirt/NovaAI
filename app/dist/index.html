@@ -21,7 +21,7 @@
   <header class="app-header">
     <div class="brand">
       <span class="brand-symbol" aria-hidden="true">◉</span>
-      <div><h1>Neural Nova <span class="beta">v0.13.0</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
+      <div><h1>Neural Nova <span class="beta">v0.13.1</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
     </div>
     <div class="status-pill" id="brainState" role="status"><span class="status-indicator"></span><span id="brainStateText">Starting…</span></div>
   </header>
@@ -409,11 +409,16 @@ hey there</textarea>
         <p class="muted" id="observerMetrics">Select an epoch to inspect the model's responses, training scores and pathway measurements.</p>
         <h3>What Nova generated during practice and validation</h3>
         <pre id="observerReplies" class="epoch-history" style="max-height:520px;overflow:auto;white-space:pre-wrap">No saved responses yet.</pre>
+        <h3>Did the neural pathways help the answer?</h3>
+        <p class="muted">Same checkpoint, question and context for full brain, no dense, and no reciprocal exchange. Positive expected-answer NLL benefit means full brain is better; negative means removing that pathway improved the reference-answer likelihood. Comparisons are limited to 12 characters.</p>
+        <pre id="observerAblations" class="epoch-history" style="max-height:560px;overflow:auto;white-space:pre-wrap">No pathway comparisons yet.</pre>
+        <p id="observerIntegrity" class="muted">No held-out prompt overlap audit yet.</p>
+        <p id="observerClipping" class="muted">Clipping-scale audit will appear after the next epoch.</p>
         <details class="teacher-extra">
           <summary>Per-epoch network and reasoning activity details</summary>
           <pre id="observerActivity" class="epoch-history" style="max-height:360px;overflow:auto;white-space:pre-wrap">No saved neural activity yet.</pre>
         </details>
-        <p class="muted">Up to one training and one held-out reply per available category, capped at 24 generated characters. Held-out answers are teacher-only scoring references, never Nova's input. Each epoch saves actual attention, activations, bridge signals and pathway ablations locally in app-private JSONL (not complete weight checkpoints).</p>
+        <p class="muted">The recorder favors unseen held-out questions and actual conversation follow-ups. Duplicated training prompts are explicitly marked rather than counted as independent. Answers are teacher-only scoring references, never Nova's input. Older records cannot retroactively gain these measurements. Saved activity is not a checkpoint.</p>
       </section>
     </section>
   </main>

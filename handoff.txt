@@ -1,3 +1,7 @@
+NEURAL NOVA v0.13.1 — DIAGNOSE PATHWAY USEFULNESS (2026-10-14)
+Read-only reporting of actual active gradient clipping scales, heldout prompt overlap and novel question preference, conversation follow-up memory probes, and three-way same-weights output/expected-answer NLL (Full, No Dense, No Reciprocal Exchange). Selection/architecture/optimizer/checkpoints/brain SVG unchanged. Version 0.13.1. Documentation: app/docs/diagnostic-validation-v0.13.1.md. Run JS/Rust, Windows NSIS, signed Android CI, verify real phone separately. Preserve trained step-1327 checkpoint. A/B training policy deferred.
+---- PREVIOUS HANDOFF BELOW ----
+
 NEURAL NOVA v0.13.0 COMPILER HOTFIX (2026-10-14)
 Initial Android compile in #497 found json! macro parser rejection of direct array indexing in a value. Prebind category label to local variable before serde_json::json!, preserving data. Also remove unintended duplicate native list invocation in observer JS refresh guard. New complete CI must pass Rust app tests, Windows NSIS, Android APK and signer, and real Samsung epoch recording remains unverified.
 ---- PREVIOUS HANDOFF BELOW ----

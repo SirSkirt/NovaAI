@@ -16,7 +16,7 @@
       " / "+record.objective+" · "+(metrics.selected?"checkpoint selected":"checkpoint not selected")+
       " · "+JSON.stringify(metrics);
     $("observerReplies").textContent=(record.replies||[]).map(r=>
-      "["+r.split+" · "+r.category+"]\n"+
+      "["+r.split+" · "+r.category+(r.promptSeenInTraining?" · repeated training prompt":"")+(r.independentPrompt?" · novel prompt":"")+"]\n"+
       "Prompt: "+r.prompt+"\n"+
       "Expected (teacher scoring only): "+r.expected+(r.expectedTruncated?"…":"")+"\n"+
       "Nova generated: "+JSON.stringify(r.generated)+
@@ -26,6 +26,31 @@
       " · complete: "+(r.completeCorrect?"yes":"no")+
       " · conversation memory turns: "+r.memoryTurns
     ).join("\n\n")||"This lesson has no supervised full-answer samples.";
+    const ablations=record.ablationComparisons||[];
+    $("observerAblations").textContent=ablations.map(c=>
+      "["+c.category+(c.independentPrompt?" · novel prompt":" · overlaps training")+"]\n"+
+      "Prompt: "+c.prompt+"\nExpected: "+c.expected+
+      (c.truncatedAnswer?"… (truncated)":"")+"\n"+
+      c.variants.map(v=>v.mode+": "+JSON.stringify(v.generated)+
+        (v.ended?" [ended]":" [limit]")+" · prefix "+v.correctPrefixCharacters+
+        " · expected-answer mean NLL "+fmt(v.teacherForcedMeanNll)).join("\n")+"\n"+
+      "Full vs no-dense NLL benefit: "+fmt(c.benefitOfFullVsNoDenseNll)+
+      " · full vs no-exchange NLL benefit: "+fmt(c.benefitOfFullVsNoExchangeNll)+
+      " (positive = full is better)"
+    ).join("\n\n")||"No three-way results recorded (older sessions cannot be backfilled).";
+    const integrity=record.heldoutIntegrity;
+    $("observerIntegrity").textContent=integrity?
+      "Held-out audit: "+integrity.independentPromptCount+"/"+integrity.totalReplies+
+        " distinct questions from training, "+integrity.samePromptAsTraining+
+        " repeats. "+integrity.warning:
+      "Older session: no held-out prompt-overlap audit available.";
+    $("observerClipping").textContent=Number.isFinite(metrics.transformerMeanClipScale)?
+      "Global gradient threshold 1.0 · average scaling: Transformer "+
+        fmt(metrics.transformerMeanClipScale)+", Dense "+fmt(metrics.denseMeanClipScale)+
+        " · clipped supervised batch fractions: Transformer "+
+        fmt(metrics.transformerClipFraction)+", Dense "+fmt(metrics.denseClipFraction)+
+        ". Adam weight updates do not scale linearly with this factor.":
+      "Clipping-scale diagnostics not recorded in this epoch or training mode.";
     $("observerActivity").textContent=JSON.stringify({
       weightsFingerprint:record.weightFingerprint,
       pathwaySignals:p,
