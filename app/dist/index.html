@@ -249,8 +249,9 @@ hey there</textarea>
             </div>
           </div>
           <div class="row wrap">
-            <label class="file-button" for="targetedImportFile">＋ Choose .nhyb for targeted workspace</label>
+            <label class="file-button" id="targetedBrowserImportLabel" for="targetedImportFile">＋ Choose .nhyb for targeted workspace</label>
             <input type="file" id="targetedImportFile" accept=".nhyb,application/octet-stream">
+            <button type="button" class="secondary" id="targetedNativeImport" hidden>＋ Select .nhyb from Android Files</button>
             <button type="button" class="secondary" id="targetedImport">Stage imported checkpoint</button>
           </div>
           <p class="muted" id="targetedImportStatus">No imported checkpoint staged. An imported brain does not replace live Nova.</p>
