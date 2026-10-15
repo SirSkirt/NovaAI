@@ -601,6 +601,58 @@ mod tests{
         assert!(!path.with_extension("bak").exists());
     }
     #[test]
+    fn preexpansion_nhyb_import_preserves_both_brains_and_moments(){
+        let mut original=HybridBrain::new();
+        original.transformer.step=26_694;
+        original.dense_adam.step=1763;
+        let legacy_count=Transformer::preexpansion_parameter_count();
+        let current_count=original.transformer.weights.len();
+        assert_eq!(original.parameter_count(),1_200_144);
+        let root=std::env::temp_dir().join(format!("nova-12m-migration-{}-{}",
+            std::process::id(),std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&root).unwrap();
+        let expanded=root.join("expanded.nhyb");
+        let old_file=root.join("legacy-original.nhyb");
+        original.save(&expanded).unwrap();
+        let bytes=std::fs::read(&expanded).unwrap();
+        // Simulate the exact .nhyb framing previously used by the 966K brain:
+        // only Transformer float arrays were shorter; Dense, Adam, tokenizer
+        // and all old Transformer parameter indices remain byte-identical.
+        let mut old_bytes=Vec::new();
+        old_bytes.extend_from_slice(&bytes[..8]);
+        old_bytes.extend_from_slice(&(legacy_count as u32).to_le_bytes());
+        old_bytes.extend_from_slice(&bytes[12..20]);
+        let mut cursor=20;
+        for _ in 0..3{
+            old_bytes.extend_from_slice(&bytes[cursor..cursor+legacy_count*4]);
+            cursor+=current_count*4;
+        }
+        old_bytes.extend_from_slice(&bytes[cursor..]);
+        std::fs::write(&old_file,&old_bytes).unwrap();
+        let unchanged_old_bytes=std::fs::read(&old_file).unwrap();
+        let migrated=HybridBrain::load(&old_file).unwrap();
+        assert_eq!(migrated.transformer.step,26_694);
+        assert_eq!(migrated.dense_adam.step,1763);
+        assert_eq!(migrated.transformer.weights[..legacy_count],
+            original.transformer.weights[..legacy_count]);
+        assert_eq!(migrated.transformer.momentum[..legacy_count],
+            original.transformer.momentum[..legacy_count]);
+        assert_eq!(migrated.transformer.variance[..legacy_count],
+            original.transformer.variance[..legacy_count]);
+        assert_eq!(migrated.dense.layers[0].weights,original.dense.layers[0].weights);
+        assert_eq!(migrated.dense_adam.m.layers[0].weights,
+            original.dense_adam.m.layers[0].weights);
+        assert_eq!(migrated.dense_adam.v.layers[0].weights,
+            original.dense_adam.v.layers[0].weights);
+        assert!(migrated.transformer.expansion_is_neutral());
+        let prompt=b"U: My name is Tavik.\\nN: ";
+        assert_eq!(migrated.predict(prompt).unwrap(),original.predict(prompt).unwrap());
+        assert_eq!(std::fs::read(&old_file).unwrap(),unchanged_old_bytes,
+            "loading must never overwrite the original pre-expansion checkpoint");
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[test]
     fn checkpoint_export_can_use_real_nhyb_filename(){
         let path=std::env::temp_dir().join(format!(
             "nova-export-{}-{}.nhyb",std::process::id(),
