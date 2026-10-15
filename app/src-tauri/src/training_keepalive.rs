@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use tauri::{Manager, Runtime};
 use tauri_plugin_background_service::{BackgroundService,ServiceContext,ServiceError};
 use crate::hybrid_lab::HybridState;
+use crate::nova2_lab::Nova2State;
 use crate::lesson_zip::ZipQueueState;
 
 pub struct TrainingKeepalive;
@@ -24,7 +25,8 @@ impl<R:Runtime> BackgroundService<R> for TrainingKeepalive {
                 _=ctx.shutdown.cancelled()=>break,
                 _=tokio::time::sleep(Duration::from_secs(2))=>{
                     let running=ctx.app.state::<HybridState>().is_training()
-                        || ctx.app.state::<ZipQueueState>().is_active();
+                        || ctx.app.state::<ZipQueueState>().is_active()
+                        || ctx.app.state::<Nova2State>().is_training();
                     if let Some((name,index,total))=
                         ctx.app.state::<ZipQueueState>().current_lesson(){
                         let current=(index,name.clone());
