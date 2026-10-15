@@ -3,21 +3,40 @@
 use neural_nova::nova2::{Nova2,Ablation,Focus,KvCache};
 use neural_nova::trainer::{self,Example};
 use std::path::PathBuf;
+use std::time::Instant;
 use std::sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}};
 use tauri::{AppHandle,Manager,Emitter,State};
 use serde::{Serialize,Deserialize};
 
 const CHECKPOINT:&str="neural-nova-bicameral-v2.nnova2";
 const CHAT:&str="neural-nova-bicameral-conversation.json";
+const LESSON_ARCHIVE:&str="neural-nova-bicameral-lessons.json";
+const OBSERVATIONS:&str="neural-nova-bicameral-epochs.json";
+#[derive(Clone,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct Observation{
+    lesson:String,focus:String,attempt:u32,epoch:u32,step:u64,
+    train_loss:f32,heldout_loss:f32,heldout_accuracy:f32,
+    selected:bool,retention_passed:bool,learning_rate:f32,
+    #[serde(default)] reply:Option<String>,#[serde(default)] expected:Option<String>,
+    #[serde(default)] no_dense_tv:Option<f32>,#[serde(default)] no_exchange_tv:Option<f32>,
+    #[serde(default)] validation_overlap:usize,
+}
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct Turn{user:String,assistant:String}
+#[derive(Clone,Serialize,Deserialize)]
+struct PriorLesson{name:String,mode:String,text:String}
 struct Session{
     brain:Nova2,trained:bool,epoch:u32,epochs:u32,
     completed:usize,total:usize,loss:Option<f32>,heldout:Option<f32>,
     stage:String,error:Option<String>,history:Vec<Turn>,lesson:String,
     candidate:Option<Nova2>,candidate_loss:Option<f32>,candidate_base:u64,
     candidate_focus:String,candidate_epoch:u32,imported_target:Option<Nova2>,
+    previous_lessons:Vec<PriorLesson>,observations:Vec<Observation>,
+    heldout_accuracy:Option<f32>,best_heldout_loss:Option<f32>,best_epoch:u32,
+    train_lessons:usize,validation_lessons:usize,active_step:u64,
+    learning_rate:f32,started:Option<Instant>,
 }
 struct Inner{
     session:Mutex<Session>,training:AtomicBool,stop:AtomicBool,
@@ -38,7 +57,11 @@ impl Default for Nova2State{
                 stage:"Nova-2 ready for teaching".into(),error:None,
                 history:Vec::new(),lesson:String::new(),
                 candidate:None,candidate_loss:None,candidate_base:0,
-                candidate_focus:String::new(),candidate_epoch:0,imported_target:None
+                candidate_focus:String::new(),candidate_epoch:0,imported_target:None,
+                previous_lessons:Vec::new(),observations:Vec::new(),
+                heldout_accuracy:None,best_heldout_loss:None,best_epoch:0,
+                train_lessons:0,validation_lessons:0,active_step:0,
+                learning_rate:0.,started:None
             }),
             training:AtomicBool::new(false),stop:AtomicBool::new(false),
         })}
@@ -61,6 +84,9 @@ pub struct Status{
     loss:Option<f32>,heldout_loss:Option<f32>,stage:String,error:Option<String>,
     words:usize,context:usize,lesson:String,cache_enabled:bool,
     candidate_ready:bool,candidate_loss:Option<f32>,candidate_focus:String,candidate_epoch:u32,
+    heldout_accuracy:Option<f32>,best_heldout_loss:Option<f32>,best_epoch:u32,
+    train_lessons:usize,validation_lessons:usize,tokens_per_second:f32,
+    learning_rate:f32,active_step:u64,observations:usize,
 }
 fn status(s:&Nova2State,m:&Session)->Status{
     Status{
@@ -76,6 +102,11 @@ fn status(s:&Nova2State,m:&Session)->Status{
         lesson:m.lesson.clone(),cache_enabled:true,
         candidate_ready:m.candidate.is_some(),candidate_loss:m.candidate_loss,
         candidate_focus:m.candidate_focus.clone(),candidate_epoch:m.candidate_epoch,
+        heldout_accuracy:m.heldout_accuracy,best_heldout_loss:m.best_heldout_loss,
+        best_epoch:m.best_epoch,train_lessons:m.train_lessons,
+        validation_lessons:m.validation_lessons,
+        tokens_per_second:m.started.map(|t|m.completed as f32/t.elapsed().as_secs_f32().max(0.001)).unwrap_or(0.),
+        learning_rate:m.learning_rate,active_step:m.active_step,observations:m.observations.len(),
     }
 }
 #[tauri::command]
@@ -93,6 +124,16 @@ pub fn nova2_boot(app:AppHandle,state:State<'_,Nova2State>)->Result<Status,Strin
         if turns.len()<=12 && turns.iter().all(|t|
             t.user.is_ascii()&&t.assistant.is_ascii()&&t.user.len()<=300&&t.assistant.len()<=512){
             s.history=turns;
+        }
+    }
+    if let Ok(bytes)=std::fs::read(file(&app,LESSON_ARCHIVE)?){
+        if let Ok(archive)=serde_json::from_slice::<Vec<PriorLesson>>(&bytes){
+            if archive.len()<=128{s.previous_lessons=archive;}
+        }
+    }
+    if let Ok(bytes)=std::fs::read(file(&app,OBSERVATIONS)?){
+        if let Ok(rows)=serde_json::from_slice::<Vec<Observation>>(&bytes){
+            if rows.len()<=3000{s.observations=rows;}
         }
     }
     Ok(status(&state,&s))
@@ -152,7 +193,8 @@ pub fn nova2_reset(app:AppHandle,state:State<'_,Nova2State>)->Result<Status,Stri
     std::fs::write(file(&app,CHAT)?,b"[]").map_err(|e|e.to_string())?;
     s.brain=Nova2::new();s.trained=false;s.history.clear();s.candidate=None;s.candidate_loss=None;s.imported_target=None;
     s.epoch=0;s.epochs=0;s.total=0;s.completed=0;
-    s.error=None;s.loss=None;s.heldout=None;s.stage="Fresh Nova-2 brain".into();
+    s.error=None;s.loss=None;s.heldout=None;s.heldout_accuracy=None;
+    s.best_epoch=0;s.best_heldout_loss=None;s.stage="Fresh Nova-2 brain".into();
     Ok(status(&state,&s))
 }
 #[derive(Clone)]
@@ -189,9 +231,9 @@ fn sample(brain:&Nova2,u:&Unit)->Result<(Vec<u16>,Vec<u16>,Vec<f32>),String>{
     }
     Ok((segment[..segment.len()-1].to_vec(),segment[1..].to_vec(),mask))
 }
-fn heldout_loss(brain:&Nova2,held:&[Unit])->Result<f32,String>{
-    if held.is_empty(){return Err("No heldout lesson examples".into());}
-    let mut total=0.;let mut n=0;
+fn heldout_score(brain:&Nova2,held:&[Unit])->Result<(f32,f32),String>{
+    if held.is_empty(){return Err("No held-out examples".into());}
+    let mut total=0.;let mut n=0usize;let mut accurate=0usize;
     for unit in held.iter().step_by((held.len()/12).max(1)).take(12){
         let (input,targets,mask)=sample(brain,unit)?;
         let logits=brain.logits(&input,Ablation::default())?;
@@ -201,11 +243,27 @@ fn heldout_loss(brain:&Nova2,held:&[Unit])->Result<f32,String>{
             let row=&logits[i*v..(i+1)*v];
             let top=row.iter().copied().fold(f32::NEG_INFINITY,f32::max);
             let sum=row.iter().map(|x|(x-top).exp()).sum::<f32>();
+            let chosen=row.iter().enumerate().max_by(|a,b|a.1.total_cmp(b.1))
+                .map(|x|x.0).ok_or("Empty output layer")?;
+            accurate+=usize::from(chosen==goal as usize);
             total+=top+sum.ln()-row[goal as usize];n+=1;
         }
     }
-    if n==0{return Err("Heldout probes contain no answer tokens".into());}
-    Ok(total/n as f32)
+    if n==0{return Err("Held-out probes have no answer tokens".into());}
+    Ok((total/n as f32,accurate as f32/n as f32))
+}
+fn heldout_loss(brain:&Nova2,held:&[Unit])->Result<f32,String>{
+    Ok(heldout_score(brain,held)?.0)
+}
+fn save_observations(app:&AppHandle,observations:&[Observation])->Result<(),String>{
+    let begin=observations.len().saturating_sub(1200);
+    std::fs::write(file(app,OBSERVATIONS)?,
+        serde_json::to_vec(&observations[begin..]).map_err(|e|e.to_string())?)
+        .map_err(|e|e.to_string())
+}
+#[tauri::command]
+pub fn nova2_observer_read(state:State<'_,Nova2State>)->Result<Vec<Observation>,String>{
+    Ok(locked(&state)?.observations.clone())
 }
 fn rate(step:u64,peak:f32)->f32{
     let st=step as f32;
@@ -278,7 +336,7 @@ fn launch(app:AppHandle,state:Nova2State,lessons:Vec<(String,String,String)>,
             if state.inner.stop.load(Ordering::Acquire){break;}
             let scoped=options.foundation_training.unwrap_or(false) &&
                 (lessons.len()==1||options.foundation_zip_scope.as_deref()==Some("entireZip")||index<5);
-            result=selective_lesson(&app,&state,mode,text,epochs,learning_rate,name,scoped);
+            result=selective_lesson(&app,&state,mode,text,epochs,learning_rate,name,scoped,&options);
             if result.is_err(){break;}
         }
         state.inner.training.store(false,Ordering::Release);
@@ -351,66 +409,171 @@ fn parse_focus(s:&str)->Result<Focus,String>{
 fn validation_with_baseline(brain:&Nova2,valid:&[Unit])->Result<f32,String>{
     heldout_loss(brain,valid)
 }
+
+fn archived_probes(bank:&[PriorLesson])->(Vec<Unit>,Vec<Unit>){
+    let mut rehearsal=Vec::new();let mut heldout=Vec::new();
+    for record in bank.iter().rev().take(4){
+        if let Ok(prepared)=trainer::prepare(&record.mode,&record.text){
+            rehearsal.extend(units(&prepared.train));
+            heldout.extend(units(&prepared.validation));
+        }
+    }
+    (rehearsal,heldout)
+}
 fn selective_lesson(app:&AppHandle,state:&Nova2State,mode:&str,text:&str,
-    epochs:u32,peak:f32,label:&str,foundation:bool)->Result<(),String>{
+    epochs:u32,peak:f32,label:&str,foundation:bool,options:&EducationOptions)->Result<(),String>{
     let prepared=trainer::prepare(mode,text)?;
     let train=units(&prepared.train);let valid=units(&prepared.validation);
     if train.is_empty()||valid.is_empty(){return Err("Lesson requires independent held-out examples".into());}
-    let mut start=locked(state)?.brain.clone();
+    let (mut start,bank)={
+        let s=locked(state)?;
+        (s.brain.clone(),s.previous_lessons.clone())
+    };
+    if bank.len()>=128{return Err("Prior lesson archive full; review before continuing teaching".into());}
     start.tokenizer.grow_from_corpus(&prepared.training_text);
-    let initial_loss=validation_with_baseline(&start,&valid)?;
+    let initial_loss=heldout_loss(&start,&valid)?;
+    let (old_train,old_valid)=archived_probes(&bank);
+    let old_baseline=if old_valid.is_empty(){None}else{Some(heldout_loss(&start,&old_valid)?)};
+    let do_rehearsal=options.rehearsal.unwrap_or(false)&&!old_train.is_empty();
+    let protect=options.protect_previous.unwrap_or(false);
+    let tolerance=options.retention_loss_tolerance.unwrap_or(0.02).clamp(0.,1.);
+    let adaptive=options.adaptive_learning_rate.unwrap_or(true);
+    let early=options.early_stopping.unwrap_or(true);
     let mut best=start.clone();let mut best_loss=initial_loss;
+    let mut best_epoch=0u32;let mut best_focus=String::new();
     let foci=if foundation{vec![Focus::Right,Focus::Left,Focus::Interconnect,Focus::Joint]}
         else{vec![Focus::Joint]};
-    let total=train.len()*epochs as usize*foci.len();
+    let attempts=if foundation{4u32}else{1};
+    let steps_per_attempt=(0..attempts).map(|i|epochs+if i==2||i==3{6}else{0}).sum::<u32>();
+    let total=train.len()*steps_per_attempt as usize*foci.len();
     {let mut s=locked(state)?;s.lesson=label.into();s.epochs=epochs;
-        s.total=total;s.completed=0;s.stage=format!("{label}: initializing candidate training");
-        s.heldout=Some(initial_loss);}
+        s.total=total;s.completed=0;s.stage=format!("{label}: preparing Bicameral candidates");
+        s.heldout=Some(initial_loss);s.heldout_accuracy=Some(heldout_score(&start,&valid)?.1);
+        s.train_lessons=train.len();s.validation_lessons=valid.len();
+        s.started=Some(Instant::now());s.active_step=start.step;
+        s.best_epoch=0;s.best_heldout_loss=Some(initial_loss);s.learning_rate=peak;}
+    let overlaps=valid.iter().filter(|v|train.iter().any(|t|t.prompt==v.prompt)).count();
     let mut completed=0usize;
-    for focus in foci{
+    let mut retention_blocked=0u32;
+    for attempt in 0..attempts{
         if state.inner.stop.load(Ordering::Acquire){break;}
-        let mut brain=start.clone();
-        let mut candidate_loss=initial_loss;
-        let mut candidate=start.clone();
-        for epoch in 0..epochs{
+        if attempt>0&&best_loss<initial_loss{break;}
+        let candidate_epochs=epochs+if attempt==2||attempt==3{6}else{0};
+        let try_rate=if attempt==1||attempt==3{peak*0.5}else{peak};
+        for &focus in &foci{
             if state.inner.stop.load(Ordering::Acquire){break;}
-            let mut cumulative=0.0f32;let mut count=0usize;
-            let mut order=(0..train.len()).collect::<Vec<_>>();
-            if epoch>0 && !order.is_empty(){let n=order.len();
-                order.rotate_left((epoch as usize*37)%n);}
-            for idx in order{
+            let mut brain=start.clone();
+            let mut candidate_loss=initial_loss;
+            let mut candidate=start.clone();
+            let mut candidate_epoch=0u32;let mut stale=0u32;
+            for epoch in 0..candidate_epochs{
                 if state.inner.stop.load(Ordering::Acquire){break;}
-                let (ids,targets,mask)=sample(&brain,&train[idx])?;
-                let loss=brain.train_sequence(&ids,&targets,&mask,rate(brain.step,peak),focus)?;
-                cumulative+=loss;count+=1;completed+=1;
-                if count%8==0||count==train.len(){
+                let mut sum=0.0f32;let mut count=0usize;
+                let mut order=(0..train.len()).collect::<Vec<_>>();
+                if epoch>0&&!order.is_empty(){
+                    let n=order.len();
+                    order.rotate_left(((epoch as usize*37)+(attempt as usize*19))%n);
+                }
+                for idx in order{
+                    if state.inner.stop.load(Ordering::Acquire){break;}
+                    let (ids,targets,mask)=sample(&brain,&train[idx])?;
+                    let lr=if adaptive{rate(brain.step,try_rate)}else{try_rate};
+                    let loss=brain.train_sequence(&ids,&targets,&mask,lr,focus)?;
+                    sum+=loss;count+=1;completed+=1;
+                    if do_rehearsal&&count%3==0{
+                        let old=&old_train[(completed/3)%old_train.len()];
+                        let (ri,rt,rm)=sample(&brain,old)?;
+                        brain.train_sequence(&ri,&rt,&rm,lr,focus)?;
+                    }
+                    if count%8==0||count==train.len(){
+                        let mut s=locked(state)?;
+                        s.epoch=epoch+1;s.completed=completed;
+                        s.loss=Some(sum/count as f32);s.active_step=brain.step;
+                        s.learning_rate=lr;
+                        s.stage=format!("{label}: attempt {}/{}, {} candidate, epoch {}/{candidate_epochs}",
+                            attempt+1,attempts,focus_name(focus),epoch+1);
+                        let _=app.emit("nova2-progress",status(state,&s));
+                    }
+                }
+                if count==0{break;}
+                let (current,accuracy)=heldout_score(&brain,&valid)?;
+                let retained=if protect{
+                    if let Some(previous)=old_baseline{
+                        heldout_loss(&brain,&old_valid)?<=previous+tolerance
+                    }else{true}
+                }else{true};
+                if current.is_finite()&&current<candidate_loss&&retained{
+                    candidate_loss=current;candidate=brain.clone();candidate_epoch=epoch+1;stale=0;
+                }else{
+                    stale+=1;
+                    if !retained{retention_blocked+=1;}
+                }
+                {
                     let mut s=locked(state)?;
-                    s.epoch=epoch+1;s.completed=completed;
-                    s.loss=Some(cumulative/count as f32);
-                    s.stage=format!("{label}: {} candidate, epoch {}/{epochs}, sample {}/{}",
-                        focus_name(focus),epoch+1,count,train.len());
+                    s.heldout=Some(current);s.heldout_accuracy=Some(accuracy);
+                    s.best_heldout_loss=Some(best_loss.min(candidate_loss));
+                    let obs=Observation{lesson:label.into(),focus:focus_name(focus).into(),
+                        attempt:attempt+1,epoch:epoch+1,step:brain.step,
+                        train_loss:sum/count as f32,heldout_loss:current,
+                        heldout_accuracy:accuracy,selected:current==candidate_loss&&candidate_epoch==epoch+1,
+                        retention_passed:retained,learning_rate:try_rate,
+                        reply:None,expected:None,no_dense_tv:None,no_exchange_tv:None,
+                        validation_overlap:overlaps};
+                    s.observations.push(obs);
+                    if s.observations.len()>1200{s.observations.remove(0);}
+                    save_observations(app,&s.observations)?;
                     let _=app.emit("nova2-progress",status(state,&s));
                 }
+                if early&&stale>=6{break;}
             }
-            if count==0{break;}
-            let held=validation_with_baseline(&brain,&valid)?;
-            if held.is_finite()&&held<candidate_loss{
-                candidate_loss=held;candidate=brain.clone();
+            if candidate_loss<best_loss{
+                best_loss=candidate_loss;best=candidate;
+                best_epoch=candidate_epoch;best_focus=focus_name(focus).into();
             }
-        }
-        if candidate_loss<best_loss{
-            best_loss=candidate_loss;best=candidate;
         }
     }
-    if best_loss<initial_loss{
+    if best_loss<initial_loss&&!state.inner.stop.load(Ordering::Acquire){
+        // These diagnostic probes are read-only: teacher expectations are NOT neural input.
+        let probe=valid.first().and_then(|u|{
+            let prompt=std::str::from_utf8(&u.prompt).ok()?;
+            let encoded=best.tokenizer.encode(prompt).ok()?;
+            let ids=&encoded[encoded.len().saturating_sub(best.config.max_tokens)..];
+            let full=best.predict(ids,Ablation::default()).ok()?;
+            let nodense=best.predict(ids,Ablation{no_right:true,..Ablation::default()}).ok()?;
+            let noexchange=best.predict(ids,Ablation{no_efferent:true,..Ablation::default()}).ok()?;
+            let tv=|other:&Vec<f32>|0.5*full.iter().zip(other.iter())
+                .map(|(a,b)|(a-b).abs()).sum::<f32>();
+            let response=best.generate_cached(prompt,12).ok()?;
+            Some((response,String::from_utf8_lossy(&u.answer).into_owned(),
+                tv(&nodense),tv(&noexchange)))
+        });
+        let updated=PriorLesson{name:label.into(),mode:mode.into(),text:text.into()};
+        let mut s=locked(state)?;
+        let mut archive=s.previous_lessons.clone();
+        if !archive.iter().any(|x|x.mode==updated.mode&&x.text==updated.text){
+            archive.push(updated);
+            save_lesson_archive(app,&archive)?;
+        }
         best.save(file(app,CHECKPOINT)?)?;
-        let mut s=locked(state)?;s.brain=best;s.trained=true;
-        s.heldout=Some(best_loss);s.stage=format!(
-            "{label}: selected checkpoint (held-out loss {:.4} -> {:.4})",initial_loss,best_loss);
+        s.previous_lessons=archive;s.brain=best;s.trained=true;
+        s.heldout=Some(best_loss);s.best_epoch=best_epoch;
+        s.best_heldout_loss=Some(best_loss);
+        s.heldout_accuracy=Some(heldout_score(&s.brain,&valid)?.1);
+        s.active_step=s.brain.step;
+        if let (Some(last),Some((response,expected,tv_dense,tv_exchange)))=
+            (s.observations.last_mut(),probe){
+            last.reply=Some(response);last.expected=Some(expected);
+            last.no_dense_tv=Some(tv_dense);last.no_exchange_tv=Some(tv_exchange);
+            last.selected=true;
+            save_observations(app,&s.observations)?;
+        }
+        s.stage=format!("{label}: selected {best_focus} .nnova2 candidate at epoch {best_epoch} ({:.4} -> {:.4}, {} retention blocks)",
+            initial_loss,best_loss,retention_blocked);
         let _=app.emit("nova2-progress",status(state,&s));
     }else{
         let mut s=locked(state)?;s.heldout=Some(initial_loss);
-        s.stage=format!("{label}: no candidate improved held-out loss; original checkpoint retained");
+        s.stage=format!("{label}: no eligible candidate improved held-out loss; original .nnova2 retained ({} retention blocks)",
+            retention_blocked);
         let _=app.emit("nova2-progress",status(state,&s));
     }
     Ok(())
@@ -729,4 +892,122 @@ pub fn nova2_compare_context(state:State<'_,Nova2State>,message:String,
     let (short,_,_)=generate(&brain,&prompt,max_tokens.unwrap_or(64),128,0.6,"greedy")?;
     let (long,_,_)=generate(&brain,&prompt,max_tokens.unwrap_or(64),256,0.6,"greedy")?;
     Ok(ContextComparison{short,long})
+}
+
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct Nova2AttentionSensitivity{index:usize,character:String,weight:f32}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct Nova2Prediction{code:usize,probability:f32}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct Nova2Trace{
+    attention:Vec<Nova2AttentionSensitivity>,
+    dense_layers:Vec<Vec<f32>>,top_predictions:Vec<Nova2Prediction>,
+    bridge_signal:Vec<f32>,interconnect_used:bool,
+    method:String
+}
+#[tauri::command]
+pub fn nova2_inspect(state:State<'_,Nova2State>,message:String,
+    context_chars:Option<usize>)->Result<Nova2Trace,String>{
+    if message.trim().is_empty()||!message.is_ascii()||message.len()>300{
+        return Err("Enter a nonempty ASCII question up to 300 bytes".into());
+    }
+    if state.is_training(){return Err("Finish training before inspecting".into());}
+    let model=locked(&state)?.brain.clone();
+    let prompt=format!("U: {}\nN: ",message);
+    let encoded=model.tokenizer.encode(&prompt)?;
+    let context=context_chars.unwrap_or(128).clamp(1,model.config.max_tokens);
+    let ids=&encoded[encoded.len().saturating_sub(context)..];
+    let probs=model.predict(ids,Ablation::default())?;
+    let no_right=model.predict(ids,Ablation{no_right:true,..Ablation::default()})?;
+    let difference=0.5*probs.iter().zip(no_right.iter())
+        .map(|(a,b)|(a-b).abs()).sum::<f32>();
+    let length=ids.len();
+    let stride=(length/16).max(1);
+    let mut sensitivity=Vec::new();
+    for i in (0..length).step_by(stride).take(24){
+        if length<2{break;}
+        let mut removed=ids.to_vec();removed.remove(i);
+        let altered=model.predict(&removed,Ablation::default())?;
+        let tv=0.5*probs.iter().zip(altered.iter())
+            .map(|(a,b)|(a-b).abs()).sum::<f32>();
+        let name=if ids[i]<128{
+            let c=ids[i] as u8;
+            if c==10{"↵".into()}else if c==32{"SPACE".into()}
+            else if c<32{format!("0x{:02x}",c)}else{(c as char).to_string()}
+        }else{
+            model.tokenizer.words.get(ids[i] as usize-128)
+                .cloned().unwrap_or_else(||"word".into())
+        };
+        sensitivity.push(Nova2AttentionSensitivity{
+            index:i,character:name,weight:tv
+        });
+    }
+    let mut top=(0..probs.len().min(128)).map(|i|Nova2Prediction{
+        code:i,probability:probs[i]
+    }).collect::<Vec<_>>();
+    top.sort_by(|a,b|b.probability.total_cmp(&a.probability));top.truncate(8);
+    let start=model.group_parameters(Focus::Left);
+    let right=model.group_parameters(Focus::Right);
+    let dense_end=start+right;
+    let mut dense_layers=Vec::new();
+    for layer in 0..3{
+        let from=start+layer*right/3;
+        let to=start+(layer+1)*right/3;
+        let available=&model.weights[from..to];
+        let skip=(available.len()/64).max(1);
+        dense_layers.push(available.iter().step_by(skip).take(64).copied().collect());
+    }
+    let bridge=&model.weights[dense_end..];
+    let mut bridge_signal=Vec::new();
+    for i in 0..32{
+        let a=i*bridge.len()/32;
+        let b=(i+1)*bridge.len()/32;
+        let mean=bridge[a..b].iter().map(|v|v.abs()).sum::<f32>()/(b-a).max(1) as f32;
+        bridge_signal.push(mean);
+    }
+    Ok(Nova2Trace{attention:sensitivity,dense_layers,top_predictions:top,
+        bridge_signal,interconnect_used:difference>1e-9,
+        method:"Token-removal output sensitivity; sampled learned Dense and interconnect weights. Not direct attention or activation telemetry.".into()})
+}
+
+fn save_lesson_archive(app:&AppHandle,lessons:&[PriorLesson])->Result<(),String>{
+    std::fs::write(file(app,LESSON_ARCHIVE)?,
+        serde_json::to_vec_pretty(lessons).map_err(|e|e.to_string())?)
+        .map_err(|e|e.to_string())
+}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct Nova2RehearsalInfo{names:Vec<String>,modes:Vec<String>,count:usize,capacity:usize}
+fn lesson_info(s:&Session)->Nova2RehearsalInfo{
+    Nova2RehearsalInfo{names:s.previous_lessons.iter().map(|p|p.name.clone()).collect(),
+        modes:s.previous_lessons.iter().map(|p|p.mode.clone()).collect(),
+        count:s.previous_lessons.len(),capacity:128}
+}
+#[tauri::command]
+pub fn nova2_rehearsal_info(state:State<'_,Nova2State>)->Result<Nova2RehearsalInfo,String>{
+    Ok(lesson_info(&locked(&state)?))
+}
+#[tauri::command]
+pub fn nova2_rehearsal_add(app:AppHandle,state:State<'_,Nova2State>,
+    name:String,mode:String,text:String)->Result<Nova2RehearsalInfo,String>{
+    if state.is_training(){return Err("Wait for training before changing rehearsal archive".into());}
+    if name.trim().is_empty()||name.len()>80||text.len()>50_000{
+        return Err("Prior lesson name must be 1–80 chars; text at most 50KB".into());
+    }
+    trainer::prepare(&mode,&text)?;
+    let mut s=locked(&state)?;
+    if s.previous_lessons.len()>=128{return Err("Previous lessons archive full (128); export before deleting".into());}
+    s.previous_lessons.push(PriorLesson{name,mode,text});
+    save_lesson_archive(&app,&s.previous_lessons)?;
+    Ok(lesson_info(&s))
+}
+#[tauri::command]
+pub fn nova2_rehearsal_clear(app:AppHandle,state:State<'_,Nova2State>)
+    ->Result<Nova2RehearsalInfo,String>{
+    if state.is_training(){return Err("Stop training before clearing the archive".into());}
+    let mut s=locked(&state)?;s.previous_lessons.clear();
+    save_lesson_archive(&app,&s.previous_lessons)?;Ok(lesson_info(&s))
 }

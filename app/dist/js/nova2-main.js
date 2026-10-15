@@ -26,13 +26,17 @@ function printStatus(s){
   $("totalParams").textContent=Number(s.parameters).toLocaleString();
   $("transformerParams").textContent=Number(s.transformerParameters).toLocaleString();
   $("denseParams").textContent=Number(s.denseParameters).toLocaleString();
-  $("trainingSteps").textContent=Number(s.step).toLocaleString();
+  $("trainingSteps").textContent=Number(s.training?s.activeStep??s.step:s.step).toLocaleString();
   $("brainStateText").textContent=s.training?"Nova is learning":s.error?"Nova error":"Nova ready";
   $("brainState").className="status-pill"+(s.training?" running":s.error?" error":"");
   $("trainingStage").textContent=s.error||s.stage||"Ready";
   $("checkpointText").textContent=s.trained?".nnova2 weights saved":"Fresh .nnova2 brain";
   $("memoryStatus").textContent=history.length+"/12 turns · "+s.words+" word units";
   $("heldoutLoss").textContent=Number.isFinite(s.heldoutLoss)?s.heldoutLoss.toFixed(4):"—";
+  $("heldoutAccuracy").textContent=Number.isFinite(s.heldoutAccuracy)?(100*s.heldoutAccuracy).toFixed(1)+"%":"—";
+  $("lessonSplit").textContent="Training / held-out: "+(s.trainLessons||0)+" / "+(s.validationLessons||0)+" answer groups";
+  $("trainingSpeed").textContent=s.tokensPerSecond>0?"Throughput: "+s.tokensPerSecond.toFixed(2)+" samples/s":"Throughput: —";
+  $("bestEpoch").textContent="Best epoch: "+(s.bestEpoch||"baseline")+(Number.isFinite(s.bestHeldoutLoss)?" · "+s.bestHeldoutLoss.toFixed(4):"");
   $("trainingProgress").textContent=s.training?"Epoch "+s.epoch+"/"+s.epochs+" · "+s.completed+"/"+s.total:"Last lesson: "+(s.lesson||"none");
   let f=s.total?Math.min(100,100*s.completed/s.total):0;
   $("trainingFill").style.width=f.toFixed(1)+"%";$("trainingPercent").textContent=f.toFixed(1)+"%";
@@ -92,8 +96,8 @@ function educationOptions(){return{
  rehearsal:$("rehearsalEnabled").checked,
  retentionLossTolerance:Number($("retentionTolerance").value)
 };}
-function trainArgs(){const text=$("lessonData").value,epochs=Number($("trainingEpochs").value),learningRate=Number($("trainingRate").value);
- if(!text.trim())throw Error("Paste a lesson");if(!(epochs>=1&&epochs<=60))throw Error("Choose 1-60 epochs");
+function trainArgs(requireText=true){const text=$("lessonData").value,epochs=Number($("trainingEpochs").value),learningRate=Number($("trainingRate").value);
+ if(requireText&&!text.trim())throw Error("Paste a lesson");if(!(epochs>=1&&epochs<=60))throw Error("Choose 1-60 epochs");
  if(!Number.isFinite(learningRate)||learningRate<=0)throw Error("Invalid learning rate");
  return {mode:mode(),text,epochs,learningRate,options:educationOptions()};}
 async function trainingStart(name,args){
@@ -112,16 +116,16 @@ $("nativeMassLessonZip").addEventListener("click",()=>safe(async()=>{zipBytes=aw
 $("previewMassLessons").addEventListener("click",()=>safe(async()=>{
  if(!zipBytes){let f=$("massLessonZip").files?.[0];if(!f)throw Error("Select a ZIP");zipBytes=new Uint8Array(await f.arrayBuffer());}
  if(!zipBytes.length||zipBytes.length>4*1024*1024)throw Error("ZIP must be 1B to 4MiB");
- zipBundle=await invoke("nova2_zip_preview",{bytes:Array.from(zipBytes),mode:mode()});
+ zipBundle=await invoke("nova2_zip_preview",{bytes:Array.from(zipBytes),mode:"auto"});
  $("massLessonsStatus").textContent=zipBundle.lessons.length+" lessons validated.";
  $("massLessonsLog").textContent=zipBundle.lessons.map((x,i)=>(i+1)+". "+x.name+" ("+x.mode+")").join("\n");
  $("startMassLessons").disabled=false;
 }));
 $("startMassLessons").addEventListener("click",()=>safe(async()=>{
  if(!zipBundle||!zipBytes)throw Error("Validate ZIP first");
- const args=trainArgs();delete args.text;
+ const args=trainArgs(false);delete args.text;
  if(!confirm("Teach "+zipBundle.lessons.length+" ZIP lessons to Nova's .nnova2 brain?"))return;
- await trainingStart("nova2_zip_train",{bytes:Array.from(zipBytes),mode:mode(),epochs:args.epochs,learningRate:args.learningRate,options:args.options});
+ await trainingStart("nova2_zip_train",{bytes:Array.from(zipBytes),mode:"auto",epochs:args.epochs,learningRate:args.learningRate,options:args.options});
 }));
 $("stopMassLessons").addEventListener("click",()=>safe(async()=>{await invoke("nova2_stop");await refresh();}));
 const ctx=$("chatTranscript");function bubble(role,v){
