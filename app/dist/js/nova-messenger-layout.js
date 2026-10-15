@@ -106,8 +106,8 @@
   }
   $("openModelTools").addEventListener("click",()=>{
     $("tab-train").click();showTrainSubtab("teach");
-    const file=$("importCheckpointFile")||$("importCheckpointNative");
-    file?.closest(".card,details,section")?.scrollIntoView?.({behavior:"smooth",block:"center"});
+    const transfer=$("checkpointTransfer");
+    if(transfer){transfer.open=true;transfer.scrollIntoView?.({behavior:"smooth",block:"center"});}
   });
   function traceReply(info){
     const nodes=$("novaTraceNodes");nodes.replaceChildren();
