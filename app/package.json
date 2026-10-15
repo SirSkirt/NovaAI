@@ -1,7 +1,7 @@
 {
   "name": "neural-nova-experimental",
   "private": true,
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "Neural Nova jointly trainable dual-hemisphere brain with Teach Chat Visualize UI",
   "scripts": {
     "tauri": "tauri",
