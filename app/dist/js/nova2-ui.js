@@ -72,11 +72,39 @@ $("n2Teach").addEventListener("click",()=>void safe(async()=>{
     if(!text.trim())throw Error("Paste lesson text before starting.");
     display(await beginTraining("nova2_train",{mode,text,...opts()}));
 }));
+let nativeZip=null;
+const onNativeAndroid=/Android/i.test(navigator.userAgent);
+if(onNativeAndroid){
+    $("n2Zip").hidden=true;
+    $("n2NativeZip").hidden=false;
+}
+$("n2NativeZip").addEventListener("click",()=>void safe(async()=>{
+    const dialog=window.__TAURI__?.dialog,fs=window.__TAURI__?.fs;
+    if(!dialog?.open||!fs?.readFile)
+        throw Error("Android Files ZIP picker is unavailable.");
+    const uri=await dialog.open({multiple:false,directory:false,pickerMode:"document"});
+    if(uri==null)return;
+    if(typeof uri!=="string"||!uri.startsWith("content://"))
+        throw Error("Android Files did not return a readable document URI.");
+    const result=await fs.readFile(uri);
+    const data=result instanceof Uint8Array?result:new Uint8Array(result);
+    if(!data.length||data.length>4*1024*1024)
+        throw Error("ZIP must be nonempty and under 4 MiB.");
+    nativeZip=data;
+    alertStatus("Selected ZIP via Android Files ("+nativeZip.length+" bytes).");
+}));
 $("n2ZipTrain").addEventListener("click",()=>void safe(async()=>{
-    const file=$("n2Zip").files?.[0];
-    if(!file)throw Error("Select a ZIP file containing your lesson TXT files.");
-    if(file.size>4*1024*1024)throw Error("ZIP must be under 4 MiB.");
-    const bytes=Array.from(new Uint8Array(await file.arrayBuffer()));
+    let bytes;
+    if(onNativeAndroid){
+        if(!nativeZip)throw Error("Choose a ZIP using Android Files first.");
+        bytes=Array.from(nativeZip);
+    }else{
+        const file=$("n2Zip").files?.[0];
+        if(!file)throw Error("Select a ZIP containing your lesson TXT files.");
+        if(!file.size||file.size>4*1024*1024)
+            throw Error("ZIP must be nonempty and under 4 MiB.");
+        bytes=Array.from(new Uint8Array(await file.arrayBuffer()));
+    }
     display(await beginTraining("nova2_zip_train",{bytes,mode:$("n2ZipMode").value,...opts()}));
 }));
 $("n2Stop").addEventListener("click",()=>void safe(async()=>{
