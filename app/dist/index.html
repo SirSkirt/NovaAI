@@ -86,6 +86,17 @@
           <textarea id="n2Prompt" rows="3" placeholder="Talk to Nova-2..." spellcheck="false"></textarea>
           <button id="n2Chat" class="primary" type="button">Send (KV-cached)</button>
           <p class="muted" id="n2CacheStats">A fresh incremental attention cache is created for each generation; it is invalidated by learning.</p>
+
+          <div class="section-line"><h3>Nova-2 checkpoints</h3></div>
+          <p class="muted">Export/import the complete NNOVA2 model, optimizer moments, and learned word units without changing any original .nhyb checkpoint.</p>
+          <div class="row wrap">
+            <button id="n2Export" type="button" class="secondary">Export Nova-2</button>
+            <button id="n2ImportNative" type="button" class="secondary" hidden>Choose Android Files checkpoint</button>
+          </div>
+          <label for="n2ImportFile" id="n2ImportFileLabel">Import .nnova2 checkpoint</label>
+          <input type="file" id="n2ImportFile" accept=".nnova2">
+          <button id="n2Import" type="button" class="secondary">Import Nova-2 checkpoint</button>
+          <p class="muted" id="n2Transfer">No transfer active.</p>
           <h3>Training progress</h3>
           <pre id="n2Progress" class="epoch-history" style="max-height:310px;overflow:auto;white-space:pre-wrap">Idle. Untrained model.</pre>
         </div>
