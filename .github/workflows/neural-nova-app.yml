@@ -30,6 +30,26 @@ jobs:
       - run: node --check app/dist/js/nova2-main.js
       - run: node --check app/dist/js/nova-messenger-layout.js
       - run: node app/tests/messenger-layout.test.cjs
+      - name: Verify optional 19,000-step bundled checkpoint integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL=app/src-tauri/resources/nova2-step19000.nnova2
+          if [[ -f "$MODEL" ]]; then
+            echo "cdba02dc7058d6cf79f6d4e9ac633fbdbd87ef718316c2db7f242466824519ea  $MODEL" | sha256sum -c -
+            python3 - <<'PY'
+          import json, struct, pathlib
+          data=pathlib.Path("app/src-tauri/resources/nova2-step19000.nnova2").read_bytes()
+          assert data[:8]==b"NNOVA2\0\0"
+          n=struct.unpack_from("<I",data,8)[0]
+          c=json.loads(data[12:12+n])
+          assert struct.unpack_from("<Q",data,12+n)[0]==19000
+          assert (c["vocab"],c["d"],c["blocks"],c["loops"]) == (384,128,4,2)
+          print("Verified Nova-2 model: 19,000 steps, correct SHA256 and architecture")
+          PY
+          else
+            echo "::warning::Step-19000 checkpoint not committed. Builders support manual import; automated prerelease is withheld."
+          fi
       - run: node --check app/dist/js/nova2-test-ui.js
       - run: node --check app/dist/js/nova2-education-ui.js
       - run: node --check app/dist/js/training-background-ui.js
@@ -263,3 +283,58 @@ jobs:
           path: app/packaged-apk/Nova-*.apk
           if-no-files-found: error
           compression-level: 0
+
+  prerelease:
+    name: Publish Nova experimental prerelease
+    needs: [validate, windows, android]
+    if: ${{ github.ref == 'refs/heads/experimental/neural-nova' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check bundled step-19000 checkpoint before distribution
+        id: model
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL=app/src-tauri/resources/nova2-step19000.nnova2
+          if [[ ! -s "$MODEL" ]]; then
+            echo "::warning::No 19,000-step checkpoint in app/src-tauri/resources. Prerelease withheld to avoid shipping an untrained Nova."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "cdba02dc7058d6cf79f6d4e9ac633fbdbd87ef718316c2db7f242466824519ea  $MODEL" | sha256sum -c -
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: Download signed Android APK
+        if: steps.model.outputs.ready == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Nova-*
+          merge-multiple: true
+          path: release-assets/android
+      - name: Download Windows installer
+        if: steps.model.outputs.ready == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: Neural-Nova-Experimental-Windows
+          path: release-assets/windows
+      - name: Publish GitHub prerelease
+        if: steps.model.outputs.ready == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(python3 -c 'import json; print(json.load(open("app/src-tauri/tauri.conf.json"))["version"])')"
+          TAG="v${VERSION}-preview.${GITHUB_RUN_NUMBER}"
+          shopt -s nullglob
+          APKS=(release-assets/android/Nova-*.apk)
+          EXES=(release-assets/windows/*.exe)
+          [[ "${#APKS[@]}" -eq 1 ]] || { echo "::error::Expected one versioned Android APK"; exit 1; }
+          [[ "${#EXES[@]}" -ge 1 ]] || { echo "::error::Windows installer missing"; exit 1; }
+          NOTES="Experimental Nova Messenger ${VERSION}. Includes the 19,000-step Nova-2 Bicameral neural checkpoint and the existing trained-checkpoint importer. Android package ID and pinned development signing certificate remain unchanged. Preview builds are not production releases."
+          gh release create "$TAG" "${APKS[@]}" "${EXES[@]}" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Nova ${VERSION} Preview · build ${GITHUB_RUN_NUMBER}" --notes "$NOTES"

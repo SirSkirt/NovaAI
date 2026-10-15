@@ -9,6 +9,8 @@ use tauri::{AppHandle,Manager,Emitter,State};
 use serde::{Serialize,Deserialize};
 
 const CHECKPOINT:&str="neural-nova-bicameral-v2.nnova2";
+// The build script embeds the exact checkpoint when resources/nova2-step19000.nnova2 is present.
+const BUNDLED_NOVA2:&[u8]=include_bytes!(concat!(env!("OUT_DIR"),"/nova2-bundled.nnova2"));
 const CHAT:&str="neural-nova-bicameral-conversation.json";
 const LESSON_ARCHIVE:&str="neural-nova-bicameral-lessons.json";
 const OBSERVATIONS:&str="neural-nova-bicameral-epochs.json";
@@ -116,7 +118,28 @@ pub fn nova2_boot(app:AppHandle,state:State<'_,Nova2State>)->Result<Status,Strin
     }
     let mut s=locked(&state)?;
     let p=file(&app,CHECKPOINT)?;
-    if p.exists(){s.brain=Nova2::load(&p)?;s.trained=true;}
+    if p.exists(){
+        // An existing imported/trained checkpoint always wins over the default.
+        s.brain=Nova2::load(&p)?;s.trained=true;
+        s.stage=format!("Loaded saved Nova-2 checkpoint · step {}",s.brain.step);
+    }else if !BUNDLED_NOVA2.is_empty(){
+        // Save the built-in model only on the first launch. Never overwrite imports.
+        let temporary=p.with_extension("bundled.tmp");
+        std::fs::write(&temporary,BUNDLED_NOVA2).map_err(|e|e.to_string())?;
+        let loaded=match Nova2::load(&temporary){
+            Ok(model) if model.step==19_000 => model,
+            Ok(model) => {
+                let _=std::fs::remove_file(&temporary);
+                return Err(format!("Bundled Nova checkpoint has step {} instead of 19000",model.step));
+            }
+            Err(error) => {let _=std::fs::remove_file(&temporary);return Err(error);}
+        };
+        std::fs::rename(&temporary,&p).map_err(|e|e.to_string())?;
+        s.brain=loaded;s.trained=true;
+        s.stage="Bundled Nova-2 model loaded · 19,000 steps".into();
+    }else{
+        s.stage="No bundled checkpoint. Import the 19,000-step .nnova2 model to begin chatting.".into();
+    }
     let chat=file(&app,CHAT)?;
     if chat.exists(){
         let bytes=std::fs::read(chat).map_err(|e|e.to_string())?;
@@ -850,8 +873,21 @@ fn generate(brain:&Nova2,prompt:&str,max_tokens:usize,context_tokens:usize,
     let ids=brain.tokenizer.encode(prompt)?;
     let window=context_tokens.clamp(1,brain.config.max_tokens);
     let recent=&ids[ids.len().saturating_sub(window)..];
+    let mut context=recent.to_vec();
     let mut cache=KvCache::new(brain,Ablation::default());
-    let mut probs=cache.prefill(brain,recent)?;
+    // KvCache::prefill returns raw logits; following append calls return
+    // probabilities. Normalize the FIRST distribution as well.
+    let normalize=|mut scores:Vec<f32>|{
+        let valid=(128+brain.tokenizer.words.len()).min(brain.config.vocab);
+        for value in scores.iter_mut().skip(valid){*value=f32::NEG_INFINITY;}
+        let max=scores.iter().copied().fold(f32::NEG_INFINITY,f32::max);
+        let mut sum=0f32;
+        for value in &mut scores{*value=(*value-max).exp();sum+=*value;}
+        for value in &mut scores{*value/=sum;}
+        scores
+    };
+    let mut probs=normalize(cache.prefill(brain,recent)?);
+    let mut keys_read=cache.stats().attention_keys_read;
     let mut output=Vec::new();
     let mut seed=if sampling=="fixed"||sampling=="seeded"{42u64}
         else{std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
@@ -875,10 +911,24 @@ fn generate(brain:&Nova2,prompt:&str,max_tokens:usize,context_tokens:usize,
                 .ok_or("Empty Nova-2 output")?.0 as u16
         };
         if next==b'\n' as u16{break;}
-        output.push(next);probs=brain.predict_cached(&mut cache,next)?;
+        output.push(next);
+        context.push(next);
+        if context.len()>window{context.remove(0);}
+        if cache.token_count()>=window{
+            // The Python reference re-windows the last N tokens from RoPE
+            // position zero. Sliding stale cached keys changes logits.
+            // Re-prefill at the window boundary, even though it costs CPU.
+            cache=KvCache::new(brain,Ablation::default());
+            probs=normalize(cache.prefill(brain,&context)?);
+            keys_read+=cache.stats().attention_keys_read;
+        }else{
+            let before=cache.stats().attention_keys_read;
+            probs=brain.predict_cached(&mut cache,next)?;
+            keys_read+=cache.stats().attention_keys_read-before;
+        }
     }
     let text=brain.tokenizer.decode(&output)?;
-    Ok((text,output.len(),cache.stats().attention_keys_read))
+    Ok((text,output.len(),keys_read))
 }
 #[derive(Serialize)]
 pub struct ContextComparison{short:String,long:String}

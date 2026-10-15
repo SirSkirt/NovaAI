@@ -1,7 +1,7 @@
 {
   "name": "neural-nova-experimental",
   "private": true,
-  "version": "0.19.0",
+  "version": "0.19.1",
   "description": "Chat-first Bicameral Nova messenger with temporary Train workspace and brain inspector",
   "scripts": {
     "tauri": "tauri",

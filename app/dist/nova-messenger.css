@@ -136,3 +136,7 @@ footer{color:#919a96}
  .trace-nodes strong{min-width:90px}
 }
 @media(prefers-reduced-motion:reduce){.nova-brain-rail{transition:none}}
+
+/* Model availability is explicit; don't hide a missing checkpoint behind an empty chat. */
+.model-notice{padding:12px 18px;background:#383026;color:#ebd5a5;border-bottom:1px solid #68533e;font-size:12px;line-height:1.5}
+.model-notice[hidden]{display:none!important}

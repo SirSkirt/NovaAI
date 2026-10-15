@@ -35,10 +35,18 @@
     '<button type="button" class="secondary compact brain-toggle" id="toggleBrain" aria-controls="novaBrainRail" aria-expanded="false">Brain inspector</button></div>';
   const grid=document.createElement("div");grid.className="messenger-grid";
   const conversation=document.createElement("div");conversation.className="messenger-conversation";
-  const card=chat.querySelector(".chat-card");conversation.append(card);
+  const card=chat.querySelector(".chat-card");
+  if(!card)throw Error("Nova chat card was not found");
+  conversation.append(card);
+  // Mount conversation immediately: an unrelated inspector failure must never blank chat.
+  grid.append(conversation);chat.append(grid);
   const intro=document.createElement("div");intro.className="conversation-intro";
   intro.innerHTML='<span class="mini-mark" aria-hidden="true">N</span><div><strong>Nova</strong><small>Direct conversation with the active .nnova2 brain</small></div>';
   card.prepend(intro);
+  const notice=document.createElement("div");notice.id="modelNotice";
+  notice.className="model-notice";notice.hidden=true;
+  notice.textContent="No trained model is loaded. Open Checkpoints to import your .nnova2 file.";
+  intro.after(notice);
   const transcript=$("chatTranscript");
   const tree=document.createElement("details");tree.id="novaThinkingTree";tree.className="thinking-tree";
   tree.innerHTML='<summary><span>Thinking tree <small>preview · inference evidence</small></span><span class="disclosure-mark" aria-hidden="true">⌄</span></summary>'+
@@ -71,7 +79,7 @@
     rail.append(controls);
   }
   visualize.remove();
-  grid.append(conversation,rail);chat.append(grid);
+  grid.append(rail);
   const overlay=document.createElement("button");overlay.type="button";overlay.className="brain-backdrop";
   overlay.id="brainBackdrop";overlay.setAttribute("aria-label","Close brain inspector");overlay.hidden=true;
   chat.append(overlay);

@@ -19,7 +19,7 @@
   <header class="app-header">
     <div class="brand">
       <span class="brand-symbol" aria-hidden="true">◐</span>
-      <div><h1>Neural Nova <span class="beta">v0.19.0 · Bicameral</span></h1><p>Your local Bicameral AI · messaging and brain inspection</p></div>
+      <div><h1>Neural Nova <span class="beta">v0.19.1 · Bicameral</span></h1><p>Your local Bicameral AI · messaging and brain inspection</p></div>
     </div>
     <div class="status-pill" id="brainState" role="status"><span class="status-indicator"></span><span id="brainStateText">Starting…</span></div>
   </header>
@@ -347,14 +347,14 @@ hey there</textarea>
         <div class="chat-controls">
           <div class="chat-settings" aria-label="Generation diagnostics">
             <div><label for="chatLength">Max reply characters</label><select id="chatLength">
-              <option value="32">32</option><option value="64">64</option><option value="128" selected>128</option><option value="192">192</option><option value="256">256</option>
+              <option value="32" selected>32</option><option value="64">64</option><option value="128">128</option><option value="192">192</option><option value="256">256</option>
             </select></div>
             <div><label for="chatTemperature">Temperature <output id="chatTempValue" for="chatTemperature">0.6</output></label><input id="chatTemperature" type="range" min="0.2" max="2" step="0.1" value="0.6"></div>
             <div><label for="chatContext">Context window</label><select id="chatContext">
               <option value="128" selected>128 tokens</option><option value="256">256 tokens</option>
             </select></div>
             <div><label for="chatSampling">Sampling</label><select id="chatSampling">
-              <option value="random" selected>Random</option><option value="fixed">Seeded · 42</option><option value="greedy">Most likely</option>
+              <option value="random">Random</option><option value="fixed">Seeded · 42</option><option value="greedy" selected>Most likely</option>
             </select></div>
           </div>
           <p class="muted chat-experiment-note" id="chatExperimentNote">Nova-2 uses a 256-token causal attention window with per-layer KV caching.</p>

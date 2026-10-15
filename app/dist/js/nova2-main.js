@@ -45,7 +45,10 @@ function printStatus(s){
   let f=s.total?Math.min(100,100*s.completed/s.total):0;
   $("trainingFill").style.width=f.toFixed(1)+"%";$("trainingPercent").textContent=f.toFixed(1)+"%";
   $("startTraining").disabled=running;$("stopTraining").disabled=!running;$("resetBrain").disabled=running;
-  $("sendMessage").disabled=running;$("startMassLessons").disabled=running||!zipBundle;$("stopMassLessons").disabled=!running;
+  $("sendMessage").disabled=running||!s.trained;
+  const notice=$("modelNotice");
+  if(notice)notice.hidden=!!s.trained;
+  if(!s.trained&&!running)$("brainStateText").textContent="Import model";$("startMassLessons").disabled=running||!zipBundle;$("stopMassLessons").disabled=!running;
   $("targetedStart").disabled=running||s.candidateReady;
   $("targetedStop").disabled=!running;
   $("targetedAccept").disabled=running||!s.candidateReady;
@@ -208,7 +211,9 @@ if(/Android/i.test(navigator.userAgent)){
 }
 $("importCheckpointNative").addEventListener("click",()=>safe(async()=>{
  androidCheckpoint=await androidBytes();
- if(androidCheckpoint)$("checkpointTransferStatus").textContent="Loaded "+androidCheckpoint.length+" bytes.";
+ $("importCheckpoint").disabled=!androidCheckpoint?.length;
+ if(androidCheckpoint)$("checkpointTransferStatus").textContent="Loaded "+androidCheckpoint.length+" bytes. Ready to import.";
+ else $("checkpointTransferStatus").textContent="Checkpoint selection cancelled.";
 }));
 $("targetedNativeImport").addEventListener("click",()=>safe(async()=>{
  importedTarget=await androidBytes();

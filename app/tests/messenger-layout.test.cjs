@@ -36,6 +36,18 @@ assert.match(style,/grid-template-columns:minmax\(0,1fr\) minmax\(300px,365px\)/
 assert.match(style,/@media\(max-width:1120px\)/);
 const packageVersion=JSON.parse(read("package.json")).version;
 const tauri=JSON.parse(read("src-tauri/tauri.conf.json"));
-assert.equal(packageVersion,"0.19.0");
+assert.equal(packageVersion,"0.19.1");
 assert.equal(tauri.version,packageVersion);
+
+assert.ok(layout.indexOf("grid.append(conversation);chat.append(grid)") <
+          layout.indexOf("const settings=card.querySelector"),
+          "Chat must mount before optional inspector reparenting");
+assert.match(layout,/notice\.id="modelNotice"/);
+assert.match(main,/\$\("sendMessage"\)\.disabled=running\|\|!s\.trained/);
+const bundled=read("src-tauri/build.rs");
+assert.match(bundled,/resources\/nova2-step19000\.nnova2/);
+assert.match(inspection,/BUNDLED_NOVA2/);
+assert.match(inspection,/model\.step==19_000/);
+assert.match(inspection,/cache\.token_count\(\)>=window/);
+assert.match(inspection,/normalize\(cache\.prefill/);
 console.log("PASS: Nova messenger, Train subtabs, mobile inspector, honest thinking-tree and native read-only inspection wiring");
