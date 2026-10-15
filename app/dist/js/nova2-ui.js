@@ -97,6 +97,90 @@ $("n2Chat").addEventListener("click",()=>void safe(async()=>{
         " output tokens, "+Number(reply.cacheAttentionKeys).toLocaleString()+
         " attention keys read, checkpoint step "+reply.step+".";
 }));
+
+const onAndroid=/Android/i.test(navigator.userAgent);
+let importBytes=null;
+const writeTransfer=text=>{$("n2Transfer").textContent=text;};
+if(onAndroid){
+    $("n2ImportNative").hidden=false;
+    $("n2ImportFileLabel").hidden=true;
+    $("n2ImportFile").hidden=true;
+}
+$("n2ImportFile").addEventListener("change",()=>{
+    const file=$("n2ImportFile").files?.[0];
+    writeTransfer(file?"Selected "+file.name+" ("+file.size+" bytes)":"No checkpoint selected.");
+});
+$("n2ImportNative").addEventListener("click",()=>void safe(async()=>{
+    const d=window.__TAURI__?.dialog,fs=window.__TAURI__?.fs;
+    if(!d?.open||!fs?.readFile)throw Error("Android Files document picker unavailable.");
+    const uri=await d.open({multiple:false,directory:false,pickerMode:"document"});
+    if(uri==null)return;
+    if(typeof uri!=="string"||!uri.startsWith("content://"))
+        throw Error("Android did not return a document URI.");
+    const contents=await fs.readFile(uri);
+    importBytes=contents instanceof Uint8Array?contents:new Uint8Array(contents);
+    if(importBytes.length<1||importBytes.length>24*1024*1024)
+        throw Error("Checkpoint exceeds 24 MiB transfer limit.");
+    writeTransfer("Selected Android Files checkpoint: "+importBytes.length+" bytes.");
+}));
+$("n2Export").addEventListener("click",()=>void safe(async()=>{
+    if(current?.training)throw Error("Finish Nova-2 training before exporting.");
+    const out=await invoke("nova2_checkpoint_export_begin");
+    const filename="neural-nova2-step-"+out.step+".nnova2";
+    try{
+        if(onAndroid){
+            const d=window.__TAURI__?.dialog;
+            if(!d?.save)throw Error("Android Save to Files unavailable.");
+            const target=await d.save({defaultPath:filename,
+                filters:[{name:"Neural Nova-2 checkpoint",extensions:["nnova2"]}]});
+            if(target==null){writeTransfer("Export cancelled.");return;}
+            if(typeof target!=="string"||!target.startsWith("content://"))
+                throw Error("Invalid Android Files destination.");
+            writeTransfer("Writing and verifying full Nova-2 checkpoint...");
+            const saved=await invoke("nova2_checkpoint_export_android",{destinationUri:target});
+            if(!saved.verified||saved.bytes!==out.bytes)
+                throw Error("Checkpoint save verification failed.");
+            writeTransfer("Export verified: "+filename+" ("+saved.bytes+" bytes).");
+        }else{
+            const chunks=[];let position=0;
+            while(position<out.bytes){
+                const part=await invoke("nova2_checkpoint_export_chunk",{offset:position});
+                if(!part.length||part.length>256*1024)throw Error("Checkpoint chunk invalid.");
+                chunks.push(new Uint8Array(part));position+=part.length;
+                writeTransfer("Exporting "+Math.floor(position/out.bytes*100)+"%");
+            }
+            const link=document.createElement("a");
+            const blob=new Blob(chunks,{type:"application/octet-stream"});
+            const uri=URL.createObjectURL(blob);
+            try{link.href=uri;link.download=filename;document.body.append(link);link.click();link.remove();}
+            finally{setTimeout(()=>URL.revokeObjectURL(uri),3000);}
+            writeTransfer("Download requested: "+filename+" ("+out.bytes+" bytes).");
+        }
+    }finally{await invoke("nova2_checkpoint_export_cancel").catch(()=>{});}
+}));
+$("n2Import").addEventListener("click",()=>void safe(async()=>{
+    if(current?.training)throw Error("Finish training before importing.");
+    const f=$("n2ImportFile").files?.[0];
+    if(!onAndroid&&(!f||!f.name.toLowerCase().endsWith(".nnova2")))
+        throw Error("Select a .nnova2 checkpoint first.");
+    const source=onAndroid?importBytes:new Uint8Array(await f.arrayBuffer());
+    if(!source||!source.length||source.length>24*1024*1024)
+        throw Error("Checkpoint must be 1 byte–24 MiB.");
+    if(!confirm("Restore this Nova-2 checkpoint? The current Nova-2 file will be backed up. The .nhyb brain is unaffected."))return;
+    await invoke("nova2_checkpoint_import_begin",{bytes:source.length});
+    try{
+        for(let position=0;position<source.length;position+=256*1024){
+            const chunk=Array.from(source.subarray(position,position+256*1024));
+            await invoke("nova2_checkpoint_import_append",{chunk});
+            writeTransfer("Importing "+Math.floor((position+chunk.length)/source.length*100)+"%");
+        }
+        display(await invoke("nova2_checkpoint_import_finish"));
+        importBytes=null;
+        await reloadHistory();
+        writeTransfer("Nova-2 restored. Original .nhyb checkpoints untouched.");
+    }finally{await invoke("nova2_checkpoint_import_cancel").catch(()=>{});}
+}));
+
 $("n2Prompt").addEventListener("keydown",e=>{
     if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();$("n2Chat").click();}
 });
