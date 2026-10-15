@@ -10,7 +10,7 @@ const assertIncludes=(source,pattern)=>assert.match(source,pattern);
 assertIncludes(ui,/id="pane-teach"/);
 assert.doesNotMatch(ui,/id="pane-nova2"/);
 assert.doesNotMatch(ui,/Legacy Teach/);
-assertIncludes(ui,/v0\.18\.1 · Bicameral/);
+assertIncludes(ui,/v0\.18\.2 · Bicameral/);
 assertIncludes(ui,/src="\.\/js\/nova2-main\.js"/);
 assertIncludes(ui,/src="\.\/js\/nova2-test-ui\.js"/);
 assert.doesNotMatch(ui,/src="\.\/js\/nova-ui\.js"/);
@@ -41,7 +41,7 @@ assertIncludes(keepalive,/state::<Nova2State>\(\)\.is_training\(\)/);
 assert.doesNotMatch(keepalive,/state::<HybridState>/);
 assertIncludes(runtime,/const CHECKPOINT:&str="neural-nova-bicameral-v2\.nnova2"/);
 assertIncludes(runtime,/Nova2::load\(&p\)/);
-assertIncludes(runtime,/focus:Focus/);
+assertIncludes(runtime,/fn focus_name\(f:Focus\)/);
 assertIncludes(runtime,/Focus::Right,Focus::Left,Focus::Interconnect,Focus::Joint/);
 assertIncludes(runtime,/KvCache::new/);
 assertIncludes(neural,/pub const MAX_PARAMETERS:usize=1_200_144/);
@@ -52,10 +52,10 @@ for(const id of new Set(ids))assert.ok(ui.includes('id="'+id+'"'),"Missing main-
 const testIds=[...tests.matchAll(/\$\("([^"]+)"\)/g)].map(x=>x[1]);
 for(const id of new Set(testIds))assert.ok(ui.includes('id="'+id+'"'),"Missing teacher-test DOM id: "+id);
 // Fake browser boot proves no hidden invocation of the legacy brain.
-const dom=new Map();const commands=[];
+const dom=new Map();const commands=[];const started=[];
 function element(id){if(!dom.has(id))dom.set(id,{
   id,hidden:false,disabled:false,style:{},textContent:"",value:"",checked:false,
-  files:[],scrollHeight:0,scrollTop:0,
+  files:[],scrollHeight:0,scrollTop:0,replaceChildren(){},
   listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},
   click(){return this.listeners.click?.();},focus(){},
   get closest(){return ()=>({open:false});},
@@ -68,7 +68,7 @@ const browser={
   document:{getElementById:element,querySelectorAll(){return [];},
     dispatchEvent(){},createElement(){return {append(){},style:{}};}},
   window:{NovaTrainingBackground:{async start(){},async stop(){}},
-    __TAURI__:{event:{async listen(){}},core:{async invoke(name){
+    __TAURI__:{event:{async listen(){}},core:{async invoke(name,args){
       commands.push(name);
       if(name==="nova2_boot")return{
         parameters:1182144,transformerParameters:755200,denseParameters:336320,
@@ -76,13 +76,27 @@ const browser={
         training:false,trained:false,heldoutLoss:null,total:0,candidateReady:false
       };
       if(name==="nova2_conversation")return [];
+      if(name==="nova2_zip_preview")return {lessons:[{name:"01_foundations.txt",mode:"unified"}],mode:"unified"};
+      if(name==="nova2_zip_train"){started.push(args);return {parameters:1182144,transformerParameters:755200,denseParameters:336320,step:0,training:true,total:10,completed:0,stage:"Teaching ZIP"};}
       return null;
     }}}}
 };
 
+element("trainingEpochs").value="12";element("trainingRate").value="0.0001";
+element("foundationTrainingEnabled").checked=true;
+element("foundationZipScope").value="entireZip";
+element("massLessonZip").files=[{size:4,async arrayBuffer(){return new Uint8Array([80,75,3,4]).buffer;}}];
 vm.runInNewContext(main,browser,{filename:"nova2-main.js"});
-Promise.resolve().then(()=>Promise.resolve()).then(()=>{
+Promise.resolve().then(()=>Promise.resolve()).then(async()=>{
  assert.deepEqual(commands.slice(0,2),["nova2_boot","nova2_conversation"]);
  assert.ok(commands.every(x=>!x.startsWith("hybrid_")), "Boot must not use legacy backend");
+ // Regression: a validated ZIP can begin with an EMPTY single-lesson editor.
+ assert.equal(element("lessonData").value,"");
+ await element("previewMassLessons").click();
+ await element("startMassLessons").click();
+ assert.equal(started.length,1,"ZIP worker should begin without a pasted single lesson");
+ assert.equal(started[0].mode,"auto");
+ assert.equal(started[0].options.foundationTraining,true);
+ assert.equal(started[0].options.foundationZipScope,"entireZip");
  console.log("PASS: one Bicameral Nova-2 brain, .nnova2 persistence, teacher/targeted/test wiring, KV cache");
 }).catch(e=>{console.error(e);process.exitCode=1;});

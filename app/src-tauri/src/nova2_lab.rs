@@ -440,7 +440,7 @@ fn selective_lesson(app:&AppHandle,state:&Nova2State,mode:&str,text:&str,
     let adaptive=options.adaptive_learning_rate.unwrap_or(true);
     let early=options.early_stopping.unwrap_or(true);
     let mut best=start.clone();let mut best_loss=initial_loss;
-    let mut best_epoch=0u32;let mut best_focus=String::new();
+    let mut best_epoch=0u32;let mut best_attempt=0u32;let mut best_focus=String::new();
     let foci=if foundation{vec![Focus::Right,Focus::Left,Focus::Interconnect,Focus::Joint]}
         else{vec![Focus::Joint]};
     let attempts=if foundation{4u32}else{1};
@@ -515,7 +515,7 @@ fn selective_lesson(app:&AppHandle,state:&Nova2State,mode:&str,text:&str,
                     let obs=Observation{lesson:label.into(),focus:focus_name(focus).into(),
                         attempt:attempt+1,epoch:epoch+1,step:brain.step,
                         train_loss:sum/count as f32,heldout_loss:current,
-                        heldout_accuracy:accuracy,selected:current==candidate_loss&&candidate_epoch==epoch+1,
+                        heldout_accuracy:accuracy,selected:false,
                         retention_passed:retained,learning_rate:try_rate,
                         reply:None,expected:None,no_dense_tv:None,no_exchange_tv:None,
                         validation_overlap:overlaps};
@@ -528,7 +528,8 @@ fn selective_lesson(app:&AppHandle,state:&Nova2State,mode:&str,text:&str,
             }
             if candidate_loss<best_loss{
                 best_loss=candidate_loss;best=candidate;
-                best_epoch=candidate_epoch;best_focus=focus_name(focus).into();
+                best_epoch=candidate_epoch;best_attempt=attempt+1;
+                best_focus=focus_name(focus).into();
             }
         }
     }
@@ -561,7 +562,8 @@ fn selective_lesson(app:&AppHandle,state:&Nova2State,mode:&str,text:&str,
         s.heldout_accuracy=Some(heldout_score(&s.brain,&valid)?.1);
         s.active_step=s.brain.step;
         if let (Some(last),Some((response,expected,tv_dense,tv_exchange)))=
-            (s.observations.last_mut(),probe){
+            (s.observations.iter_mut().rev().find(|o|o.lesson==label&&
+                o.attempt==best_attempt&&o.epoch==best_epoch&&o.focus==best_focus),probe){
             last.reply=Some(response);last.expected=Some(expected);
             last.no_dense_tv=Some(tv_dense);last.no_exchange_tv=Some(tv_exchange);
             last.selected=true;
@@ -988,7 +990,8 @@ fn lesson_info(s:&Session)->Nova2RehearsalInfo{
 }
 #[tauri::command]
 pub fn nova2_rehearsal_info(state:State<'_,Nova2State>)->Result<Nova2RehearsalInfo,String>{
-    Ok(lesson_info(&locked(&state)?))
+    let s=locked(&state)?;
+    Ok(lesson_info(&s))
 }
 #[tauri::command]
 pub fn nova2_rehearsal_add(app:AppHandle,state:State<'_,Nova2State>,
