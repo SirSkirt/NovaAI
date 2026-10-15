@@ -22,6 +22,11 @@ struct Inner{
 }
 #[derive(Clone)]
 pub struct Nova2State{inner:Arc<Inner>}
+impl Nova2State{
+    pub(crate) fn is_training(&self)->bool{
+        self.inner.training.load(Ordering::Acquire)
+    }
+}
 impl Default for Nova2State{
     fn default()->Self{
         Self{inner:Arc::new(Inner{
