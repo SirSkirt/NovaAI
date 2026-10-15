@@ -1283,6 +1283,12 @@ mod tests {
         // Emulate pre-v0.14 inference: old checkpoints had no trained
         // evidence readout, even when modern code did the test training.
         old.weights[layout().evidence_response.clone()].fill(0.0);
+        // Also zero the v0.17 language expansion: this fixture is emulating
+        // v0.13.1, when neither residual module existed yet.
+        for block in &layout().expansion{
+            old.weights[block.output.clone()].fill(0.0);
+            old.weights[block.output_bias.clone()].fill(0.0);
+        }
         let before=old.predict(history).unwrap();
         let mut imported=Transformer::new(99);
         imported.import_compatible_arrays(&old.weights[..boundary],
