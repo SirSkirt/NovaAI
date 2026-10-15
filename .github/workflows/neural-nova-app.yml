@@ -231,8 +231,35 @@ jobs:
             cat "$RUNNER_TEMP/apk-signing.txt" | grep -E 'Verified|Signer #1 certificate DN:|Signer #1 certificate SHA-256 digest:'
             grep -Eiq 'Signer #1 certificate SHA-256 digest: 070b1e684da8087d6c30874c16c9be831b7cbce49264d61040ee73ecb5652ade' "$RUNNER_TEMP/apk-signing.txt"
           done
+      # The filename is only a distribution label. Do NOT change the Android
+      # application ID, internal app name, versionCode or pinned signing key.
+      # Always derive the public APK filename from the Tauri app version.
+      - name: Stage Nova-[Version].apk for download
+        id: versioned_apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(python3 -c 'import json; from pathlib import Path; print(json.loads(Path("app/src-tauri/tauri.conf.json").read_text())["version"])')"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "::error::Invalid app version for APK filename: $VERSION"
+            exit 1
+          }
+          shopt -s globstar nullglob
+          APKS=(app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk)
+          if [[ "${#APKS[@]}" -ne 1 ]]; then
+            printf 'Expected one signed universal APK, found %s:\n' "${#APKS[@]}"
+            printf '%s\n' "${APKS[@]}"
+            exit 1
+          fi
+          mkdir -p app/packaged-apk
+          cp -- "${APKS[0]}" "app/packaged-apk/Nova-${VERSION}.apk"
+          cmp -- "${APKS[0]}" "app/packaged-apk/Nova-${VERSION}.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "app/packaged-apk/Nova-${VERSION}.apk"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Published APK: Nova-${VERSION}.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: Neural-Nova-Experimental-Android
-          path: app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          name: Nova-${{ steps.versioned_apk.outputs.version }}
+          path: app/packaged-apk/Nova-*.apk
           if-no-files-found: error
+          compression-level: 0
