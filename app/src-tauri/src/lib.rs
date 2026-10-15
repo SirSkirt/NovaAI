@@ -7,6 +7,7 @@
 mod neural;
 mod transformer_lab;
 mod hybrid_lab;
+mod nova2_lab;
 mod targeted_lab;
 mod test_lab;
 mod diagnostic_log;
@@ -24,6 +25,7 @@ mod android_lesson_notification;
 use neural::NeuralState;
 use transformer_lab::TransformerState;
 use hybrid_lab::HybridState;
+use nova2_lab::Nova2State;
 use targeted_lab::TargetedState;
 use diagnostic_log::Diagnostics;
 use checkpoint_transfer::TransferState;
@@ -44,6 +46,7 @@ pub fn run() {
         .manage(NeuralState::default())
         .manage(TransformerState::default())
         .manage(HybridState::default())
+        .manage(Nova2State::default())
         .manage(TargetedState::default())
         .manage(ZipQueueState::default())
         .manage(Diagnostics::default())
@@ -64,6 +67,15 @@ pub fn run() {
             transformer_lab::transformer_stop,
             transformer_lab::transformer_chat,
             transformer_lab::transformer_reset,
+            nova2_lab::nova2_boot,
+            nova2_lab::nova2_status,
+            nova2_lab::nova2_conversation,
+            nova2_lab::nova2_new_chat,
+            nova2_lab::nova2_chat,
+            nova2_lab::nova2_reset,
+            nova2_lab::nova2_train,
+            nova2_lab::nova2_zip_train,
+            nova2_lab::nova2_stop,
             hybrid_lab::hybrid_boot,
             hybrid_lab::hybrid_status,
             diagnostic_log::nova_log_status,
