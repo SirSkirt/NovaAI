@@ -62,7 +62,7 @@
   rail.setAttribute("aria-label","Nova brain inspector");
   rail.innerHTML='<div class="rail-heading"><div><p class="eyebrow">LIVE / READ-ONLY</p><h3>Brain inspector</h3></div>'+
     '<button type="button" id="closeBrain" class="secondary compact rail-close">Close</button></div>'+
-    '<label class="auto-inspect"><input type="checkbox" id="autoInspectBrain" checked> Inspect after each reply</label>'+
+    '<label class="auto-inspect"><input type="checkbox" id="autoInspectBrain"> Inspect after each reply (may be slow)</label>'+
     '<p class="rail-caveat">The diagram is unchanged; visual overlays use real token sensitivity and sampled weights, not decoded thoughts.</p>';
   const diagram=visualize.querySelector(".brain-card");
   const controls=visualize.querySelector(".telemetry-card");
