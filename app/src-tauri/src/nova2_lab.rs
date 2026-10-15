@@ -323,3 +323,114 @@ pub fn nova2_stop(state:State<'_,Nova2State>)->bool{
 impl From<Arc<Inner>> for Nova2State{
     fn from(inner:Arc<Inner>)->Self{Self{inner}}
 }
+
+
+// V2 checkpoints use a separate NNOVA2 format. Never route through HybridBrain::load.
+use crate::checkpoint_transfer::TransferState;
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct Nova2CheckpointInfo{bytes:usize,step:u64,words:usize,parameters:usize}
+#[tauri::command]
+pub fn nova2_checkpoint_export_begin(
+    app:AppHandle,state:State<'_,Nova2State>,transfer:State<'_,TransferState>
+)->Result<Nova2CheckpointInfo,String>{
+    if state.is_training(){return Err("Finish Nova-2 training before exporting".into());}
+    let s=locked(&state)?;
+    if !s.trained{return Err("Train Nova-2 before exporting a checkpoint".into());}
+    let scratch=file(&app,"neural-nova-bicameral-export.nnova2")?;
+    let result=(||->Result<Vec<u8>,String>{
+        s.brain.save(&scratch)?;
+        std::fs::read(&scratch).map_err(|e|e.to_string())
+    })();
+    let _=std::fs::remove_file(&scratch);
+    let bytes=transfer.begin_export(result?)?;
+    Ok(Nova2CheckpointInfo{bytes,step:s.brain.step,words:s.brain.tokenizer.words.len(),
+        parameters:s.brain.parameter_count()})
+}
+#[tauri::command]
+pub fn nova2_checkpoint_export_chunk(
+    transfer:State<'_,TransferState>,offset:usize
+)->Result<Vec<u8>,String>{transfer.chunk(offset)}
+#[tauri::command]
+pub fn nova2_checkpoint_export_cancel(transfer:State<'_,TransferState>)->Result<(),String>{
+    transfer.export_cancel()
+}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct Nova2AndroidExport{bytes:usize,verified:bool}
+#[tauri::command]
+pub fn nova2_checkpoint_export_android(
+    app:AppHandle,transfer:State<'_,TransferState>,destination_uri:String
+)->Result<Nova2AndroidExport,String>{
+    #[cfg(target_os="android")]
+    {
+        if !destination_uri.starts_with("content://"){return Err("Choose a Files document".into());}
+        let bytes=transfer.export_read()?;
+        let scratch=file(&app,"neural-nova-bicameral-transfer.nnova2")?;
+        std::fs::write(&scratch,&bytes).map_err(|e|e.to_string())?;
+        let attempted=crate::android_checkpoint_export::write_android_document(
+            &scratch,&destination_uri);
+        let _=std::fs::remove_file(&scratch);
+        let actual=attempted?;
+        if actual as usize!=bytes.len(){
+            return Err("Incomplete Android Nova-2 checkpoint export".into());
+        }
+        transfer.export_cancel()?;
+        Ok(Nova2AndroidExport{bytes:bytes.len(),verified:true})
+    }
+    #[cfg(not(target_os="android"))]
+    {
+        let _=(app,transfer,destination_uri);
+        Err("Android document export is only available on Android".into())
+    }
+}
+#[tauri::command]
+pub fn nova2_checkpoint_import_begin(
+    state:State<'_,Nova2State>,transfer:State<'_,TransferState>,bytes:usize
+)->Result<(),String>{
+    if state.is_training(){return Err("Finish training before importing".into());}
+    transfer.import_begin(bytes)
+}
+#[tauri::command]
+pub fn nova2_checkpoint_import_append(
+    transfer:State<'_,TransferState>,chunk:Vec<u8>
+)->Result<usize,String>{transfer.import_append(chunk)}
+#[tauri::command]
+pub fn nova2_checkpoint_import_cancel(transfer:State<'_,TransferState>)->Result<(),String>{
+    transfer.cancel()
+}
+#[tauri::command]
+pub fn nova2_checkpoint_import_finish(
+    app:AppHandle,state:State<'_,Nova2State>,transfer:State<'_,TransferState>
+)->Result<Status,String>{
+    if state.inner.training.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err(){
+        return Err("Finish training before importing".into());
+    }
+    let result=(||->Result<Status,String>{
+        let bytes=transfer.import_read()?;
+        let scratch=file(&app,"neural-nova-bicameral-validate.nnova2")?;
+        std::fs::write(&scratch,&bytes).map_err(|e|e.to_string())?;
+        let candidate=Nova2::load(&scratch);
+        let _=std::fs::remove_file(&scratch);
+        let new_model=candidate?;
+        let mut s=locked(&state)?;
+        let main=file(&app,CHECKPOINT)?;
+        if s.trained && main.exists(){
+            let stamp=std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e|e.to_string())?.as_secs();
+            let backup=file(&app,&format!("nova2-before-import-{stamp}.nnova2"))?;
+            std::fs::copy(&main,backup).map_err(|e|e.to_string())?;
+        }
+        new_model.save(&main)?;
+        std::fs::write(file(&app,CHAT)?,b"[]").map_err(|e|e.to_string())?;
+        s.brain=new_model;s.trained=true;s.history.clear();
+        s.stage="Imported Nova-2 checkpoint".into();s.error=None;
+        s.loss=None;s.heldout=None;s.epoch=0;s.epochs=0;s.completed=0;s.total=0;
+        let result=status(&state,&s);
+        transfer.cancel()?;
+        Ok(result)
+    })();
+    state.inner.training.store(false,Ordering::Release);
+    result.map(|mut s|{s.training=false;s})
+}
