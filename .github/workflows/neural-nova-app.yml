@@ -28,6 +28,7 @@ jobs:
           node-version: "22"
       - uses: dtolnay/rust-toolchain@stable
       - run: node --check app/dist/js/nova-ui.js
+      - run: node --check app/dist/js/nova2-ui.js
       - run: node --check app/dist/js/test-ui.js
       - run: node --check app/dist/js/diagnostic-ui.js
       - run: node --check app/dist/js/mass-learning-ui.js
