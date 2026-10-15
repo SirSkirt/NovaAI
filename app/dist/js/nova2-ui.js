@@ -45,6 +45,14 @@ async function safe(task){try{
     waiting=true;if(current)display(current);
     return await task();
 }catch(e){alertStatus(e,true);}finally{waiting=false;if(current)display(current);}}
+async function beginTraining(cmd,args){
+    await window.NovaTrainingBackground?.start();
+    try{return await invoke(cmd,args);}
+    catch(error){
+        await window.NovaTrainingBackground?.stop();
+        throw error;
+    }
+}
 function opts(){
     const epochs=Number($("n2Epochs").value);
     const learningRate=Number($("n2Rate").value);
@@ -62,14 +70,14 @@ async function reloadHistory(){renderHistory(await invoke("nova2_conversation"))
 $("n2Teach").addEventListener("click",()=>void safe(async()=>{
     const text=$("n2Text").value,mode=$("n2Mode").value;
     if(!text.trim())throw Error("Paste lesson text before starting.");
-    display(await invoke("nova2_train",{mode,text,...opts()}));
+    display(await beginTraining("nova2_train",{mode,text,...opts()}));
 }));
 $("n2ZipTrain").addEventListener("click",()=>void safe(async()=>{
     const file=$("n2Zip").files?.[0];
     if(!file)throw Error("Select a ZIP file containing your lesson TXT files.");
     if(file.size>4*1024*1024)throw Error("ZIP must be under 4 MiB.");
     const bytes=Array.from(new Uint8Array(await file.arrayBuffer()));
-    display(await invoke("nova2_zip_train",{bytes,mode:$("n2ZipMode").value,...opts()}));
+    display(await beginTraining("nova2_zip_train",{bytes,mode:$("n2ZipMode").value,...opts()}));
 }));
 $("n2Stop").addEventListener("click",()=>void safe(async()=>{
     const active=await invoke("nova2_stop");
@@ -99,8 +107,8 @@ async function boot(){
     const listen=window.__TAURI__?.event?.listen;
     if(listen){
         await listen("nova2-progress",({payload})=>display(payload));
-        await listen("nova2-error",({payload})=>alertStatus(payload,true));
-        await listen("nova2-done",()=>void safe(refresh));
+        await listen("nova2-error",({payload})=>{void window.NovaTrainingBackground?.stop();alertStatus(payload,true);});
+        await listen("nova2-done",()=>{void window.NovaTrainingBackground?.stop();void safe(refresh);});
     }
     display(await invoke("nova2_boot"));
     await reloadHistory();
