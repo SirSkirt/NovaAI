@@ -63,7 +63,14 @@ pub fn weight_digest(brain:&HybridBrain)->String{
     let mut feed=|v:f32|{
         for b in v.to_bits().to_le_bytes(){value=(value^(b as u64)).wrapping_mul(0x100000001b3);}
     };
-    for v in &brain.transformer.weights{feed(*v);}
+    // A freshly migrated checkpoint has identical behavior to its old brain:
+    // the append-only Transformer capacity has zero output weights. Hash the
+    // exact legacy prefix in that case so the teacher rehearsal archive still
+    // matches; once it learns, include ALL new weights as normal.
+    let count=if brain.transformer.expansion_is_neutral(){
+        neural_nova::transformer::Transformer::preexpansion_parameter_count()
+    }else{brain.transformer.weights.len()};
+    for v in &brain.transformer.weights[..count]{feed(*v);}
     for layer in &brain.dense.layers{
         for v in &layer.weights{feed(*v);}
         for v in &layer.biases{feed(*v);}
