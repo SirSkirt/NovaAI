@@ -2,6 +2,7 @@
 //! with three independently parameterized pathways and one shared objective.
 mod tape;
 mod cache;
+#[cfg(test)] mod golden;
 pub use cache::{KvCache,CacheStats};
 use std::collections::HashMap;
 use std::io::{Read,Write};
