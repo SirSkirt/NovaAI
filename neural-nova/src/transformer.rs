@@ -14,6 +14,11 @@ pub const CONTEXT:usize=256;
 pub const ORIGINAL_CONTEXT:usize=128;
 pub const D:usize=32;
 pub const FF:usize=64;
+// Four append-only, trainable language residual blocks expand Nova's full
+// combined brain from 966,016 to 1,200,144 parameters. The original D=32
+// attention, learned interconnect and all optimizer offsets remain untouched.
+pub const EXPANSION_BLOCKS:usize=4;
+pub const EXPANSION_FF:usize=900;
 /// Repeated trainable processing of the one fused latent representation.
 pub const REASONING_STEPS:usize=3;
 const REASONING_INPUT_SCALE:f32=1.0/32.0;
@@ -24,6 +29,11 @@ const QUERY_SCALE:f32=1.0/32.0;
 const MAGIC:&[u8;8]=b"NTRF0200";
 
 #[derive(Clone)]
+struct ExpansionLayout{
+    input:Range<usize>,input_bias:Range<usize>,
+    output:Range<usize>,output_bias:Range<usize>,
+}
+#[derive(Clone)]
 struct Layout {
     tok:Range<usize>, pos:Range<usize>,
     q:Range<usize>, k:Range<usize>, v:Range<usize>, o:Range<usize>,
@@ -32,7 +42,8 @@ struct Layout {
     words:Range<usize>,memory_write:Range<usize>,memory_read:Range<usize>,
     reason_read:Range<usize>,reason_bias:Range<usize>,reason_update:Range<usize>,
     feedback_query:Range<usize>,context_query:Range<usize>,feedback_response:Range<usize>,
-    evidence_query:Range<usize>,evidence_response:Range<usize>,len:usize,
+    evidence_query:Range<usize>,evidence_response:Range<usize>,
+    expansion:Vec<ExpansionLayout>,len:usize,
 }
 fn allocate(cursor:&mut usize,n:usize)->Range<usize> {
     let start=*cursor;*cursor+=n;start..*cursor
@@ -68,9 +79,18 @@ fn layout_for(window:usize)->Layout {
     // retain their exact numerical positions. New residual starts neutral.
     let evidence_query=allocate(&mut n,D*D);
     let evidence_response=allocate(&mut n,D*D);
+    // APPEND ONLY: legacy .nhyb weights and both Adam moments keep their
+    // exact original offsets. All four outputs initialize to zero.
+    let expansion=(0..EXPANSION_BLOCKS).map(|_|ExpansionLayout{
+        input:allocate(&mut n,EXPANSION_FF*D),
+        input_bias:allocate(&mut n,EXPANSION_FF),
+        output:allocate(&mut n,D*EXPANSION_FF),
+        output_bias:allocate(&mut n,D),
+    }).collect();
     Layout{tok,pos,q,k,v,o,f1,b1,f2,b2,output,bout,bridge,words,memory_write,memory_read,
         reason_read,reason_bias,reason_update,
-        feedback_query,context_query,feedback_response,evidence_query,evidence_response,len:n}
+        feedback_query,context_query,feedback_response,evidence_query,evidence_response,
+        expansion,len:n}
 }
 fn random(seed:&mut u64)->f32 {
     *seed^=*seed>>12;*seed^=*seed<<25;*seed^=*seed>>27;
@@ -119,9 +139,10 @@ struct Cache {
     memory_sources:Vec<Vec<u16>>, memory_means:Vec<Vec<f32>>,
     memory_activations:Vec<Vec<f32>>, memory_context:Vec<f32>,
     memory_query:Vec<f32>, memory_attention:Vec<f32>,
-    reasoning:Vec<ReasoningCache>,
+    reasoning:Vec<ReasoningCache>,expansion:Vec<ExpansionCache>,
     hidden_before_bridge_norm:f32,dense_features_norm:f32,bridge_norm:f32,hidden_after_bridge_norm:f32,
 }
+struct ExpansionCache{input:Vec<f32>,pre:Vec<f32>,act:Vec<f32>}
 // Internal states used for exact reverse-mode differentiation through all
 // recurrent latent steps. No text templates, rules or alternate decoder.
 struct ReasoningCache {
@@ -185,11 +206,30 @@ impl Transformer {
         // Query/context matrices already learnable (random); response learns first.
         weights[l.feedback_response.clone()].fill(0.0);
         weights[l.evidence_response.clone()].fill(0.0);
+        for extra in &l.expansion{
+            let radius=(2.0/D as f32).sqrt()*0.5;
+            for w in &mut weights[extra.input.clone()]{
+                *w=(random(&mut seed)*2.0-1.0)*radius;
+            }
+            // Exact zero residual means old checkpoints generate identical
+            // answers immediately after migration, before new teaching.
+            weights[extra.output.clone()].fill(0.0);
+            weights[extra.output_bias.clone()].fill(0.0);
+        }
         Self {
             weights, momentum:vec![0.0;l.len],variance:vec![0.0;l.len],step:0
         }
     }
     pub fn parameter_count(&self)->usize { self.weights.len() }
+    pub fn preexpansion_parameter_count()->usize {layout().expansion[0].input.start}
+    /// Hash/rehearsal migration identity while the new language capacity has
+    /// ZERO observable effect on the old trained brain's output.
+    pub fn expansion_is_neutral(&self)->bool{
+        layout().expansion.iter().all(|extra|{
+            self.weights[extra.output.clone()].iter().all(|x|*x==0.0)&&
+            self.weights[extra.output_bias.clone()].iter().all(|x|*x==0.0)
+        })
+    }
     /// Parameter count of the last pre-recurrent hybrid checkpoint.
     pub fn previous_parameter_count()->usize {layout().reason_read.start}
     /// Parameter count of complete v0.9/v0.10 checkpoints, pre-cooperation.
@@ -368,12 +408,29 @@ impl Transformer {
                     attention:evidence_attention,context:evidence_context
                 }});
         }
+        // New Transformer-only depth, trained from the same joint loss.
+        // Keep the old fused representation EXACT until training learns an
+        // expansion output; this is neither scripted answering nor fallback.
+        let mut expansion=Vec::with_capacity(EXPANSION_BLOCKS);
+        for extra in &l.expansion{
+            let input=hidden.clone();
+            let mut pre=mv(&self.weights,&extra.input,EXPANSION_FF,D,&input);
+            for j in 0..EXPANSION_FF{pre[j]+=self.weights[extra.input_bias.start+j];}
+            let act=pre.iter().map(|v|v.max(0.0)).collect::<Vec<f32>>();
+            let update=mv(&self.weights,&extra.output,D,EXPANSION_FF,&act);
+            for j in 0..D{
+                hidden[j]+=(update[j]+self.weights[extra.output_bias.start+j])/
+                    EXPANSION_BLOCKS as f32;
+            }
+            expansion.push(ExpansionCache{input,pre,act});
+        }
         let mut logits=mv(&self.weights,&l.output,VOCAB,D,&hidden);
         for j in 0..VOCAB {logits[j]+=self.weights[l.bout.start+j];}
         let probabilities=stable_softmax(&logits);
         Ok(Cache{tokens,inputs,query,keys,values,attention,context,mid,pre,act,hidden,probabilities,
             memory_sources:memory.iter().skip(memory.len().saturating_sub(12)).cloned().collect(),
             memory_means,memory_activations,memory_context,memory_query,memory_attention,reasoning,
+            expansion,
             hidden_before_bridge_norm,dense_features_norm,bridge_norm,hidden_after_bridge_norm})
     }
     pub fn predict(&self,context:&[u8])->Result<Vec<f32>,String> {
@@ -444,6 +501,23 @@ impl Transformer {
             dh=back_mv(&self.weights,&l.output,VOCAB,D,&c.hidden,&delta,&mut grad);
             -(c.probabilities[target as usize].max(1e-30)).ln()
         };
+        // Backpropagate through every new residual language layer first, in
+        // reverse order. The incoming dh includes the original output head;
+        // the skip path retains it even while new output weights are zero.
+        for (extra,cache) in l.expansion.iter().zip(&c.expansion).rev(){
+            let dout=dh.iter().map(|v|v/EXPANSION_BLOCKS as f32)
+                .collect::<Vec<f32>>();
+            for j in 0..D{grad[extra.output_bias.start+j]+=dout[j];}
+            let mut dact=back_mv(&self.weights,&extra.output,D,EXPANSION_FF,
+                &cache.act,&dout,&mut grad);
+            for j in 0..EXPANSION_FF{
+                if cache.pre[j]<=0.0{dact[j]=0.0;}
+                grad[extra.input_bias.start+j]+=dact[j];
+            }
+            let dx=back_mv(&self.weights,&extra.input,EXPANSION_FF,D,
+                &cache.input,&dact,&mut grad);
+            for j in 0..D{dh[j]+=dx[j];}
+        }
         // Exact BPTT across the recurrent reasoning steps. Each residual
         // update contributes to the same fused state's gradient.
         let mut extra_context_gradient=vec![0.0;D];
@@ -676,7 +750,8 @@ impl Transformer {
         }
         // v0.8 full hybrid Transformer has no recurrent latent matrices.
         // Append neutral, trainable parameters without perturbing predictions.
-        if weights.len()==current.evidence_query.start {
+        if weights.len()==current.expansion[0].input.start ||
+            weights.len()==current.evidence_query.start {
             self.weights[..weights.len()].copy_from_slice(weights);
             self.momentum[..weights.len()].copy_from_slice(momentum);
             self.variance[..weights.len()].copy_from_slice(variance);
@@ -867,7 +942,7 @@ impl Transformer {
         // original parameters/moments are retained; the appended trainable
         // bridge receives fresh initialization and zero optimizer moments.
         let old=layout_for(ORIGINAL_CONTEXT);
-        if stored_count!=layout().len && stored_count!=layout().evidence_query.start && stored_count!=layout().feedback_query.start && stored_count!=layout().reason_read.start && stored_count!=layout().words.start && stored_count!=old.words.start && stored_count!=old.bridge.start {
+        if stored_count!=layout().len && stored_count!=layout().expansion[0].input.start && stored_count!=layout().evidence_query.start && stored_count!=layout().feedback_query.start && stored_count!=layout().reason_read.start && stored_count!=layout().words.start && stored_count!=old.words.start && stored_count!=old.bridge.start {
             return Err("Transformer checkpoint parameter count mismatch".into());
         }
         let mut step=[0u8;8];
