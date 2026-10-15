@@ -42,6 +42,7 @@ pub mod trainer;
 pub mod unified;
 pub mod tokenizer;
 pub mod hybrid;
+pub mod nova2;
 
 use std::fs::File;
 use std::io::{Read, Write};
