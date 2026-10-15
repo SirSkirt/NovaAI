@@ -969,6 +969,41 @@ impl Transformer {
 mod tests {
     use super::*;
     #[test]
+    fn new_language_capacity_preserves_old_predictions_and_optimizer_moments(){
+        let mut learned=Transformer::new(42);
+        let legacy=Transformer::preexpansion_parameter_count();
+        assert_eq!(legacy,112_896);
+        assert_eq!(learned.parameter_count(),347_024);
+        let l=layout();
+        assert_eq!(l.expansion.len(),4);
+        learned.step=26_694;
+        for i in 0..legacy {
+            learned.momentum[i]=i as f32*0.00000001;
+            learned.variance[i]=i as f32*0.00000002;
+        }
+        let prompt=b"U: My name is Tavik.\\nN: ";
+        let expected=learned.predict(prompt).unwrap();
+        let mut migrated=Transformer::new(999);
+        migrated.import_compatible_arrays(
+            &learned.weights[..legacy],&learned.momentum[..legacy],
+            &learned.variance[..legacy]).unwrap();
+        migrated.step=learned.step;
+        assert_eq!(migrated.weights[..legacy],learned.weights[..legacy]);
+        assert_eq!(migrated.momentum[..legacy],learned.momentum[..legacy]);
+        assert_eq!(migrated.variance[..legacy],learned.variance[..legacy]);
+        assert_eq!(migrated.step,26_694);
+        assert!(migrated.expansion_is_neutral());
+        assert_eq!(migrated.predict(prompt).unwrap(),expected,
+            "neutral migrated language blocks must preserve exact inference");
+        let (_,g,_)=migrated.gradient_with_dense(prompt,b'N',None).unwrap();
+        assert!(l.expansion.iter().any(|b|g[b.output.clone()].iter().any(|v|v.abs()>1e-10)),
+            "new Transformer weights must receive actual language gradients");
+        let mut fresh=Transformer::new(42);
+        fresh.train_batch(&[(prompt.to_vec(),b'N')],0.0001).unwrap();
+        assert!(!fresh.expansion_is_neutral(),
+            "new capacity must become learned from ordinary neural gradients");
+    }
+    #[test]
     fn selecting_128_or_256_matches_on_short_context(){
         let model=Transformer::new(7);
         let dense=vec![0.2;VOCAB];
