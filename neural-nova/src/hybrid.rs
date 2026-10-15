@@ -519,6 +519,7 @@ impl HybridBrain {
         // v0.3 checkpoints had 128 positional embeddings; new checkpoints have
         // 256. Remap weights AND Adam moments without clearing learned state.
         if old_count!=brain.transformer.weights.len() &&
+            old_count!=Transformer::preexpansion_parameter_count() &&
             old_count!=Transformer::previous_parameter_count() &&
             old_count!=Transformer::precooperation_parameter_count() &&
             old_count!=Transformer::preevidence_parameter_count() &&
