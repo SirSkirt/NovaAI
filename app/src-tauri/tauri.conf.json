@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Neural Nova Experimental",
-  "version": "0.18.2",
+  "version": "0.19.0",
   "identifier": "com.qtech.neuralnova.experimental",
   "build": {
     "frontendDist": "../dist"
@@ -20,7 +20,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Neural Nova — Brain Lab",
+        "title": "Nova — Messages",
         "width": 1280,
         "height": 880,
         "minWidth": 360,

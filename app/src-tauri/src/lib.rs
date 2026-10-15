@@ -53,6 +53,7 @@ pub fn run() {
             nova2_lab::nova2_new_chat,
             nova2_lab::nova2_chat,
             nova2_lab::nova2_compare_context,
+            nova2_lab::nova2_inspect,
             nova2_lab::nova2_reset,
             nova2_lab::nova2_train,
             nova2_lab::nova2_zip_train,

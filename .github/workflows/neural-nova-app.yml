@@ -28,6 +28,8 @@ jobs:
           node-version: "22"
       - uses: dtolnay/rust-toolchain@stable
       - run: node --check app/dist/js/nova2-main.js
+      - run: node --check app/dist/js/nova-messenger-layout.js
+      - run: node app/tests/messenger-layout.test.cjs
       - run: node --check app/dist/js/nova2-test-ui.js
       - run: node --check app/dist/js/nova2-education-ui.js
       - run: node --check app/dist/js/training-background-ui.js

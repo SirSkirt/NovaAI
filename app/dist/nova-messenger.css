@@ -1,0 +1,138 @@
+/* Nova v0.19: conversation-first surfaces. Retain the original hemisphere SVG. */
+:root{color-scheme:dark;--bg:#161819;--surface:#222426;--surface2:#1c1e20;--border:#383b3d;--ink:#f0ede8;--muted:#b2b1ad;--blue:#91b5ce;--purple:#b5a0c8;--mint:#95c4b7;--red:#e6a1a1}
+html,body{background:#161819;color:var(--ink)}
+body{background:linear-gradient(155deg,#1e2224 0,#161819 42%,#191918 100%) fixed}
+.app-shell{max-width:none;padding:0 clamp(14px,2.1vw,38px)}
+.app-header{padding:15px 0;border-color:#373a3b}
+.brand-symbol{border-radius:13px;background:linear-gradient(125deg,#35516a,#554662 76%);border:1px solid #7c7d81;color:#e7e3ee;font-size:23px;box-shadow:none}
+.brand h1{font-size:20px;letter-spacing:-.035em}
+.brand p{font-size:11px;color:#a5aaa9}
+.beta{color:#bdb4c6;font-size:10px;letter-spacing:.02em}
+.status-pill{background:#242d2a;border-color:#45564b;color:#c2d7c9;font-weight:600}
+.status-indicator{background:#9abea8}
+.nav-tabs{padding:11px 0 0;border-color:#37393a;gap:5px}
+.nav-tab{border:0;border-bottom:2px solid transparent;color:#aaa9a6;padding:12px 23px;border-radius:8px 8px 0 0;font-size:13px;letter-spacing:.015em}
+.nav-tab.selected{border-bottom-color:#a2b9c5;background:#292d2e;color:#f3f1ed}
+.nav-tab:hover,.nav-tab:focus-visible{background:#292c2d;color:#fff}
+.quick-stats{display:none}
+body.train-mode .quick-stats{display:grid}
+.pane-title{margin:17px 0 13px}
+.pane-title h2{font-size:27px;letter-spacing:-.045em}
+.eyebrow{color:#9eb6bb;letter-spacing:.17em;font-size:10px}
+.card{background:#222426;border:1px solid #3a3d3e;border-radius:15px;box-shadow:none}
+.card h3{color:#edeae5}
+button,.file-button{background:#343638;border:1px solid #53575a;color:#e9e7e2;border-radius:10px}
+button.primary{background:#d1d9d5;border-color:#e2e8e4;color:#1c2826}
+button.secondary,.file-button{background:#303335;color:#e3e1db}
+button:hover:not(:disabled),.file-button:hover{filter:brightness(1.13)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid #a7c4c2;outline-offset:2px}
+input:not([type=file]),textarea,select{background:#1b1e1f;border-color:#484c4f;color:#eeeae4;border-radius:10px}
+input:focus,textarea:focus,select:focus{border-color:#9ebaba;box-shadow:0 0 0 2px #9ebaba22}
+label:not(.file-button){color:#c6c4bf}
+.messenger-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.messenger-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,365px);gap:15px;align-items:start;min-height:72vh}
+.messenger-conversation{min-width:0}
+.messenger-conversation>.chat-card{max-width:none;margin:0;padding:0;display:flex;flex-direction:column;min-height:calc(100dvh - 180px);overflow:hidden;background:#202223}
+.conversation-intro{display:flex;align-items:center;gap:11px;padding:16px 19px;border-bottom:1px solid #383b3d}
+.conversation-intro strong{display:block;letter-spacing:-.015em;font-size:15px}
+.conversation-intro small{display:block;color:#b0b2ae;font-size:11px;margin-top:3px}
+.mini-mark{display:grid;place-items:center;width:36px;height:36px;border-radius:12px;background:linear-gradient(125deg,#4a6775,#67576c);color:#f0f1f2;font-size:18px;font-weight:800}
+.chat-transcript{background:#202223;border:0;border-radius:0;flex:1;height:clamp(320px,52dvh,780px);padding:23px clamp(14px,4%,45px);gap:19px;scrollbar-color:#545958 transparent}
+.chat-bubble{max-width:min(77%,620px);padding:13px 17px;border-radius:16px;font-size:14px;line-height:1.65;overflow-wrap:anywhere;white-space:pre-wrap;border:1px solid transparent}
+.chat-bubble strong{display:block;margin-bottom:6px;font-size:11px;letter-spacing:.045em;text-transform:uppercase;opacity:.73}
+.chat-bubble.user{align-self:flex-end;background:#373b3a;border-color:#4b514e;border-bottom-right-radius:5px;color:#f1f0eb}
+.chat-bubble.nova{align-self:flex-start;background:#2b3030;border-color:#3e4846;border-bottom-left-radius:5px;color:#e6eae7}
+.chat-placeholder{padding:20px;color:#aeb7b1;max-width:430px}
+.chat-controls{padding:12px clamp(12px,3%,30px) 17px;background:#252828;border-top:1px solid #393e3c}
+.chat-controls>label[for="chatMessage"]{display:none}
+.composer{gap:9px;margin:6px 0 12px}
+.composer input{font-size:14px!important;padding:14px!important;background:#1a1d1d!important;border-radius:13px!important}
+.composer button{min-width:92px}
+.chat-controls .row.wrap{gap:9px}
+.chat-controls .row.wrap .secondary{font-size:11px}
+#memoryStatus{margin-left:auto}
+.generation-settings{margin:0 0 7px}
+.generation-settings>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#d6d3cd;cursor:pointer;font-size:12px;font-weight:700;padding:7px 2px;list-style:none}
+.generation-settings>summary span{font-size:11px;color:#a9aaa4;font-weight:400}
+.generation-settings .chat-settings{padding:12px 0 5px}
+.chat-experiment-note{font-size:11px}
+.context-report,.chat-comparison{background:#202525;border-color:#424847;color:#c2cbc6}
+.thinking-tree{border-top:1px solid #343b39;background:#232728}
+.thinking-tree summary{cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:12px 21px;color:#c9d6ce;font-size:12px;font-weight:720;list-style:none}
+.thinking-tree summary::-webkit-details-marker,.generation-settings summary::-webkit-details-marker{display:none}
+.thinking-tree summary small{margin-left:7px;color:#a1aaa5;font-weight:450}
+.disclosure-mark{font-size:19px;color:#a6b7ad}
+.thinking-intro{padding:0 22px;color:#aab4af;font-size:12px;line-height:1.55;max-width:780px}
+.trace-nodes{margin:10px 22px 16px;padding-left:24px;display:grid;gap:7px;color:#c3c9c4;font-size:12px}
+.trace-nodes li{padding-left:7px}
+.trace-nodes strong{display:inline-block;min-width:115px;color:#d9dcd9;margin-right:8px}
+.nova-brain-rail{background:#202324;border:1px solid #373d3b;border-radius:15px;min-width:0;min-height:350px;padding:13px;max-height:calc(100dvh - 174px);overflow:auto;scrollbar-color:#444b49 transparent}
+.rail-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:2px 5px 12px}
+.rail-heading h3{font-size:16px;margin:2px 0 0;letter-spacing:-.02em}
+.rail-close{display:none}
+.rail-caveat{color:#aab5ae;font-size:11px;line-height:1.5;padding:0 5px 5px}
+.auto-inspect{display:flex!important;align-items:center;gap:9px;margin:3px 5px 8px!important;font-size:11px!important;font-weight:500!important}
+.auto-inspect input{width:16px!important;accent-color:#91bbad}
+.nova-brain-rail>.card{padding:12px;background:#292c2d;border-color:#3c4340;margin-bottom:10px}
+.nova-brain-rail .brain-stage{min-height:0;border-radius:10px;background:radial-gradient(ellipse at center,#26313b,#1c2229 74%)}
+.nova-brain-rail #hemisphereBrain{max-height:220px}
+.nova-brain-rail .brain-legend{font-size:9px;gap:8px;color:#b4b8ba}
+.nova-brain-rail .viz-detail{background:#202627;color:#bac5bf;border-color:#46504b;font-size:11px;padding:9px}
+.nova-brain-rail .telemetry-card h3{font-size:13px;margin:8px 0}
+.nova-brain-rail .telemetry-card input{min-width:0}
+.nova-brain-rail .telemetry-card .row{gap:6px}
+.nova-brain-rail .telemetry-card .row button{padding:10px;font-size:11px}
+.nova-brain-rail .metric-grid{margin:11px 0;gap:6px}
+.nova-brain-rail .metric-grid>div{padding:8px;background:#23282a;border-color:#474d4c}
+.nova-brain-rail .metric-grid strong{font-size:15px;color:#b7d3c6}
+.nova-brain-rail .attention-tiles{background:#1c2223;border-color:#444d49}
+.nova-brain-rail .attention-tile{background:#303b3b;color:#d5e6dc;border-color:#526e62}
+.nova-brain-rail .prediction-token{background:#303638;border-color:#4a5150;color:#dedfdc}
+.nova-brain-rail .prediction-token b{color:#b1d6c8}
+.brain-backdrop{display:none}
+.train-workspace{padding-bottom:12px}
+.train-subtabs{display:flex;gap:8px;flex-wrap:wrap;padding:5px 0 15px;border-bottom:1px solid #383b3d}
+.train-subtab{padding:10px 15px;border-radius:10px;background:#252829;font-size:12px}
+.train-subtab.selected{background:#aabdb6;color:#1d2925;border-color:#c2d1c7}
+.train-pane[hidden],.tab-pane[hidden]{display:none!important}
+.train-pane>.pane-title{margin:13px 0}
+.train-pane>.pane-title h2{font-size:19px}
+.train-pane .card{background:#232627}
+.train-pane .metric-grid>div{background:#1d2223;border-color:#454a49}
+.train-pane .metric-grid strong{color:#b9d1c5}
+.train-pane .teacher-extra summary{color:#c0ccc4}
+.progress-track{background:#414644}.progress-track>div{background:linear-gradient(90deg,#8eabc1,#9bbfaf)}
+.epoch-history,#diagnosticLog{background:#1d2224;border-color:#414849;color:#d4d8d3}
+.diagnostics{background:#222526;border-color:#444a47}
+footer{color:#919a96}
+@media(max-width:1120px){
+ .messenger-grid{grid-template-columns:minmax(0,1fr)}
+ .nova-brain-rail{position:fixed;right:0;top:0;bottom:0;width:min(92vw,420px);max-height:none;border-radius:15px 0 0 15px;z-index:80;transform:translateX(105%);transition:transform .24s ease;box-shadow:-20px 0 50px #0008}
+ .nova-brain-rail.rail-open{transform:translateX(0)}
+ .brain-backdrop:not([hidden]){display:block;position:fixed;inset:0;background:#0009;z-index:70;border:0;border-radius:0}
+ .rail-close{display:inline-block}
+ .brain-toggle{display:inline-block}
+}
+@media(min-width:1121px){.brain-toggle{display:none}}
+@media(max-width:660px){
+ .app-shell{padding:0 11px}
+ .brand p{display:none}
+ .brand h1{font-size:17px}
+ .brand-symbol{width:33px;height:33px}
+ .status-pill{font-size:10px;padding:7px}
+ .pane-title h2{font-size:22px}
+ .pane-title>.messenger-actions{gap:5px}
+ .messenger-actions button{padding:8px;font-size:11px}
+ .messenger-conversation>.chat-card{min-height:calc(100dvh - 150px)}
+ .chat-transcript{height:51dvh;min-height:275px;padding:14px 10px;gap:13px}
+ .chat-bubble{max-width:90%;font-size:13px;padding:11px 12px}
+ .chat-controls{padding:10px 11px 15px}
+ .composer button{min-width:67px;padding:10px}
+ .thinking-tree summary{padding:11px}
+ .train-subtabs{flex-wrap:nowrap;overflow-x:auto}
+ .train-subtab{white-space:nowrap;padding:10px;font-size:11px}
+ .generation-settings>summary span{display:none}
+ .train-pane .pane-title .subtle{display:none}
+ .trace-nodes strong{min-width:90px}
+}
+@media(prefers-reduced-motion:reduce){.nova-brain-rail{transition:none}}

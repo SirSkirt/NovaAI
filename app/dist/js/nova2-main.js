@@ -6,8 +6,12 @@ const $=id=>document.getElementById(id);
 const invoke=(name,args={})=>window.__TAURI__?.core?.invoke(name,args)??Promise.reject(Error("Installed Nova application required"));
 const safe=async fn=>{try{return await fn();}catch(e){console.error("Neural Nova Bicameral",e);$("trainingStage").textContent="Error: "+String(e);$("brainStateText").textContent="Error: "+String(e);}};
 const changeTab=name=>{
+  if(["teach","targeted","activity"].includes(name)){
+    window.NovaMessenger?.showTrainSubtab(name);name="train";
+  }
+  document.body.classList.toggle("train-mode",name==="train");
   for(const n of document.querySelectorAll(".nav-tab")){let ok=n.dataset.tab===name;n.classList.toggle("selected",ok);n.setAttribute("aria-selected",String(ok));n.tabIndex=ok?0:-1;}
-  for(const p of document.querySelectorAll(".tab-pane"))p.hidden=p.id!=="pane-"+name;
+  for(const p of document.querySelectorAll(".app-shell > main > .tab-pane"))p.hidden=p.id!=="pane-"+name;
 };
 document.querySelectorAll(".nav-tab").forEach(n=>{
   n.addEventListener("click",()=>changeTab(n.dataset.tab));
@@ -133,7 +137,11 @@ const ctx=$("chatTranscript");function bubble(role,v){
  const name=document.createElement("strong");name.textContent=role==="user"?"You":"Nova";
  const text=document.createElement("div");text.textContent=v||"(No reply)";el.append(name,text);ctx.append(el);ctx.scrollTop=ctx.scrollHeight;
 }
-function renderHistory(){ctx.replaceChildren();for(const t of history){bubble("user",t.user);bubble("nova",t.assistant);}}
+function renderHistory(){
+ ctx.replaceChildren();
+ if(!history.length){const hint=document.createElement("div");hint.className="chat-placeholder";hint.textContent="Say hello to Nova. Replies come directly from the locally loaded neural checkpoint.";ctx.append(hint);return;}
+ for(const t of history){bubble("user",t.user);bubble("nova",t.assistant);}
+}
 $("sendMessage").addEventListener("click",()=>safe(async()=>{
  const message=$("chatMessage").value.trim();if(!message)throw Error("Enter a message");
  lastQuestion=message;
@@ -144,6 +152,9 @@ $("sendMessage").addEventListener("click",()=>safe(async()=>{
  history=await invoke("nova2_conversation");renderHistory();
  $("correctReply").disabled=false;
  $("chatContextReport").textContent="KV cache: "+r.generatedTokens+" generated tokens; "+Number(r.cacheAttentionKeys).toLocaleString()+" attention keys read. Step "+r.step+".";
+ document.dispatchEvent(new CustomEvent("nova-reply",{detail:{
+   message,generatedTokens:r.generatedTokens,cacheAttentionKeys:r.cacheAttentionKeys,step:r.step
+ }}));
  await refresh();
 }));
 $("chatMessage").addEventListener("keydown",e=>{if(e.key==="Enter"){$("sendMessage").click();}});

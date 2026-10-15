@@ -10,7 +10,7 @@ const assertIncludes=(source,pattern)=>assert.match(source,pattern);
 assertIncludes(ui,/id="pane-teach"/);
 assert.doesNotMatch(ui,/id="pane-nova2"/);
 assert.doesNotMatch(ui,/Legacy Teach/);
-assertIncludes(ui,/v0\.18\.2 · Bicameral/);
+assertIncludes(ui,/v0\.19\.0 · Bicameral/);
 assertIncludes(ui,/src="\.\/js\/nova2-main\.js"/);
 assertIncludes(ui,/src="\.\/js\/nova2-test-ui\.js"/);
 assert.doesNotMatch(ui,/src="\.\/js\/nova-ui\.js"/);
