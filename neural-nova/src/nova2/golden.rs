@@ -16,17 +16,21 @@ fn reproduces_claude_numpy_golden_cases(){
         let mut m=Nova2::with_config(c,1);
         assert_eq!(m.parameter_count(),9046);
         for (i,x) in m.weights.iter_mut().enumerate(){
-            *x=0.2*(0.37*i as f32+1.).sin();
+            *x=(0.2_f64*(0.37_f64*i as f64+1.).sin()) as f32;
         }
         let ids=[3,10,17,0,7,14,21];
         let targets=[1,6,11,16,21,2,7];
         let mask=[1.,0.5,1.,0.,1.,0.5,1.];
         let a=Ablation{no_efferent,..Ablation::default()};
-        let logits=m.logits(&ids,a).unwrap();
+        let mut feats=Vec::new();
+        for t in 0..ids.len(){for j in 0..(4*16){
+            feats.push((0.11_f64*((t*64+j) as f64)).sin() as f32);
+        }}
+        let logits=m.logits_with_features(&ids,&feats,a).unwrap();
         let last=&logits[logits.len()-24..];
         assert!((last[0]-want_first).abs()<1e-3,
             "logits parity: {} vs {}",last[0],want_first);
-        let (loss,g)=m.loss_and_gradients(&ids,&targets,&mask,a).unwrap();
+        let (loss,g)=m.loss_and_gradients_with_features(&ids,&feats,&targets,&mask,a).unwrap();
         assert!((loss-want_loss).abs()<1e-3,"loss parity: {loss} vs {want_loss}");
         assert!((g[0]-want_g0).abs()<2e-3,"gradient[0] parity: {} vs {}",g[0],want_g0);
         assert!((g[9045]-want_last).abs()<2e-3,
