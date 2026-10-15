@@ -224,7 +224,14 @@ impl Nova2{
         if ids.is_empty(){return Err("Nova-2 expects at least one token".into());}
         if ids.len()>self.config.max_tokens{return Err("Context exceeds Nova-2 window".into());}
         let f=self.features(ids)?;
-        let mut t=tape::Tape::new();let node=self.forward(&mut t,ids,f,abl);
+        self.logits_with_features(ids,&f,abl)
+    }
+    pub fn logits_with_features(&self,ids:&[u16],features:&[f32],abl:Ablation)->Result<Vec<f32>,String>{
+        if ids.is_empty()||ids.len()>self.config.max_tokens||
+          features.len()!=ids.len()*self.config.window_chars*16 {
+            return Err("Invalid Nova-2 inference features".into());
+        }
+        let mut t=tape::Tape::new();let node=self.forward(&mut t,ids,features.to_vec(),abl);
         Ok(t.values(node).to_vec())
     }
     pub fn predict(&self,ids:&[u16],abl:Ablation)->Result<Vec<f32>,String>{
@@ -245,8 +252,16 @@ impl Nova2{
         }
         if targets.iter().any(|&x|x as usize>=self.config.vocab){return Err("Invalid target token".into());}
         let feats=self.features(ids)?;
+        self.loss_and_gradients_with_features(ids,&feats,targets,mask,abl)
+    }
+    pub fn loss_and_gradients_with_features(&self,ids:&[u16],features:&[f32],
+        targets:&[u16],mask:&[f32],abl:Ablation)->Result<(f32,Vec<f32>),String>{
+        if ids.is_empty()||ids.len()!=targets.len()||ids.len()!=mask.len()||
+           ids.len()>self.config.max_tokens||features.len()!=ids.len()*self.config.window_chars*16{
+            return Err("Invalid Nova-2 training dimensions".into());
+        }
         let mut t=tape::Tape::new();
-        let logits=self.forward(&mut t,ids,feats,abl);
+        let logits=self.forward(&mut t,ids,features.to_vec(),abl);
         let targets=targets.iter().map(|&v|v as usize).collect::<Vec<_>>();
         let loss=t.xent(logits,&targets,mask,self.config.vocab);
         let value=t.values(loss)[0];
