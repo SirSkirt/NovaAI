@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="./styles.css">
   <script defer src="./js/training-background-ui.js"></script>
   <script defer src="./js/nova-ui.js"></script>
+  <script defer src="./js/nova2-ui.js"></script>
   <script defer src="./js/diagnostic-ui.js"></script>
   <script defer src="./js/mass-learning-ui.js"></script>
   <script defer src="./js/checkpoint-ui.js"></script>
@@ -21,12 +22,13 @@
   <header class="app-header">
     <div class="brand">
       <span class="brand-symbol" aria-hidden="true">◉</span>
-      <div><h1>Neural Nova <span class="beta">v0.17.0</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
+      <div><h1>Neural Nova <span class="beta">v0.18.0 · Bicameral</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
     </div>
     <div class="status-pill" id="brainState" role="status"><span class="status-indicator"></span><span id="brainStateText">Starting…</span></div>
   </header>
   <nav class="nav-tabs" role="tablist" aria-label="Neural Nova workspace">
-    <button type="button" id="tab-teach" class="nav-tab selected" role="tab" aria-selected="true" aria-controls="pane-teach" data-tab="teach">✧ Teach</button>
+    <button type="button" id="tab-nova2" class="nav-tab selected" role="tab" aria-selected="true" aria-controls="pane-nova2" data-tab="nova2">🧠 Nova-2</button>
+    <button type="button" id="tab-teach" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-teach" tabindex="-1" data-tab="teach">✧ Legacy Teach</button>
     <button type="button" id="tab-targeted" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-targeted" tabindex="-1" data-tab="targeted">◈ Targeted Training</button>
     <button type="button" id="tab-chat" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-chat" tabindex="-1" data-tab="chat">◉ Chat</button>
     <button type="button" id="tab-visualize" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-visualize" tabindex="-1" data-tab="visualize">⌁ Visualize</button>
@@ -38,7 +40,58 @@
     <div class="stat"><span>Shared training steps</span><strong id="trainingSteps">0</strong></div>
   </section>
   <main>
-    <section class="tab-pane" id="pane-teach" role="tabpanel" aria-labelledby="tab-teach">
+    <section class="tab-pane" id="pane-nova2" role="tabpanel" aria-labelledby="tab-nova2">
+      <div class="pane-title"><div><p class="eyebrow">NOVA-2 · BICAMERAL</p><h2>Three-part Neural Brain</h2></div>
+        <span class="subtle">Four-layer Transformer · Dense hemisphere · Trainable interconnect · KV-cached chat</span></div>
+      <div class="card">
+        <div class="row wrap">
+          <span class="stat">Parameters: <strong id="n2Params">1,182,144</strong></span>
+          <span class="stat">Left: <strong id="n2Left">755,200</strong></span>
+          <span class="stat">Right: <strong id="n2Right">336,320</strong></span>
+          <span class="stat">Interconnect: <strong id="n2Inter">90,624</strong></span>
+          <span class="stat">Updates: <strong id="n2Steps">0</strong></span>
+        </div>
+        <p class="muted" id="n2Status">Initializing separate Nova-2 Rust brain...</p>
+        <p class="muted">Nova-2 has a separate <code>.nnova2</code> checkpoint. Your original trained <code>.nhyb</code> weights remain untouched in Legacy Teach. This panel trains Claude's redesigned model with full-sequence joint gradients.</p>
+      </div>
+      <div class="teach-grid">
+        <div class="card">
+          <h3>Teach Nova-2</h3>
+          <label for="n2Mode">Lesson format</label>
+          <select id="n2Mode"><option value="unified">Unified Teacher Lesson</option><option value="dialogue">Dialogue</option><option value="text">Text</option><option value="conversation">Multi-turn conversation</option><option value="reasoning">Reasoning</option></select>
+          <label for="n2Text">Paste a lesson</label>
+          <textarea id="n2Text" rows="9" spellcheck="false" placeholder="Paste your existing Basic English or Reasoning lesson here."></textarea>
+          <div class="row wrap">
+            <label for="n2Epochs">Epochs</label><input type="number" id="n2Epochs" min="1" max="25" value="3" style="max-width:75px">
+            <label for="n2Rate">Peak LR</label><input type="number" id="n2Rate" step="0.00001" min="0.000001" max="0.01" value="0.0001" style="max-width:110px">
+          </div>
+          <div class="row wrap actions">
+            <button id="n2Teach" type="button" class="primary">Start Lesson</button>
+            <button id="n2Stop" type="button" class="secondary" disabled>Stop</button>
+            <button id="n2Reset" type="button" class="secondary">Fresh Nova-2</button>
+          </div>
+          <div class="section-line"><h3>Sequential ZIP course</h3></div>
+          <label for="n2Zip">Select your existing lesson ZIP</label>
+          <input id="n2Zip" type="file" accept=".zip,application/zip">
+          <label for="n2ZipMode">Lesson parsing</label>
+          <select id="n2ZipMode"><option value="auto">Auto (structured lessons)</option><option value="unified">Unified</option><option value="dialogue">Dialogue</option><option value="text">Text</option><option value="conversation">Conversation</option><option value="reasoning">Reasoning</option></select>
+          <button id="n2ZipTrain" type="button" class="primary">Train ZIP Sequentially</button>
+          <p class="muted">Each ZIP lesson is validated and taught in filename order with a separate held-out split. The original Foundation candidate-selection UI remains part of the legacy trainer; it is not silently applied to Nova-2.</p>
+        </div>
+        <div class="card">
+          <h3>Chat with Nova-2</h3>
+          <div class="row wrap"><button id="n2NewChat" class="secondary compact" type="button">New Chat</button></div>
+          <pre id="n2ChatHistory" class="epoch-history" style="max-height:350px;overflow:auto;white-space:pre-wrap">No Nova-2 conversation yet.</pre>
+          <label for="n2Prompt">Message</label>
+          <textarea id="n2Prompt" rows="3" placeholder="Talk to Nova-2..." spellcheck="false"></textarea>
+          <button id="n2Chat" class="primary" type="button">Send (KV-cached)</button>
+          <p class="muted" id="n2CacheStats">A fresh incremental attention cache is created for each generation; it is invalidated by learning.</p>
+          <h3>Training progress</h3>
+          <pre id="n2Progress" class="epoch-history" style="max-height:310px;overflow:auto;white-space:pre-wrap">Idle. Untrained model.</pre>
+        </div>
+      </div>
+    </section>
+    <section class="tab-pane" id="pane-teach" role="tabpanel" aria-labelledby="tab-teach" hidden>
       <div class="pane-title"><div><p class="eyebrow">SHARED SUPERVISION</p><h2>Teach Nova</h2></div><span class="subtle">Both hemispheres learn from the same loss</span></div>
       <div class="teach-grid">
         <div class="card">
