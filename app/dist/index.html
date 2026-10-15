@@ -4,31 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0b101c">
-  <meta name="description" content="Neural Nova: one trainable hybrid neural brain">
+  <meta name="description" content="Neural Nova: one trainable Nova-2 Bicameral brain">
   <title>Neural Nova — Brain Lab</title>
   <link rel="stylesheet" href="./styles.css">
   <script defer src="./js/training-background-ui.js"></script>
-  <script defer src="./js/nova-ui.js"></script>
-  <script defer src="./js/nova2-ui.js"></script>
-  <script defer src="./js/diagnostic-ui.js"></script>
-  <script defer src="./js/mass-learning-ui.js"></script>
-  <script defer src="./js/checkpoint-ui.js"></script>
-  <script defer src="./js/targeted-training.js"></script>
-  <script defer src="./js/training-observer.js"></script>
-  <script defer src="./js/test-ui.js"></script>
+  <script defer src="./js/nova2-main.js"></script>
+  <script defer src="./js/nova2-test-ui.js"></script>
 </head>
 <body>
 <div class="app-shell">
   <header class="app-header">
     <div class="brand">
       <span class="brand-symbol" aria-hidden="true">◉</span>
-      <div><h1>Neural Nova <span class="beta">v0.18.0 · Bicameral</span></h1><p>One trainable brain · Two learning pathways · Native Rust</p></div>
+      <div><h1>Neural Nova <span class="beta">v0.18.1 · Bicameral</span></h1><p>Bicameral Transformer · Dense hemisphere · Trainable interconnect · KV cache</p></div>
     </div>
     <div class="status-pill" id="brainState" role="status"><span class="status-indicator"></span><span id="brainStateText">Starting…</span></div>
   </header>
   <nav class="nav-tabs" role="tablist" aria-label="Neural Nova workspace">
-    <button type="button" id="tab-nova2" class="nav-tab selected" role="tab" aria-selected="true" aria-controls="pane-nova2" data-tab="nova2">🧠 Nova-2</button>
-    <button type="button" id="tab-teach" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-teach" tabindex="-1" data-tab="teach">✧ Legacy Teach</button>
+    <button type="button" id="tab-teach" class="nav-tab selected" role="tab" aria-selected="true" aria-controls="pane-teach" data-tab="teach">✧ Teach</button>
     <button type="button" id="tab-targeted" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-targeted" tabindex="-1" data-tab="targeted">◈ Targeted Training</button>
     <button type="button" id="tab-chat" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-chat" tabindex="-1" data-tab="chat">◉ Chat</button>
     <button type="button" id="tab-visualize" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-visualize" tabindex="-1" data-tab="visualize">⌁ Visualize</button>
@@ -40,75 +33,12 @@
     <div class="stat"><span>Shared training steps</span><strong id="trainingSteps">0</strong></div>
   </section>
   <main>
-    <section class="tab-pane" id="pane-nova2" role="tabpanel" aria-labelledby="tab-nova2">
-      <div class="pane-title"><div><p class="eyebrow">NOVA-2 · BICAMERAL</p><h2>Three-part Neural Brain</h2></div>
-        <span class="subtle">Four-layer Transformer · Dense hemisphere · Trainable interconnect · KV-cached chat</span></div>
-      <div class="card">
-        <div class="row wrap">
-          <span class="stat">Parameters: <strong id="n2Params">1,182,144</strong></span>
-          <span class="stat">Left: <strong id="n2Left">755,200</strong></span>
-          <span class="stat">Right: <strong id="n2Right">336,320</strong></span>
-          <span class="stat">Interconnect: <strong id="n2Inter">90,624</strong></span>
-          <span class="stat">Updates: <strong id="n2Steps">0</strong></span>
-        </div>
-        <p class="muted" id="n2Status">Initializing separate Nova-2 Rust brain...</p>
-        <p class="muted">Nova-2 has a separate <code>.nnova2</code> checkpoint. Your original trained <code>.nhyb</code> weights remain untouched in Legacy Teach. This panel trains Claude's redesigned model with full-sequence joint gradients.</p>
-      </div>
-      <div class="teach-grid">
-        <div class="card">
-          <h3>Teach Nova-2</h3>
-          <label for="n2Mode">Lesson format</label>
-          <select id="n2Mode"><option value="unified">Unified Teacher Lesson</option><option value="dialogue">Dialogue</option><option value="text">Text</option><option value="conversation">Multi-turn conversation</option><option value="reasoning">Reasoning</option></select>
-          <label for="n2Text">Paste a lesson</label>
-          <textarea id="n2Text" rows="9" spellcheck="false" placeholder="Paste your existing Basic English or Reasoning lesson here."></textarea>
-          <div class="row wrap">
-            <label for="n2Epochs">Epochs</label><input type="number" id="n2Epochs" min="1" max="25" value="3" style="max-width:75px">
-            <label for="n2Rate">Peak LR</label><input type="number" id="n2Rate" step="0.00001" min="0.000001" max="0.01" value="0.0001" style="max-width:110px">
-          </div>
-          <div class="row wrap actions">
-            <button id="n2Teach" type="button" class="primary">Start Lesson</button>
-            <button id="n2Stop" type="button" class="secondary" disabled>Stop</button>
-            <button id="n2Reset" type="button" class="secondary">Fresh Nova-2</button>
-          </div>
-          <div class="section-line"><h3>Sequential ZIP course</h3></div>
-          <label for="n2Zip">Select your existing lesson ZIP</label>
-          <input id="n2Zip" type="file" accept=".zip,application/zip">
-          <button id="n2NativeZip" type="button" class="secondary" hidden>Choose ZIP from Android Files</button>
-          <label for="n2ZipMode">Lesson parsing</label>
-          <select id="n2ZipMode"><option value="auto">Auto (structured lessons)</option><option value="unified">Unified</option><option value="dialogue">Dialogue</option><option value="text">Text</option><option value="conversation">Conversation</option><option value="reasoning">Reasoning</option></select>
-          <button id="n2ZipTrain" type="button" class="primary">Train ZIP Sequentially</button>
-          <p class="muted">Each ZIP lesson is validated and taught in filename order with a separate held-out split. The original Foundation candidate-selection UI remains part of the legacy trainer; it is not silently applied to Nova-2.</p>
-        </div>
-        <div class="card">
-          <h3>Chat with Nova-2</h3>
-          <div class="row wrap"><button id="n2NewChat" class="secondary compact" type="button">New Chat</button></div>
-          <pre id="n2ChatHistory" class="epoch-history" style="max-height:350px;overflow:auto;white-space:pre-wrap">No Nova-2 conversation yet.</pre>
-          <label for="n2Prompt">Message</label>
-          <textarea id="n2Prompt" rows="3" placeholder="Talk to Nova-2..." spellcheck="false"></textarea>
-          <button id="n2Chat" class="primary" type="button">Send (KV-cached)</button>
-          <p class="muted" id="n2CacheStats">A fresh incremental attention cache is created for each generation; it is invalidated by learning.</p>
-
-          <div class="section-line"><h3>Nova-2 checkpoints</h3></div>
-          <p class="muted">Export/import the complete NNOVA2 model, optimizer moments, and learned word units without changing any original .nhyb checkpoint.</p>
-          <div class="row wrap">
-            <button id="n2Export" type="button" class="secondary">Export Nova-2</button>
-            <button id="n2ImportNative" type="button" class="secondary" hidden>Choose Android Files checkpoint</button>
-          </div>
-          <label for="n2ImportFile" id="n2ImportFileLabel">Import .nnova2 checkpoint</label>
-          <input type="file" id="n2ImportFile" accept=".nnova2">
-          <button id="n2Import" type="button" class="secondary">Import Nova-2 checkpoint</button>
-          <p class="muted" id="n2Transfer">No transfer active.</p>
-          <h3>Training progress</h3>
-          <pre id="n2Progress" class="epoch-history" style="max-height:310px;overflow:auto;white-space:pre-wrap">Idle. Untrained model.</pre>
-        </div>
-      </div>
-    </section>
-    <section class="tab-pane" id="pane-teach" role="tabpanel" aria-labelledby="tab-teach" hidden>
-      <div class="pane-title"><div><p class="eyebrow">SHARED SUPERVISION</p><h2>Teach Nova</h2></div><span class="subtle">Both hemispheres learn from the same loss</span></div>
+    <section class="tab-pane" id="pane-teach" role="tabpanel" aria-labelledby="tab-teach">
+      <div class="pane-title"><div><p class="eyebrow">SHARED SUPERVISION</p><h2>Teach Nova</h2></div><span class="subtle">Claude Bicameral · one three-part trainable brain</span></div>
       <div class="teach-grid">
         <div class="card">
           <div class="field-row">
-            <div class="wide-field"><label for="lessonMode">Lesson type</label><select id="lessonMode"><option value="unified" selected>Unified lesson blocks · auto-detect all four</option><option value="dialogue">Legacy Dialogue / replies</option><option value="text">Text / language patterns</option><option value="conversation">Multi-turn conversations</option><option value="reasoning">Reasoning · supported vs contradicted conclusions</option></select></div>
+            <div class="wide-field"><label for="lessonMode">Lesson type</label><select id="lessonMode"><option value="unified" selected>Unified lesson blocks · auto-detect all four</option><option value="dialogue">Dialogue / replies</option><option value="text">Text / language patterns</option><option value="conversation">Multi-turn conversations</option><option value="reasoning">Reasoning · supported vs contradicted conclusions</option></select></div>
             <div class="small-field"><label for="trainingEpochs">Max epochs</label><input id="trainingEpochs" type="number" min="1" max="60" value="12"></div>
           </div>
           <div class="section-line"><label for="lessonData">Training data</label><span id="lessonCount" class="subtle"></span></div>
@@ -146,7 +76,7 @@
               <span>Compare Dense / Transformer / Interconnect / Joint candidates</span>
             </label>
             <p class="muted" id="foundationTrainingStatus">Off. Standard joint learning remains available.</p>
-            <p class="muted">Each candidate starts with identical complete weights and optimizer state. The trainer compares true held-out validation, autonomous replies, and earlier-skill retention, keeping only an eligible whole checkpoint. Direct TXT training retains the original five-session limit. ZIP teaching lets you choose the first five lessons or the entire archive, with up to three adaptive retries for each selective lesson. Retries test a smaller learning rate, a different example schedule with extra epochs, then both together. Practice fit and novel held-out answers are reported separately; acceptance still protects earlier skills. Rehearsal and previous-skill protection must be enabled. Android training can take much longer.</p>
+            <p class="muted">Each candidate starts with identical complete weights and optimizer state. The trainer compares held-out validation and keeps an improving whole checkpoint. Nova-2 compares four separately optimized candidates against the same withheld examples and keeps the best complete model only when it improves held-out loss. All three pathways remain active during focused training. This is held-out selection, not proof of mastery.</p>
           </details>
           <div class="field-row" style="margin-top:10px">
             <div class="wide-field">
@@ -199,12 +129,12 @@
           <div class="trainer-details"><span id="lessonSplit">Validation split: —</span><span id="trainingSpeed">Throughput: —</span><span id="bestEpoch">Best epoch: —</span></div>
           <details class="teacher-extra" id="checkpointTransfer">
             <summary>Import / export the complete neural checkpoint</summary>
-            <p class="muted">Export or restore one .nhyb file containing both pathways, bridge, tokenizer, optimizer state and learned memory weights. Checkpoint import overwrites the active brain only after validation and creates a pre-import backup. Conversation history is cleared; the prior lesson archive is used only if its weight fingerprint matches.</p>
+            <p class="muted">Export or restore one .nnova2 file containing the complete Bicameral brain, optimizer state and tokenizer. Imports are validated and a backup is created before replacement.</p>
             <div class="row wrap actions">
               <button type="button" id="exportCheckpoint" class="secondary">Export checkpoint</button>
-              <label class="file-button" id="importCheckpointFileLabel" for="importCheckpointFile">＋ Choose .nhyb</label>
-              <input type="file" id="importCheckpointFile" accept=".nhyb,application/octet-stream">
-              <button type="button" id="importCheckpointNative" class="secondary" hidden>＋ Choose .nhyb from Android Files</button>
+              <label class="file-button" id="importCheckpointFileLabel" for="importCheckpointFile">＋ Choose .nnova2</label>
+              <input type="file" id="importCheckpointFile" accept=".nnova2,application/octet-stream">
+              <button type="button" id="importCheckpointNative" class="secondary" hidden>＋ Choose .nnova2 from Android Files</button>
               <button type="button" id="importCheckpoint" class="secondary" disabled>Restore selected checkpoint</button>
             </div>
             <p id="checkpointTransferStatus" class="muted">No checkpoint transfer in progress.</p>
@@ -223,7 +153,7 @@
               <label for="foundationZipScope">Foundation duration for this ZIP (when enabled above)</label>
               <select id="foundationZipScope"><option value="firstFive" selected>First 5 ZIP lessons</option><option value="entireZip">Every lesson in this ZIP</option></select>
             </div></div>
-            <p class="muted">Foundation v2 retries a rejected lesson up to three times: lower learning rate, alternate example scheduling with six extra epochs, then both together. Each attempt is compared with the protected accepted brain. A failed lesson is only skipped after retries are exhausted; sampled practice-fit and held-out-generalization evidence appear below.</p>
+            <p class="muted">A selective lesson compares Transformer, Dense, interconnect and Joint training from the same checkpoint. The model only commits an improved whole-brain candidate.</p>
             <div class="row wrap actions">
               <label class="file-button" id="browserMassLessonPicker" for="massLessonZip">＋ Select lesson ZIP</label>
               <input type="file" id="massLessonZip" accept=".zip,application/zip">
@@ -325,14 +255,14 @@ hey there</textarea>
               <label for="targetedSource">Starting checkpoint</label>
               <select id="targetedSource">
                 <option value="current" selected>Current Nova checkpoint · clone without replacing</option>
-                <option value="imported">Imported .nhyb checkpoint · staged separately</option>
+                <option value="imported">Imported .nnova2 checkpoint · staged separately</option>
               </select>
             </div>
           </div>
           <div class="row wrap">
-            <label class="file-button" id="targetedBrowserImportLabel" for="targetedImportFile">＋ Choose .nhyb for targeted workspace</label>
-            <input type="file" id="targetedImportFile" accept=".nhyb,application/octet-stream">
-            <button type="button" class="secondary" id="targetedNativeImport" hidden>＋ Select .nhyb from Android Files</button>
+            <label class="file-button" id="targetedBrowserImportLabel" for="targetedImportFile">＋ Choose .nnova2 for targeted workspace</label>
+            <input type="file" id="targetedImportFile" accept=".nnova2,application/octet-stream">
+            <button type="button" class="secondary" id="targetedNativeImport" hidden>＋ Select .nnova2 from Android Files</button>
             <button type="button" class="secondary" id="targetedImport">Stage imported checkpoint</button>
           </div>
           <p class="muted" id="targetedImportStatus">No imported checkpoint staged. An imported brain does not replace live Nova.</p>
@@ -362,7 +292,7 @@ hey there</textarea>
             <label class="file-button" for="targetedLessonFile">＋ Import lesson TXT</label>
             <input type="file" id="targetedLessonFile" accept=".txt,text/plain">
           </div>
-          <p class="muted">Examples use your existing unified Dialogue, Understanding, Multi-Turn and Reasoning blocks. Training filters to the selected objective without turning instructional prose into scripted answers. The dense network still has its current 64-character input limitation.</p>
+          <p class="muted">Examples use your existing unified Dialogue, Understanding, Multi-Turn and Reasoning blocks. Training filters to the selected objective without turning instructional prose into scripted answers. The dense hemisphere uses Claude’s fixed 64-character feature window.</p>
         </div>
         <div class="card training-card">
           <h3>Train an isolated candidate</h3>
@@ -410,7 +340,7 @@ hey there</textarea>
     <section class="tab-pane" id="pane-chat" role="tabpanel" aria-labelledby="tab-chat" hidden>
       <div class="pane-title"><div><p class="eyebrow">ONE GENERATIVE VOICE</p><h2>Chat with Nova</h2></div><span class="subtle">No canned answers · No model selection</span></div>
       <div class="card chat-card">
-        <div id="chatTranscript" role="log" aria-live="polite" class="chat-transcript"><div class="chat-placeholder">Teach Nova, then continue the conversation. Prior turns feed bounded neural memory slots instead of a growing prompt.</div></div>
+        <div id="chatTranscript" role="log" aria-live="polite" class="chat-transcript"><div class="chat-placeholder">Teach Nova, then continue the conversation. Recent turns are encoded into the current neural prompt; KV caching speeds autoregressive generation.</div></div>
         <div class="chat-controls">
           <div class="chat-settings" aria-label="Generation diagnostics">
             <div><label for="chatLength">Max reply characters</label><select id="chatLength">
@@ -418,13 +348,13 @@ hey there</textarea>
             </select></div>
             <div><label for="chatTemperature">Temperature <output id="chatTempValue" for="chatTemperature">0.6</output></label><input id="chatTemperature" type="range" min="0.2" max="2" step="0.1" value="0.6"></div>
             <div><label for="chatContext">Context window</label><select id="chatContext">
-              <option value="128" selected>128 · original</option><option value="256">256 · extended</option>
+              <option value="128" selected>128 tokens</option><option value="256">256 tokens</option>
             </select></div>
             <div><label for="chatSampling">Sampling</label><select id="chatSampling">
               <option value="random" selected>Random</option><option value="fixed">Seeded · 42</option><option value="greedy">Most likely</option>
             </select></div>
           </div>
-          <p class="muted chat-experiment-note" id="chatExperimentNote">128-character original context. For repeatable tests use Seeded or Most likely.</p>
+          <p class="muted chat-experiment-note" id="chatExperimentNote">Nova-2 uses a 256-token causal attention window with per-layer KV caching.</p>
           <label for="chatMessage">Your message</label>
           <div class="composer"><input id="chatMessage" type="text" maxlength="180" autocomplete="off" placeholder="Talk to Nova…"><button type="button" class="primary" id="sendMessage">Send ↗</button></div>
           <div class="row wrap"><button type="button" class="secondary compact" id="clearChat">New conversation</button><button type="button" class="secondary compact" id="correctReply" disabled>Teach a correction</button><button type="button" class="secondary compact" id="compareContext">Compare 128 vs 256</button><span class="subtle" id="memoryStatus">0/12 memory slots · 0 learned word units</span></div>

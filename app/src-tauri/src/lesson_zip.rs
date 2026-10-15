@@ -473,3 +473,7 @@ mod tests{
         assert!(read_bundle(&data,"text").is_err());
     }
 }
+#[tauri::command]
+pub fn nova2_zip_preview(bytes:Vec<u8>,mode:String)->Result<LessonBundle,String>{
+    read_bundle(&bytes,&mode)
+}
