@@ -92,7 +92,8 @@ pub fn nova2_boot(app:AppHandle,state:State<'_,Nova2State>)->Result<Status,Strin
 }
 #[tauri::command]
 pub fn nova2_status(state:State<'_,Nova2State>)->Result<Status,String>{
-    Ok(status(&locked(&state)?))
+    let session=locked(&state)?;
+    Ok(status(&session))
 }
 #[tauri::command]
 pub fn nova2_conversation(state:State<'_,Nova2State>)->Result<Vec<Turn>,String>{
