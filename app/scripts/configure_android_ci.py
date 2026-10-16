@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure persistent EXPLICITLY PUBLIC Android debug signing + foreground service.
+"""Configure persistent EXPLICITLY PUBLIC Android debug signing.
 The pinned experimental development keystore is checked into this repository.
 Never use this key for release or production distribution.
 Runs only after Tauri android init has generated the Gradle project.
@@ -13,8 +13,7 @@ import sys
 
 root=pathlib.Path(__file__).resolve().parents[1]/"src-tauri"/"gen"/"android"
 gradle=root/"app"/"build.gradle.kts"
-manifest=root/"app"/"src"/"main"/"AndroidManifest.xml"
-if not gradle.is_file() or not manifest.is_file():
+if not gradle.is_file():
     sys.exit("Android generator output absent: run npm run android:init first")
 # Intentionally PUBLIC development-only key. Persistent across machines and CI
 # runs; convenient for sideloaded experimental builds but insecure for release.
@@ -77,19 +76,5 @@ if "create(\"novaDev\")" not in text:
         ''',1)
     gradle.write_text(text)
 
-text=manifest.read_text()
-for perm in (
-    "android.permission.FOREGROUND_SERVICE",
-    "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
-    "android.permission.POST_NOTIFICATIONS",
-    # PowerManager.PARTIAL_WAKE_LOCK keeps Rust CPU training progressing with
-    # the display off; released on foreground-service stop, not held idly.
-    "android.permission.WAKE_LOCK",
-):
-    if perm not in text:
-        text=text.replace("<application",f'<uses-permission android:name="{perm}" />\n    <application',1)
-# The background-service plugin already provides LifecycleService and the
-# specialUse property with its own manifest. Do NOT redeclare them here:
-# Android rejects two different values for the same property during merge.
-manifest.write_text(text)
-print("Configured pinned experimental debug signing and Android foreground/notification permissions (service owned by plugin).")
+
+print("Configured pinned experimental debug signing. Package ID and certificate remain unchanged.")

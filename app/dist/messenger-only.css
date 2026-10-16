@@ -1,0 +1,46 @@
+/* Nova Messenger v0.20: standalone chat, no teacher, tests or training panes. */
+#novaMessenger{padding-bottom:10px}
+.messenger-head{align-items:center}
+.messenger-grid{align-items:stretch}
+.messenger-conversation{display:flex;min-width:0}
+.messenger-conversation>.chat-card{width:100%;min-height:calc(100dvh - 210px)}
+#chatTranscript{scroll-behavior:smooth}
+#chatTranscript .chat-bubble{display:block}
+#chatMessage{height:auto;min-height:53px;max-height:150px;resize:vertical;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;padding:13px 14px}
+.chat-controls label.composer-label{display:none}
+.composer{align-items:end}
+.composer textarea{flex:1}
+.composer button{height:47px}
+.chat-bubble div{white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-placeholder{margin:auto}
+.model-notice{padding:12px 18px;background:#383026;color:#ebd5a5;border-bottom:1px solid #68533e;font-size:12px;line-height:1.5}
+.model-notice[hidden]{display:none!important}
+.context-report.error-message{color:#f3c0bc;border-color:#8b5854}
+#checkpointTools{margin-top:18px;padding:16px 20px}
+#checkpointTools>summary{cursor:pointer;font-size:14px;color:#e0e5df;list-style:disclosure-closed}
+#checkpointTools[open]>summary{margin-bottom:14px}
+#checkpointTools .actions{margin:12px 0}
+#checkpointTransferStatus{margin:12px 0 0}
+.nova-brain-rail .brain-stage{min-height:0}
+.nova-brain-rail .metric-grid strong{font-size:14px}
+.nova-brain-rail .metric-grid span{font-size:10px}
+.nova-brain-rail .prediction-list{min-height:25px}
+.messenger-actions{max-width:55%}
+#novaThinkingTree{flex:none}
+@media(min-width:1121px){
+  .messenger-grid{grid-template-columns:minmax(0,1fr) minmax(295px,365px)}
+  .nova-brain-rail{position:sticky;top:12px}
+}
+@media(max-width:660px){
+  .messenger-head{gap:8px}
+  .messenger-actions{max-width:none}
+  .messenger-actions button{padding:10px}
+  .messenger-conversation>.chat-card{min-height:calc(100dvh - 220px)}
+  .chat-transcript{min-height:36vh;height:45vh}
+  .chat-controls{padding-bottom:max(12px,env(safe-area-inset-bottom))}
+  .composer textarea{font-size:16px}
+  #checkpointTools{margin-top:12px;padding:14px}
+  #checkpointTools .row{align-items:stretch}
+  #checkpointTools .row button{font-size:12px}
+}
+@media(prefers-reduced-motion:reduce){#chatTranscript{scroll-behavior:auto}}

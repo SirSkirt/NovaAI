@@ -1,17 +1,10 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Neural Nova Experimental",
-  "version": "0.19.1",
+  "version": "0.20.0",
   "identifier": "com.qtech.neuralnova.experimental",
   "build": {
     "frontendDist": "../dist"
-  },
-  "plugins": {
-    "background-service": {
-      "androidForegroundServiceTypes": ["specialUse"],
-      "androidValidateForegroundServiceType": true,
-      "androidShowStopAction": false
-    }
   },
   "app": {
     "security": {

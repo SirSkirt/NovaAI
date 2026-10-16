@@ -4,375 +4,93 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#161819">
-  <meta name="description" content="Neural Nova: one trainable Nova-2 Bicameral brain">
+  <meta name="description" content="Nova Messenger — local conversations with the trained Bicameral AI.">
   <title>Nova — Messages</title>
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./nova-messenger.css">
-  <script defer src="./js/training-background-ui.js"></script>
-  <script defer src="./js/nova-messenger-layout.js"></script>
-  <script defer src="./js/nova2-main.js"></script>
-  <script defer src="./js/nova2-test-ui.js"></script>
-  <script defer src="./js/nova2-education-ui.js"></script>
+  <link rel="stylesheet" href="./messenger-only.css">
+  <script defer src="./js/nova-messenger.js"></script>
 </head>
 <body>
 <div class="app-shell">
   <header class="app-header">
     <div class="brand">
       <span class="brand-symbol" aria-hidden="true">◐</span>
-      <div><h1>Neural Nova <span class="beta">v0.19.1 · Bicameral</span></h1><p>Your local Bicameral AI · messaging and brain inspection</p></div>
+      <div><h1>Neural Nova <span class="beta">v0.20.0 · Messenger</span></h1>
+      <p>Local Bicameral model · Yendory-trained checkpoints</p></div>
     </div>
-    <div class="status-pill" id="brainState" role="status"><span class="status-indicator"></span><span id="brainStateText">Starting…</span></div>
+    <div class="status-pill" id="brainState" role="status" aria-live="polite">
+      <span class="status-indicator"></span><span id="brainStateText">Loading model…</span>
+    </div>
   </header>
-  <nav class="nav-tabs" role="tablist" aria-label="Neural Nova workspace">
-    <button type="button" id="tab-teach" class="nav-tab selected" role="tab" aria-selected="true" aria-controls="pane-teach" data-tab="teach">✧ Teach</button>
-    <button type="button" id="tab-targeted" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-targeted" tabindex="-1" data-tab="targeted">◈ Targeted Training</button>
-    <button type="button" id="tab-chat" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-chat" tabindex="-1" data-tab="chat">◉ Chat</button>
-    <button type="button" id="tab-visualize" class="nav-tab" role="tab" aria-selected="false" aria-controls="pane-visualize" tabindex="-1" data-tab="visualize">⌁ Visualize</button>
-  </nav>
-  <section class="quick-stats" aria-label="One unified network status">
-    <div class="stat"><span>Combined parameters</span><strong id="totalParams">—</strong></div>
-    <div class="stat"><span>Language pathway</span><strong id="transformerParams">—</strong></div>
-    <div class="stat"><span>Association pathway</span><strong id="denseParams">—</strong></div>
-    <div class="stat"><span>Shared training steps</span><strong id="trainingSteps">0</strong></div>
-  </section>
-  <main>
-    <section class="tab-pane" id="pane-teach" role="tabpanel" aria-labelledby="tab-teach">
-      <div class="pane-title"><div><p class="eyebrow">SHARED SUPERVISION</p><h2>Teach Nova</h2></div><span class="subtle">Claude Bicameral · one three-part trainable brain</span></div>
-      <div class="teach-grid">
-        <div class="card">
-          <div class="field-row">
-            <div class="wide-field"><label for="lessonMode">Lesson type</label><select id="lessonMode"><option value="unified" selected>Unified lesson blocks · auto-detect all four</option><option value="dialogue">Dialogue / replies</option><option value="text">Text / language patterns</option><option value="conversation">Multi-turn conversations</option><option value="reasoning">Reasoning · supported vs contradicted conclusions</option></select></div>
-            <div class="small-field"><label for="trainingEpochs">Max epochs</label><input id="trainingEpochs" type="number" min="1" max="60" value="12"></div>
+  <main id="novaMessenger">
+    <div class="pane-title messenger-head">
+      <div><p class="eyebrow">CONVERSATION · ON-DEVICE INFERENCE</p><h2>Chat with Nova</h2></div>
+      <div class="messenger-actions">
+        <button type="button" id="openModelTools" class="secondary compact">Checkpoints</button>
+        <button type="button" id="toggleBrain" class="secondary compact brain-toggle" aria-controls="novaBrainRail" aria-expanded="false">Brain inspector</button>
+      </div>
+    </div>
+    <div class="messenger-grid">
+      <div class="messenger-conversation">
+        <section class="card chat-card" aria-label="Chat conversation">
+          <div class="conversation-intro">
+            <span class="mini-mark" aria-hidden="true">N</span>
+            <div><strong>Nova</strong><small>One neural model, loaded locally</small></div>
           </div>
-          <div class="section-line"><label for="lessonData">Training data</label><span id="lessonCount" class="subtle"></span></div>
-          <textarea id="lessonData" spellcheck="false" rows="9" aria-describedby="lessonHint"></textarea>
-          <p id="lessonHint" class="muted">One TXT can contain all four [Dialogue Lesson], [Understanding Lesson], [Multi-Turn Conversation Lesson], and [Reasoning Lesson] blocks, each with a nested [examples] section. No mode selection needed.</p>
-          <div class="row wrap">
-            <label class="file-button" id="browserLessonFileLabel" for="lessonFile">＋ Import .txt</label><input type="file" id="lessonFile" accept=".txt,text/plain">
-            <button type="button" id="nativeLessonFile" class="secondary compact" hidden>＋ Import TXT from Android Files</button>
-            <button type="button" id="sampleLesson" class="secondary compact">Example data</button>
-            <button type="button" id="clearLesson" class="secondary compact">Clear editor</button>
+          <div id="modelNotice" class="model-notice" hidden>Import a trained .nnova2 checkpoint to talk to Nova.</div>
+          <div id="chatTranscript" role="log" aria-live="polite" aria-label="Messages" class="chat-transcript">
+            <div class="chat-placeholder">Nova is loading. Your conversation will appear here.</div>
           </div>
-          <details class="teacher-extra">
-            <summary>＋ Add a question and ideal response</summary>
-            <div class="correction-fields">
-              <div><label for="teacherQuestion">Question</label><input id="teacherQuestion" maxlength="180" placeholder="What is your name?"></div>
-              <div><label for="teacherAnswer">Ideal response</label><input id="teacherAnswer" maxlength="384" placeholder="My name is Nova."></div>
-            </div>
-            <button type="button" id="addLesson" class="secondary">Add to training data</button>
+          <details id="novaThinkingTree" class="thinking-tree">
+            <summary><span>Thinking tree <small>inference telemetry · not private thoughts</small></span><span class="disclosure-mark" aria-hidden="true">⌄</span></summary>
+            <div class="thinking-intro">Nova's current architecture does not produce a structured reasoning trace. Only measured inference information appears below.</div>
+            <ol id="novaTraceNodes" class="trace-nodes"><li>No inference has completed in this session.</li></ol>
           </details>
-        </div>
-        <div class="card training-card">
-          <div class="section-line"><h3>Training</h3><span id="checkpointText" class="subtle">Fresh weights</span></div>
-          <p class="muted">Unified lessons balance dialogue, understanding, memory, reasoning and explanatory language objectives through the same cooperating brain. No scripted inference.</p>
-          <div class="schedule-settings">
-            <div class="trainer-switches">
-              <label class="checkbox-line" for="adaptiveTraining"><input id="adaptiveTraining" type="checkbox"><span>Adaptive learning rate</span></label>
-              <label class="checkbox-line" for="earlyStopping"><input id="earlyStopping" type="checkbox" checked><span>Early stopping</span></label>
-            </div>
-            <div><label for="trainingRate">Learning rate</label><select id="trainingRate"><option value="0.0001">Extra gentle · 0.0001</option><option value="0.0003">Very gentle · 0.0003</option><option value="0.001" selected>Gentle · 0.001</option><option value="0.003">Balanced · 0.003</option><option value="0.005">Faster · 0.005</option></select></div>
-          </div>
-          <details class="teacher-extra" id="foundationTrainingSettings">
-            <summary>Foundation Training v2 · adaptive selective learning</summary>
-            <label class="checkbox-line" for="foundationTrainingEnabled">
-              <input type="checkbox" id="foundationTrainingEnabled">
-              <span>Compare Dense / Transformer / Interconnect / Joint candidates</span>
-            </label>
-            <p class="muted" id="foundationTrainingStatus">Off. Standard joint learning remains available.</p>
-            <p class="muted">Each candidate starts with identical complete weights and optimizer state. The trainer compares held-out validation and keeps an improving whole checkpoint. Nova-2 compares four separately optimized candidates against the same withheld examples and keeps the best complete model only when it improves held-out loss. All three pathways remain active during focused training. This is held-out selection, not proof of mastery.</p>
-          </details>
-          <div class="field-row" style="margin-top:10px">
-            <div class="wide-field">
-              <label for="retentionBenchmark">Saved teacher benchmark (read-only diagnostic)</label>
-              <select id="retentionBenchmark"><option value="">No prior-skill benchmark</option></select>
-            </div>
-          </div>
-          <p class="muted" id="retentionStatus">Saved teacher tests can protect exact greedy responses during checkpoint selection. Answers never enter neural inference.</p>
-          <details class="teacher-extra" id="rehearsalSettings">
-            <summary>Keep earlier lessons (rehearsal &amp; retention protection)</summary>
-            <p class="muted" id="rehearsalBankStatus">Loading previous lesson archive…</p>
-            <div class="row wrap">
-              <label class="checkbox-line" for="rehearsalEnabled"><input type="checkbox" id="rehearsalEnabled" checked> Replay past lessons alongside new ones (one old batch per three new)</label>
-              <label class="checkbox-line" for="retentionGuardEnabled"><input type="checkbox" id="retentionGuardEnabled" checked> Reject checkpoints that lose earlier skills</label>
-            </div>
-            <div class="field-row">
-              <div class="small-field"><label for="retentionTolerance">Maximum older held-out loss increase</label><select id="retentionTolerance">
-                <option value="0.02" selected>Strict · 0.02 (recommended)</option>
-                <option value="0.05">Balanced · 0.05</option>
-                <option value="0.10">Moderate · 0.10</option>
-                <option value="0.20">Permissive · 0.20</option>
-              </select></div>
-            </div>
-            <p class="muted">The archive keeps up to 128 previous lessons and refuses to silently discard older learning sources when full. Earlier validation questions are scored separately and are never replayed. The selected Test &amp; Corrections benchmark can additionally veto regressions.</p>
-            <details class="teacher-extra">
-              <summary>Import a previous lesson from an older checkpoint</summary>
-              <label for="priorLessonName">Name</label><input id="priorLessonName" placeholder="Dialogue Lesson 02" maxlength="80">
-              <label for="priorLessonMode">Lesson type</label>
-              <select id="priorLessonMode"><option value="dialogue">Dialogue / replies</option><option value="text">Text / language</option><option value="conversation">Multi-turn conversations</option><option value="reasoning">Reasoning comparisons</option><option value="unified">Unified lesson blocks</option></select>
-              <textarea id="priorLessonData" rows="4" spellcheck="false" placeholder="Paste the previously taught lesson here, or import its TXT file."></textarea>
-              <div class="row wrap"><label class="file-button" for="priorLessonFile">＋ Import prior .txt</label><input type="file" id="priorLessonFile" accept=".txt,text/plain">
-              <button type="button" id="archivePriorLesson" class="secondary">Archive for future rehearsal</button>
-              <button type="button" id="clearRehearsal" class="secondary">Clear rehearsal archive</button></div>
+          <div class="chat-controls">
+            <details class="generation-settings" id="generationOptions">
+              <summary>Generation settings <span>decoding · context · length</span></summary>
+              <div class="chat-settings">
+                <div><label for="chatLength">Max tokens</label><select id="chatLength">
+                  <option value="32" selected>32</option><option value="64">64</option>
+                  <option value="128">128</option><option value="256">256</option>
+                </select></div>
+                <div><label for="chatTemperature">Temperature <output id="chatTempValue">0.6</output></label>
+                  <input id="chatTemperature" type="range" min="0.2" max="2" step="0.1" value="0.6"></div>
+                <div><label for="chatContext">Context window</label><select id="chatContext">
+                  <option value="128">128 tokens</option><option value="256" selected>256 tokens</option>
+                </select></div>
+                <div><label for="chatSampling">Decoding</label><select id="chatSampling">
+                  <option value="greedy" selected>Greedy · deterministic</option>
+                  <option value="random">Random</option><option value="fixed">Seeded · 42</option>
+                </select></div>
+              </div>
             </details>
-          </details>
-          <p class="trainer-explainer" id="trainingScheduleHelp">Gentle stays fixed at 0.001; early stopping independently watches validation loss.</p>
-          <div class="row wrap actions"><button type="button" class="primary" id="startTraining">▶ Start training</button><button type="button" id="stopTraining" disabled>Stop</button></div>
-          <div class="progress-head"><span id="trainingProgress">No active training</span><strong id="trainingPercent">0%</strong></div>
-          <p class="trainer-stage" id="trainingStage">Waiting for lessons.</p>
-          <div class="progress-track"><div id="trainingFill"></div></div>
-          <div class="metric-grid">
-            <div><span id="heldoutLossLabel">Held-out composite loss</span><strong id="heldoutLoss">—</strong></div>
-            <div><span>Held-out next-character accuracy</span><strong id="heldoutAccuracy">—</strong></div>
-            <div id="reasoningAccuracyMetric" hidden><span>Unseen conclusion preference</span><strong id="reasoningAccuracy">—</strong></div>
-            <div id="selfGeneratedStartMetric" hidden><span>Self-generated first character · best checkpoint</span><strong id="selfGeneratedStart">—</strong></div>
-            <div id="selfGeneratedPrefixMetric" hidden><span>Self-generated prefix · best checkpoint</span><strong id="selfGeneratedPrefix">—</strong></div>
-            <div id="selfGeneratedReplyMetric" hidden><span>Complete self-generated replies · best checkpoint</span><strong id="selfGeneratedReplies">—</strong></div>
-          </div>
-          <p class="muted" id="autonomousValidationNote" hidden>Independent held-out evaluation: one reply per available learning objective, up to 12 characters. The teacher provides expected answers for SCORING only, not during Nova's generation. An accepted checkpoint is not necessarily a mastered lesson.</p>
-          <div class="trainer-details"><span id="lessonSplit">Validation split: —</span><span id="trainingSpeed">Throughput: —</span><span id="bestEpoch">Best epoch: —</span></div>
-          <details class="teacher-extra" id="checkpointTransfer">
-            <summary>Import / export the complete neural checkpoint</summary>
-            <p class="muted">Export or restore one .nnova2 file containing the complete Bicameral brain, optimizer state and tokenizer. Imports are validated and a backup is created before replacement.</p>
-            <div class="row wrap actions">
-              <button type="button" id="exportCheckpoint" class="secondary">Export checkpoint</button>
-              <label class="file-button" id="importCheckpointFileLabel" for="importCheckpointFile">＋ Choose .nnova2</label>
-              <input type="file" id="importCheckpointFile" accept=".nnova2,application/octet-stream">
-              <button type="button" id="importCheckpointNative" class="secondary" hidden>＋ Choose .nnova2 from Android Files</button>
-              <button type="button" id="importCheckpoint" class="secondary" disabled>Restore selected checkpoint</button>
+            <label for="chatMessage" class="composer-label">Your message</label>
+            <div class="composer">
+              <textarea id="chatMessage" rows="2" maxlength="300" autocomplete="off" spellcheck="true" aria-label="Message Nova" placeholder="Message Nova…" disabled></textarea>
+              <button type="button" id="sendMessage" class="primary" disabled>Send ↗</button>
             </div>
-            <p id="checkpointTransferStatus" class="muted">No checkpoint transfer in progress.</p>
-          </details>
-          <details class="teacher-extra">
-            <summary>Epoch history and advanced controls</summary>
-            <pre id="epochHistory" class="epoch-history">No completed epochs yet.</pre>
-            <p class="muted">Validation uses held-out question groups; the trainer keeps the best joint checkpoint and may stop if validation stalls. Earlier independent checkpoints remain untouched. Validation is not proof of understanding.</p>
-            <button type="button" id="resetBrain" class="danger">Reset unified brain</button>
-          </details>
-
-          <details class="teacher-extra" id="massLearningTools">
-            <summary>Bulk lessons · sequential ZIP teaching</summary>
-            <p class="muted">Import a ZIP with numbered .txt lessons. Structured TXT files identify their own Dialogue, Understanding, Conversation and Reasoning blocks; choose a legacy type above only for older unstructured files. Each file gets its own training run, holdouts, and checkpoint selection. Files are ordered by their names (01_, 02_, 03_). Existing model state is preserved between lessons.</p>
-            <div class="field-row"><div class="wide-field">
-              <label for="foundationZipScope">Foundation duration for this ZIP (when enabled above)</label>
-              <select id="foundationZipScope"><option value="firstFive" selected>First 5 ZIP lessons</option><option value="entireZip">Every lesson in this ZIP</option></select>
-            </div></div>
-            <p class="muted">A selective lesson compares Transformer, Dense, interconnect and Joint training from the same checkpoint. The model only commits an improved whole-brain candidate.</p>
-            <div class="row wrap actions">
-              <label class="file-button" id="browserMassLessonPicker" for="massLessonZip">＋ Select lesson ZIP</label>
-              <input type="file" id="massLessonZip" accept=".zip,application/zip">
-              <button type="button" id="nativeMassLessonZip" class="secondary" hidden>＋ Select ZIP from Android Files</button>
-              <button type="button" id="previewMassLessons" class="secondary">Validate ZIP</button>
-              <button type="button" id="startMassLessons" class="primary" disabled>▶ Teach entire ZIP</button>
-              <button type="button" id="stopMassLessons" class="secondary" disabled>Stop after/current lesson</button>
-            </div>
-            <p class="muted" id="massLessonsStatus">Choose a ZIP of numbered structured TXT lessons. No files queued.</p>
-            <pre id="massLessonsLog" class="epoch-history" style="max-height:240px;overflow:auto;white-space:pre-wrap">No bulk lessons loaded.</pre>
-          </details>
-          <details class="teacher-extra">
-            <summary>Tokenizer-only A/B investigation (no neural training)</summary>
-            <p class="muted">Test the currently loaded checkpoint against a temporary copy whose vocabulary grows using this lesson's <em>training split only</em>. Neither stage touches Nova's live weights or saved checkpoint. Run before the new lesson, then compare with results afterward.</p>
-            <label for="tokenizerProbePrompts">Fixed benchmark prompts — one per line, up to six</label>
-            <textarea id="tokenizerProbePrompts" rows="4" spellcheck="false">hello
-Hi
-good morning
-hey there</textarea>
             <div class="row wrap">
-              <button type="button" class="secondary" id="runTokenizerProbe">Compare A/B without training</button>
-              <button type="button" class="secondary" id="saveTokenizerBaseline">Save this A/B baseline</button>
-              <button type="button" class="secondary" id="compareTokenizerStageC">Compare trained checkpoint (C)</button>
+              <button type="button" id="clearChat" class="secondary compact">New conversation</button>
+              <span id="memoryStatus" class="subtle">No checkpoint loaded</span>
             </div>
-            <pre id="tokenizerProbeOutput" class="epoch-history" style="max-height:320px;overflow:auto;white-space:pre-wrap">No tokenizer probe run.</pre>
-          </details>
-          <details class="teacher-extra">
-            <summary>Inspect dense–Transformer bridge (no model changes)</summary>
-            <label for="bridgeProbeMessage">Input message</label>
-            <input id="bridgeProbeMessage" value="hello" maxlength="180">
-            <button type="button" class="secondary" id="runBridgeProbe">Measure signal and bridge ablation</button>
-            <pre id="bridgeProbeOutput" class="epoch-history" style="max-height:240px;overflow:auto;white-space:pre-wrap">No bridge measurement yet.</pre>
-          </details>
-        </div>
+            <p id="chatContextReport" class="context-report" role="status" aria-live="polite">Nova's generation telemetry appears here.</p>
+          </div>
+        </section>
       </div>
-      <details class="card test-lab" id="testLab">
-        <summary>Tests &amp; Corrections <span class="subtle">Neural replies · independent grading · supervised updates</span></summary>
-        <div class="test-lab-body">
-          <p class="muted">Import a TXT of questions and a separate TXT answer key (one per line), or paste both. A TAB-separated combined test TXT is also supported. Nova sees only the question during inference.</p>
-          <div class="test-bar">
-            <div><label for="testName">Test name</label><input id="testName" maxlength="80" value="Nova's language check"></div>
-            <div><label for="testSaved">Saved tests</label><select id="testSaved"><option value="">Select a saved test</option></select></div>
-          </div>
-          <div class="test-import-grid">
-            <div><label for="testQuestions">Test questions</label><textarea id="testQuestions" spellcheck="false" rows="5" placeholder="hello Nova&#10;what is your name?"></textarea>
-              <label class="file-button" for="testQuestionsFile">＋ Import questions TXT</label><input type="file" id="testQuestionsFile" accept=".txt,text/plain"></div>
-            <div><label for="testAnswers">Answer key — teacher only</label><textarea id="testAnswers" spellcheck="false" rows="5" placeholder="Hello!&#10;My name is Nova."></textarea>
-              <label class="file-button" for="testAnswersFile">＋ Import answer key TXT</label><input type="file" id="testAnswersFile" accept=".txt,text/plain"></div>
-          </div>
-          <details class="teacher-extra">
-            <summary>Optional untouched generalization test</summary>
-            <p class="muted">These questions and answers will never be included in corrective training. Ask unfamiliar variations to measure transfer.</p>
-            <div class="test-import-grid">
-              <div><label for="testUnseenQuestions">Unseen questions</label><textarea id="testUnseenQuestions" rows="3" spellcheck="false"></textarea>
-                <label class="file-button" for="testUnseenQuestionsFile">＋ Import unseen TXT</label><input type="file" id="testUnseenQuestionsFile" accept=".txt,text/plain"></div>
-              <div><label for="testUnseenAnswers">Unseen answer key</label><textarea id="testUnseenAnswers" rows="3" spellcheck="false"></textarea>
-                <label class="file-button" for="testUnseenAnswersFile">＋ Import unseen key TXT</label><input type="file" id="testUnseenAnswersFile" accept=".txt,text/plain"></div>
-            </div>
-          </details>
-          <div class="row wrap"><button type="button" class="secondary compact" id="testSave">Save test</button><button type="button" class="secondary compact" id="testDelete">Delete selected test</button></div>
-          <div class="test-options">
-            <div><label for="testAttempts">Attempts/question</label><input id="testAttempts" type="number" min="1" max="5" value="3"></div>
-            <div><label for="testRate">Corrective learning rate</label><select id="testRate"><option value="0.001" selected>Gentle · 0.001</option><option value="0.003">Balanced · 0.003</option></select></div>
-            <div><label for="testReplyLength">Max reply length</label><select id="testReplyLength"><option value="64">64</option><option value="128" selected>128</option><option value="256">256</option></select></div>
-            <div><label for="testContext">Context tokens</label><select id="testContext"><option value="128" selected>128</option><option value="256">256</option></select></div>
-            <div><label for="testSampling">Generation</label><select id="testSampling"><option value="greedy" selected>Most likely</option><option value="seeded">Seeded · 42</option></select></div>
-          </div>
-          <div class="row wrap test-checks">
-            <label class="checkbox-line"><input type="checkbox" id="testCorrections" checked>Apply neural corrections</label>
-            <label class="checkbox-line"><input type="checkbox" id="testRetention" checked>Test retention afterward</label>
-            <label class="checkbox-line"><input type="checkbox" id="testGeneralization" checked>Test unseen variations</label>
-          </div>
-          <div class="row wrap actions">
-            <button type="button" class="primary" id="testStart">▶ Start test</button>
-            <button type="button" class="secondary" id="testPause" disabled>Pause</button>
-            <button type="button" class="secondary" id="testResume" disabled>Resume</button>
-            <button type="button" id="testStop" disabled>Stop</button>
-          </div>
-          <p class="muted" id="testRunStatus">Ready to save a test. All first attempts are completed before any corrective training.</p>
-          <details class="teacher-extra test-overview" id="testOverview" open>
-            <summary>Test Overview <span id="testOverviewSummary" class="subtle">No results yet</span></summary>
-            <div id="testOverviewStats" class="test-overview-stats"></div>
-            <div id="testResultList" class="test-result-list"></div>
-          </details>
-        </div>
-      </details>
-    </section>
-    <section class="tab-pane" id="pane-targeted" role="tabpanel" aria-labelledby="tab-targeted" hidden>
-      <div class="pane-title">
-        <div><p class="eyebrow">FOUNDATION LEARNING · EXPERIMENTAL TEACHER MODE</p><h2>Targeted Training</h2></div>
-        <span class="subtle">One neural mind · Selectable gradient updates · Protected checkpoint</span>
-      </div>
-      <p class="muted">Teach a neural pathway or Nova's trainable two-way interconnect while the rest of the original brain still participates in forward and backward computation. Targeting controls which weights can change, not which hemisphere is allowed to reason. Nothing touches live Nova until you accept a whole candidate checkpoint.</p>
-      <div class="teach-grid">
-        <div class="card">
-          <h3>Choose a starting brain and learning focus</h3>
-          <div class="field-row">
-            <div class="wide-field">
-              <label for="targetedSource">Starting checkpoint</label>
-              <select id="targetedSource">
-                <option value="current" selected>Current Nova checkpoint · clone without replacing</option>
-                <option value="imported">Imported .nnova2 checkpoint · staged separately</option>
-              </select>
-            </div>
-          </div>
-          <div class="row wrap">
-            <label class="file-button" id="targetedBrowserImportLabel" for="targetedImportFile">＋ Choose .nnova2 for targeted workspace</label>
-            <input type="file" id="targetedImportFile" accept=".nnova2,application/octet-stream">
-            <button type="button" class="secondary" id="targetedNativeImport" hidden>＋ Select .nnova2 from Android Files</button>
-            <button type="button" class="secondary" id="targetedImport">Stage imported checkpoint</button>
-          </div>
-          <p class="muted" id="targetedImportStatus">No imported checkpoint staged. An imported brain does not replace live Nova.</p>
-          <div class="field-row">
-            <div class="wide-field"><label for="targetedFocus">Neural region receiving optimizer updates</label>
-              <select id="targetedFocus">
-                <option value="dense">Right hemisphere · dense/context pathway only</option>
-                <option value="transformer">Left hemisphere · Transformer, language, recurrent reasoning</option>
-                <option value="interconnect">Neural interconnect · learned bridge + reciprocal exchange</option>
-                <option value="joint">Joint · all three parameter groups</option>
-              </select>
-            </div>
-            <div class="wide-field"><label for="targetedSkill">Skill / teaching objective</label>
-              <select id="targetedSkill">
-                <option value="context">Context · entities, properties and relationships</option>
-                <option value="reasoning">Reasoning · supported vs contradicted conclusions</option>
-                <option value="dialogue">Dialogue · greetings and reply structure</option>
-                <option value="conversation">Multi-turn · conversational memory</option>
-              </select>
-            </div>
-          </div>
-          <p class="muted" id="targetedFocusHint">The selected region changes through actual neural gradients. The context objective uses Understanding Lesson examples, not a hidden symbolic knowledge base.</p>
-          <div class="section-line"><label for="targetedLessonData">Lesson material · structured TXT blocks</label><span class="subtle">Selected objective must have independent held-out examples</span></div>
-          <textarea id="targetedLessonData" rows="11" spellcheck="false" placeholder="[Understanding Lesson]&#10;Relations between entities ...&#10;[examples]&#10;Mira has a red ball. What color?  Red.&#10;...&#10;[/examples]&#10;[/Understanding Lesson]"></textarea>
-          <div class="row wrap">
-            <button type="button" class="secondary" id="targetedCopyTeach">Copy current Teach editor</button>
-            <label class="file-button" for="targetedLessonFile">＋ Import lesson TXT</label>
-            <input type="file" id="targetedLessonFile" accept=".txt,text/plain">
-          </div>
-          <p class="muted">Examples use your existing unified Dialogue, Understanding, Multi-Turn and Reasoning blocks. Training filters to the selected objective without turning instructional prose into scripted answers. The dense hemisphere uses Claude’s fixed 64-character feature window.</p>
-        </div>
-        <div class="card training-card">
-          <h3>Train an isolated candidate</h3>
-          <div class="schedule-settings">
-            <div><label for="targetedEpochs">Max epochs</label><input type="number" id="targetedEpochs" value="8" min="1" max="30"></div>
-            <div><label for="targetedRate">Learning rate</label><select id="targetedRate">
-              <option value="0.0001">Extra gentle · 0.0001</option>
-              <option value="0.0003" selected>Very gentle · 0.0003</option>
-              <option value="0.001">Gentle · 0.001</option>
-              <option value="0.003">Balanced · 0.003</option>
-            </select></div>
-          </div>
-          <div class="row wrap actions">
-            <button type="button" id="targetedStart" class="primary">▶ Train candidate</button>
-            <button type="button" id="targetedStop" disabled>Stop</button>
-            <button type="button" id="targetedDiscard" class="secondary" disabled>Discard candidate</button>
-          </div>
-          <p id="targetedStage" class="trainer-stage">Ready to prepare a protected neural training experiment.</p>
-          <div class="progress-head"><span id="targetedProgress">No active experiment</span><strong id="targetedPercent">0%</strong></div>
-          <div class="progress-track"><div id="targetedFill"></div></div>
-          <h3>Before / after · same held-out material</h3>
-          <p class="muted">These are teacher validation probes for the selected skill, not independent final tests. Scores are compared on identical withheld examples, and archived skills are sampled without training on their held-out questions.</p>
-          <div class="metric-grid">
-            <div><span>Starting held-out loss</span><strong id="targetedBaselineLoss">—</strong></div>
-            <div><span>Candidate held-out loss</span><strong id="targetedCandidateLoss">—</strong></div>
-            <div><span>Starting complete replies</span><strong id="targetedBaselineReplies">—</strong></div>
-            <div><span>Candidate complete replies</span><strong id="targetedCandidateReplies">—</strong></div>
-            <div><span>Starting self-generated prefix</span><strong id="targetedBaselinePrefix">—</strong></div>
-            <div><span>Candidate self-generated prefix</span><strong id="targetedCandidatePrefix">—</strong></div>
-            <div><span>Starting earlier correct replies</span><strong id="targetedBaselineArchive">—</strong></div>
-            <div><span>Candidate earlier correct replies</span><strong id="targetedCandidateArchive">—</strong></div>
-            <div><span>Starting contrastive accuracy</span><strong id="targetedBaselineContrastive">—</strong></div>
-            <div><span>Candidate contrastive accuracy</span><strong id="targetedCandidateContrastive">—</strong></div>
-          </div>
-          <p id="targetedWarnings" class="muted">An accepted candidate is a complete trained brain, not an arbitrary splice of individual neurons.</p>
-          <label class="checkbox-line" for="targetedAllowRegression"><input type="checkbox" id="targetedAllowRegression"> Permit teacher-approved regression (requires a separate confirmation)</label>
-          <div class="row wrap actions">
-            <button type="button" id="targetedAccept" class="primary" disabled>Accept candidate as Nova's checkpoint</button>
-            <button type="button" id="targetedReturnTeach" class="secondary">Return to unified Teach</button>
-          </div>
-          <p class="muted">Manual acceptance creates a backup of the active checkpoint and installs the entire focused-trained neural brain. A stale candidate is rejected if active weights changed in the meantime. Imported candidates retain their own tokenizer and optimizer; chat history is cleared on acceptance. Until then, live Nova is untouched.</p>
-        </div>
-      </div>
-    </section>
-    <section class="tab-pane" id="pane-chat" role="tabpanel" aria-labelledby="tab-chat" hidden>
-      <div class="pane-title"><div><p class="eyebrow">ONE GENERATIVE VOICE</p><h2>Chat with Nova</h2></div><span class="subtle">No canned answers · No model selection</span></div>
-      <div class="card chat-card">
-        <div id="chatTranscript" role="log" aria-live="polite" class="chat-transcript"><div class="chat-placeholder">Teach Nova, then continue the conversation. Recent turns are encoded into the current neural prompt; KV caching speeds autoregressive generation.</div></div>
-        <div class="chat-controls">
-          <div class="chat-settings" aria-label="Generation diagnostics">
-            <div><label for="chatLength">Max reply characters</label><select id="chatLength">
-              <option value="32" selected>32</option><option value="64">64</option><option value="128">128</option><option value="192">192</option><option value="256">256</option>
-            </select></div>
-            <div><label for="chatTemperature">Temperature <output id="chatTempValue" for="chatTemperature">0.6</output></label><input id="chatTemperature" type="range" min="0.2" max="2" step="0.1" value="0.6"></div>
-            <div><label for="chatContext">Context window</label><select id="chatContext">
-              <option value="128" selected>128 tokens</option><option value="256">256 tokens</option>
-            </select></div>
-            <div><label for="chatSampling">Sampling</label><select id="chatSampling">
-              <option value="random">Random</option><option value="fixed">Seeded · 42</option><option value="greedy" selected>Most likely</option>
-            </select></div>
-          </div>
-          <p class="muted chat-experiment-note" id="chatExperimentNote">Nova-2 uses a 256-token causal attention window with per-layer KV caching.</p>
-          <label for="chatMessage">Your message</label>
-          <div class="composer"><input id="chatMessage" type="text" maxlength="180" autocomplete="off" placeholder="Talk to Nova…"><button type="button" class="primary" id="sendMessage">Send ↗</button></div>
-          <div class="row wrap"><button type="button" class="secondary compact" id="clearChat">New conversation</button><button type="button" class="secondary compact" id="correctReply" disabled>Teach a correction</button><button type="button" class="secondary compact" id="compareContext">Compare 128 vs 256</button><span class="subtle" id="memoryStatus">0/12 memory slots · 0 learned word units</span></div>
-          <div id="chatContextReport" class="context-report" role="status" aria-live="polite">Prompt token retention and conversation-memory usage are reported after each reply.</div>
-          <section id="chatComparison" class="chat-comparison" aria-label="Matched-seed context comparison" hidden></section>
-        </div>
-      </div>
-    </section>
-    <section class="tab-pane" id="pane-visualize" role="tabpanel" aria-labelledby="tab-visualize" hidden>
-      <div class="pane-title"><div><p class="eyebrow">LIVE MODEL TELEMETRY</p><h2>Inside Nova's brain</h2></div><span class="subtle">Schematic hemispheres, real network measurements</span></div>
-      <div class="visualize-grid">
+      <aside id="novaBrainRail" class="nova-brain-rail" aria-label="Nova brain inspector">
+        <div class="rail-heading"><div><p class="eyebrow">READ-ONLY NEURAL TELEMETRY</p><h3>Brain inspector</h3></div>
+          <button type="button" id="closeBrain" class="secondary compact rail-close">Close</button></div>
+        <label class="auto-inspect" for="autoInspectBrain"><input type="checkbox" id="autoInspectBrain"> Inspect after replies (slow)</label>
+        <p class="rail-caveat">These are token sensitivity and sampled weights, not decoded thoughts.</p>
         <div class="card brain-card">
-          <div class="brain-legend"><span><i class="legend-dot language"></i> Left · language / attention</span><span><i class="legend-dot association"></i> Right · associations / dense activations</span><span><i class="legend-dot bridge"></i> Learned connection</span></div>
-          <div class="brain-stage">
-            <svg id="hemisphereBrain" viewBox="0 0 800 410" role="img" aria-label="Schematic of two trainable neural pathways joined by a trainable bridge">
+          <div class="brain-legend">
+            <span><i class="legend-dot language"></i> Transformer</span>
+            <span><i class="legend-dot association"></i> Dense pathway</span>
+            <span><i class="legend-dot bridge"></i> Interconnect</span>
+          </div>
+          <div class="brain-stage"><svg id="hemisphereBrain" viewBox="0 0 800 410" role="img" aria-label="Schematic of two trainable neural pathways joined by a trainable bridge">
               <defs><radialGradient id="leftShade"><stop stop-color="#122e46"/><stop offset="1" stop-color="#131e39"/></radialGradient><radialGradient id="rightShade"><stop stop-color="#27304c"/><stop offset="1" stop-color="#221a36"/></radialGradient><clipPath id="clipLeft"><path d="M 385 74 C 320 25 250 55 211 90 C 125 74 88 138 116 189 C 62 251 116 337 202 341 C 255 395 328 352 385 337 Z"/></clipPath><clipPath id="clipRight"><path d="M 415 74 C 480 25 550 55 589 90 C 675 74 712 138 684 189 C 738 251 684 337 598 341 C 545 395 472 352 415 337 Z"/></clipPath></defs>
               <path d="M385 74 C320 25 250 55 211 90 C125 74 88 138 116 189 C62 251 116 337 202 341 C255 395 328 352 385 337 Z" fill="url(#leftShade)" stroke="#3a8cc1" stroke-width="3"/>
               <path d="M415 74 C480 25 550 55 589 90 C675 74 712 138 684 189 C738 251 684 337 598 341 C545 395 472 352 415 337 Z" fill="url(#rightShade)" stroke="#9f79c9" stroke-width="3"/>
@@ -382,87 +100,40 @@ hey there</textarea>
               <g id="leftActivity" clip-path="url(#clipLeft)"></g><g id="rightActivity" clip-path="url(#clipRight)"></g>
               <text x="240" y="387" text-anchor="middle" fill="#8cbce1" font-size="15">Transformer</text>
               <text x="560" y="387" text-anchor="middle" fill="#bca6e4" font-size="15">Dense pathway</text>
-            </svg>
-          </div>
-          <p id="visualizerDetail" class="viz-detail">Generate or inspect a message to display measured neural activity. Brightness corresponds to actual attention weights and dense activations, not intelligence or anatomical function.</p>
+            </svg></div>
+          <p id="visualizerDetail" class="viz-detail">Inspect a prompt to measure Nova's output sensitivity and sampled network weights.</p>
         </div>
-        <aside class="card telemetry-card">
-          <h3>Inspect a message</h3><p class="muted" id="brainMemoryInfo">Real attention, compressed token units and learned conversation memory signals.</p>
+        <div class="card telemetry-card">
+          <h3>Inspect a prompt</h3>
+          <p id="brainMemoryInfo" class="muted">The brain diagram is schematic. It uses real readings from the active checkpoint.</p>
           <label for="inspectMessage">Input context</label>
-          <div class="row"><input type="text" id="inspectMessage" maxlength="180" placeholder="What is your name?"><button type="button" id="inspectBrain" class="primary">Inspect</button></div>
+          <div class="row"><input id="inspectMessage" type="text" maxlength="300" placeholder="What is your name?">
+            <button type="button" id="inspectBrain" class="primary">Inspect</button></div>
           <div class="metric-grid">
-            <div><span>Attention tokens</span><strong id="attentionCount">—</strong></div>
-            <div><span>Dense neurons</span><strong id="neuronCount">2,176</strong></div>
+            <div><span>Measured prompt samples</span><strong id="attentionCount">—</strong></div>
+            <div><span>Dense pathway</span><strong id="neuronCount">—</strong></div>
           </div>
-          <h3>Last-token attention</h3>
-          <div id="attentionTiles" class="attention-tiles"><span class="muted">No real attention measurements yet.</span></div>
-          <h3>Shared next-character prediction</h3>
+          <h3>Token-removal sensitivity</h3>
+          <div id="attentionTiles" class="attention-tiles"><span class="muted">Nothing inspected yet.</span></div>
+          <h3>Next-token distribution</h3>
           <div id="predictions" class="prediction-list"><span class="muted">Run an inspection to view predictions.</span></div>
-          <p class="muted">Claude’s bidirectional learned interconnect exchanges features between the Dense and Transformer pathways.</p>
-        </aside>
-      </div>
-      <section class="card" aria-label="Saved epoch observations" style="margin-top:16px">
-        <h3>Training activity and Nova's actual responses</h3>
-        <p class="muted">Read-only Bicameral candidate observations are stored by native Rust after each epoch, including rejected candidates. The original brain diagram stays above. These measurements are not evidence of consciousness or proof of reasoning.</p>
-        <div class="row wrap">
-          <label for="observerSession">Training session</label>
-          <select id="observerSession" aria-label="Training observation session"></select>
-          <label for="observerEpoch">Epoch</label>
-          <select id="observerEpoch" aria-label="Saved training epoch"></select>
-          <button type="button" class="secondary compact" id="observerRefresh">Refresh saved activity</button>
         </div>
-        <p class="muted" id="observerStatus" role="status">Loading recorded activity…</p>
-        <div class="metric-grid">
-          <div><span>Full vs no Dense (output change)</span><strong id="observerDenseEffect">—</strong></div>
-          <div><span>Full vs no reciprocal exchange</span><strong id="observerExchangeEffect">—</strong></div>
-          <div><span>Bridge RMS (not sampled)</span><strong id="observerBridgeRms">—</strong></div>
-          <div><span>Epoch / model step</span><strong id="observerStep">—</strong></div>
-        </div>
-        <p class="muted" id="observerMetrics">Select an epoch to inspect the model's responses, training scores and pathway measurements.</p>
-        <h3>What Nova generated on the held-out checkpoint probe</h3>
-        <pre id="observerReplies" class="epoch-history" style="max-height:520px;overflow:auto;white-space:pre-wrap">No saved responses yet.</pre>
-        <h3>Did the neural pathways help the answer?</h3>
-        <p class="muted">Same checkpoint, question and context for full brain, no dense, and no reciprocal exchange. The sampled full/no-Dense and full/no-reciprocal comparisons measure output-distribution changes on an identical held-out prompt. They do not alone establish a benefit to answer correctness.</p>
-        <pre id="observerAblations" class="epoch-history" style="max-height:560px;overflow:auto;white-space:pre-wrap">No pathway comparisons yet.</pre>
-        <p id="observerIntegrity" class="muted">No held-out prompt overlap audit yet.</p>
-        <p id="observerClipping" class="muted">Gradient clipping scale is not exposed by Claude’s inference API.</p>
-        <details class="teacher-extra">
-          <summary>Per-epoch network and reasoning activity details</summary>
-          <pre id="observerActivity" class="epoch-history" style="max-height:360px;overflow:auto;white-space:pre-wrap">No saved neural activity yet.</pre>
-        </details>
-        <p class="muted">Native records save training loss, held-out token accuracy, candidate selection, retention decisions and a read-only generation probe for selected lessons. Full pathway ablations are sampled only for selected checkpoints. Saved activity is not a checkpoint.</p>
-      </section>
-    </section>
-  </main>
-  <details id="diagnostics" class="diagnostics">
-    <summary><span class="debug-title"><strong>⌘ Debugger</strong><small id="diagnosticCount">0 errors · 0 entries</small></span><span class="debug-toggle">▾</span></summary>
-    <div class="debug-body">
-      <div class="row wrap debug-tools"><span class="muted">Training events, Rust commands, UI failures</span><div class="row"><button id="copyDiagnostics" type="button" class="secondary compact">Copy report</button><button id="clearDiagnostics" type="button" class="secondary compact">Clear</button></div></div>
-      <pre id="diagnosticLog" role="log" aria-live="polite">No diagnostics recorded in this session.</pre>
-      <details id="deepDiagnostics" class="teacher-extra">
-        <summary>Deep neural logging · memory and trainer investigation</summary>
-        <p class="muted">Opt-in, append-only local JSONL for this run. Records questions, neural predictions, training metadata and test answer keys. Lesson text is fingerprinted rather than copied. Review the file before sharing it.</p>
-        <div class="row wrap actions">
-          <button type="button" id="startDeepLog" class="primary">Start recording</button>
-          <button type="button" id="stopDeepLog" class="secondary" disabled>Stop recording</button>
-          <button type="button" id="copyDeepLog" class="secondary">Copy JSONL</button>
-          <button type="button" id="saveDeepLog" class="secondary">Save JSONL</button>
-        </div>
-        <p class="muted" id="deepLogStatus">Recording off. Start before loading a checkpoint or teaching the first lesson.</p>
-        <div class="section-line"><label for="deepProbePrompts">Isolated diagnostic questions — one per line</label></div>
-        <textarea id="deepProbePrompts" rows="4" spellcheck="false">hello
-Hi
-good morning
-hey there</textarea>
-        <div class="row wrap">
-          <label class="checkbox-line" for="deepProbeMemory"><input id="deepProbeMemory" type="checkbox"> Compare with saved conversation memory (read-only)</label>
-          <button type="button" id="runDeepProbe" class="secondary">Inspect same weights</button>
-        </div>
-        <pre id="deepProbeOutput" class="epoch-history" style="max-height:360px;overflow:auto;white-space:pre-wrap">No isolated probe yet.</pre>
-      </details>
+      </aside>
     </div>
-  </details>
-  <footer>Nova Messenger · Temporary training tools until Yendory Studio · .nnova2 checkpoints</footer>
+    <button type="button" class="brain-backdrop" id="brainBackdrop" hidden aria-label="Close brain inspector"></button>
+    <details id="checkpointTools" class="card messenger-model-tools">
+      <summary><strong>Checkpoint manager</strong> · import / export .nnova2</summary>
+      <p class="muted">Nova loads the bundled 19,000-step checkpoint by default on a fresh install. Imported checkpoints take priority and are preserved across updates. Training happens in Yendory Studio.</p>
+      <div class="row wrap actions">
+        <label class="file-button" for="importCheckpointFile" id="importCheckpointFileLabel">Choose .nnova2 file</label>
+        <input type="file" id="importCheckpointFile" accept=".nnova2,application/octet-stream">
+        <button type="button" id="importCheckpointNative" class="secondary" hidden>Choose from Android Files</button>
+        <button type="button" id="importCheckpoint" class="primary" disabled>Restore checkpoint</button>
+        <button type="button" id="exportCheckpoint" class="secondary">Export active checkpoint</button>
+      </div>
+      <p id="checkpointTransferStatus" class="muted" role="status" aria-live="polite">No transfer in progress.</p>
+    </details>
+  </main>
+  <footer>Nova Messenger · on-device inference · Trained with Yendory Studio · .nnova2 checkpoints</footer>
 </div>
-</body>
-</html>
+</body></html>

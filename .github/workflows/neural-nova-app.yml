@@ -1,4 +1,4 @@
-name: Neural Nova - Experimental App Builds
+name: Nova Messenger - Experimental App Builds
 
 on:
   push:
@@ -27,9 +27,8 @@ jobs:
         with:
           node-version: "22"
       - uses: dtolnay/rust-toolchain@stable
-      - run: node --check app/dist/js/nova2-main.js
-      - run: node --check app/dist/js/nova-messenger-layout.js
-      - run: node app/tests/messenger-layout.test.cjs
+      - run: node --check app/dist/js/nova-messenger.js
+      - run: node app/tests/messenger-only.test.cjs
       - name: Verify optional 19,000-step bundled checkpoint integrity
         shell: bash
         run: |
@@ -50,12 +49,9 @@ jobs:
           else
             echo "::warning::Step-19000 checkpoint not committed. Builders support manual import; automated prerelease is withheld."
           fi
-      - run: node --check app/dist/js/nova2-test-ui.js
-      - run: node --check app/dist/js/nova2-education-ui.js
-      - run: node --check app/dist/js/training-background-ui.js
-      - run: node app/tests/bicameral-integration.test.cjs
-      - name: Check Android signing/foreground-service configuration script syntax
-        run: python3 -m py_compile app/scripts/configure_android_ci.py
+
+      - name: Check Android signing and SAF export setup syntax
+        run: python3 -m py_compile app/scripts/configure_android_ci.py app/scripts/install_android_checkpoint_provider.py
       - run: node --check app/scripts/generate-icons.mjs
       - run: node --check app/scripts/apply-icon.mjs
       - run: cargo test --all-targets
@@ -207,37 +203,22 @@ jobs:
       # Configure the generated Gradle/manifest files BEFORE the first build.
       # This avoids compiling Android twice and accidentally publishing an
       # unsigned or machine-dependent debug signature.
-      - name: Configure pinned experimental debug signature and foreground service
+      - name: Configure pinned experimental debug signature
         run: python3 app/scripts/configure_android_ci.py
-      # The upstream 1.0.1 service assumes optional libapp_core.so exists,
-      # even when the app only uses a keepalive. Provide a minimal JNI
-      # lifecycle acknowledgement + PARTIAL_WAKE_LOCK adapter (no model).
-      - name: Build Android foreground lifecycle adapter (4 ABIs)
-        run: python3 app/scripts/build_android_keepalive.py
-      - name: Verify native checkpoint saver registered in generated Android package
+      - name: Install Android document picker checkpoint provider
+        run: python3 app/scripts/install_android_checkpoint_provider.py
+      - name: Verify app-private checkpoint export bridge
         shell: bash
         run: |
           set -euo pipefail
           SOURCE=app/src-tauri/gen/android/app/src/main/java/com/qtech/neuralnova/experimental/NovaTrainingContextProvider.java
           test -s "$SOURCE"
           grep -q 'writeVerifiedCheckpoint' "$SOURCE"
-          grep -q 'openOutputStream' "$SOURCE"
-          grep -q 'openInputStream' "$SOURCE"
+          grep -q 'endsWith(".nnova2")' "$SOURCE"
+          grep -q 'android:exported="false"' app/src-tauri/gen/android/app/src/main/AndroidManifest.xml
       - name: Build experimental Android APK
         working-directory: app
         run: npm run android:debug-apk -- --ci
-      - name: Verify packaged foreground adapter for all Android ABIs
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s globstar nullglob
-          APKS=(app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk)
-          test "${#APKS[@]}" -gt 0
-          for apk in "${APKS[@]}"; do
-            for abi in arm64-v8a armeabi-v7a x86 x86_64; do
-              unzip -Z1 "$apk" | grep -Fx "lib/$abi/libapp_core.so"
-            done
-          done
       - name: Verify APK signed by persistent Neural Nova development certificate
         shell: bash
         run: |
